@@ -8,7 +8,8 @@ source_matched_native = helpers.source_matched_native
 daemon_gc_scope = helpers.daemon_gc_scope
 
 
-def run(candidate, stock, bridge, scenario='nominal', aol=True, alpha=True, disable_setting=None, firmware=None, hybrid_release=False, sdsu_mirror=False):
+def run(candidate, stock, bridge, scenario='nominal', aol=True, alpha=True, disable_setting=None, firmware=None,
+        hybrid_release=False, sdsu_mirror=False, camera_messages=False):
   angle = candidate == CAR.TOYOTA_RAV4_TSS2_2023
   camera = bool(candidate.config.flags & ToyotaFlags.TSS2 and not candidate.config.flags & ToyotaFlags.RADAR_ACC)
 
@@ -40,6 +41,7 @@ def run(candidate, stock, bridge, scenario='nominal', aol=True, alpha=True, disa
     firmware_override=firmware,
     assert_hybrid_release=hybrid_release,
     sdsu_mirror=sdsu_mirror,
+    camera_messages=camera_messages,
   )
 
 

@@ -203,7 +203,7 @@ def test_actual_run_tracking_survives_alternating_poll_jitter(monkeypatch):
     message.starpilotSteeringTracking.trial.version == 0 for _, message in tracking)
 
 
-def test_actual_run_tracking_does_not_pad_duplicate_regressed_future_or_missing_input(monkeypatch):
+def test_actual_run_neutral_status_does_not_promote_duplicate_regressed_future_or_missing_input(monkeypatch):
   rows = (
     (BASE, BASE, True),
     (BASE+49_000_000, BASE+49_000_000, True),
@@ -218,9 +218,13 @@ def test_actual_run_tracking_does_not_pad_duplicate_regressed_future_or_missing_
   )
   sent, _sm = _run_poll_script(monkeypatch, rows)
   tracking = [(stamp, message) for stamp, topic, message in sent if topic == 'starpilotSteeringTracking']
-  assert [stamp for stamp, _ in tracking] == [BASE, BASE+49_000_000, BASE+100_000_000, BASE+400_000_000, BASE+449_000_000]
-  assert not _tracking_frequency(sent).valid  # Lost data must remain visible to ordinary receiver checks.
-  assert all(message.starpilotSteeringTracking.trial.version == 0 for _, message in tracking)
+  assert [stamp for stamp, _ in tracking] == [stamp for stamp, _header, _valid in rows]
+  assert _tracking_frequency(sent).valid  # Settings transport health is independent of physical pose delivery.
+  assert all(message.starpilotSteeringTracking.trial.version == 0 and
+             message.starpilotSteeringTracking.restore.version == 0 and
+             message.starpilotSteeringTracking.sourceReceipt.observedMonoTime == stamp and
+             message.starpilotSteeringTracking.sourceReceipt.validUntilMonoTime == stamp + 500_000_000
+             for stamp, message in tracking)
 
 
 def test_actual_run_captures_polled_header_before_source_current_zero_poll(monkeypatch):

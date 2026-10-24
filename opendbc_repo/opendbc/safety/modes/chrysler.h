@@ -2,43 +2,9 @@
 
 #include "opendbc/safety/declarations.h"
 #include "opendbc/safety/modes/chrysler_common.h"
+#include "opendbc/safety/modes/chrysler_platform.h"
+#include "opendbc/safety/modes/chrysler_aol.h"
 
-// Chrysler Pacifica/Jeep addresses
-#define CHRYSLER_EPS_2            0x220  // EPS driver input torque
-#define CHRYSLER_ESP_1            0x140  // Brake pedal and vehicle speed
-#define CHRYSLER_ESP_8            0x11C  // Brake pedal and vehicle speed
-#define CHRYSLER_ECM_5            0x22F  // Throttle position sensor
-#define CHRYSLER_DAS_3            0x1F4  // ACC engagement states from DASM
-#define CHRYSLER_DAS_6            0x2A6  // LKAS HUD and auto headlight control from DASM
-#define CHRYSLER_LKAS_COMMAND     0x292  // LKAS controls from DASM
-#define CHRYSLER_CRUISE_BUTTONS   0x23B  // Cruise control buttons
-
-// RAM DT addresses
-#define CHRYSLER_RAM_DT_EPS_2            0x31
-#define CHRYSLER_RAM_DT_ESP_1            0x83
-#define CHRYSLER_RAM_DT_ESP_8            0x79
-#define CHRYSLER_RAM_DT_ECM_5            0x9D
-#define CHRYSLER_RAM_DT_DAS_3            0x99
-#define CHRYSLER_RAM_DT_DAS_6            0xFA
-#define CHRYSLER_RAM_DT_LKAS_COMMAND     0xA6
-#define CHRYSLER_RAM_DT_CRUISE_BUTTONS   0xB1
-
-// RAM HD addresses
-#define CHRYSLER_RAM_HD_EPS_2            0x220
-#define CHRYSLER_RAM_HD_ESP_1            0x140
-#define CHRYSLER_RAM_HD_ESP_8            0x11C
-#define CHRYSLER_RAM_HD_ECM_5            0x22F
-#define CHRYSLER_RAM_HD_DAS_3            0x1F4
-#define CHRYSLER_RAM_HD_DAS_6            0x275
-#define CHRYSLER_RAM_HD_LKAS_COMMAND     0x276
-#define CHRYSLER_RAM_HD_CRUISE_BUTTONS   0x23A
-
-typedef enum {
-  CHRYSLER_RAM_DT,
-  CHRYSLER_RAM_HD,
-  CHRYSLER_PACIFICA,  // plus Jeep
-} ChryslerPlatform;
-static ChryslerPlatform chrysler_platform;
 static bool chrysler_jeep_hold;
 static bool chrysler_hold_armed;
 static bool chrysler_hold_cancelled;
@@ -56,8 +22,8 @@ static bool chrysler_hold_ready(void) {
   for (int i = 0; i < current_safety_config.rx_checks_len; i++) {
     const RxStatus *status = &current_safety_config.rx_checks[i].status;
     healthy &= status->msg_seen && status->valid_checksum && status->valid_quality_flag &&
-               status->wrong_counters < MAX_WRONG_COUNTERS && !status->lagging &&
-               safety_get_ts_elapsed(now, status->last_timestamp) <= 1000000U;
+               (status->wrong_counters < MAX_WRONG_COUNTERS) && !status->lagging &&
+               (safety_get_ts_elapsed(now, status->last_timestamp) <= 1000000U);
   }
   return chrysler_jeep_hold && healthy && chrysler_hold_gear_seen && chrysler_hold_drive &&
          safety_get_ts_elapsed(now, chrysler_hold_gear_timestamp) <= 100000U &&
@@ -65,14 +31,9 @@ static bool chrysler_hold_ready(void) {
          ((chrysler_hold_stock[5] & 0xC0U) == 0U);
 }
 
-#define CHRYSLER_ADDR(name) ((uint32_t)((chrysler_platform == CHRYSLER_RAM_DT) ? CHRYSLER_RAM_DT_##name : \
-                                        ((chrysler_platform == CHRYSLER_RAM_HD) ? CHRYSLER_RAM_HD_##name : CHRYSLER_##name)))
-
 static uint8_t chrysler_get_counter(const CANPacket_t *msg) {
   return (uint8_t)(msg->data[6] >> 4);
 }
-
-#include "opendbc/safety/modes/chrysler_aol.h"
 
 static void chrysler_rx_hook(const CANPacket_t *msg) {
   chrysler_aol_rx(msg);
@@ -129,7 +90,7 @@ static void chrysler_hold_cancel_rx(const CANPacket_t *msg) {
     // its known size and advancing counter without inventing a CRC contract.
     const uint8_t counter = (uint8_t)(msg->data[3] >> 4);
     const bool valid = (GET_LEN(msg) == 5U) &&
-                       (!chrysler_hold_gear_initialized || counter == ((chrysler_hold_gear_counter + 1U) & 0xFU));
+                       (!chrysler_hold_gear_initialized || (counter == ((chrysler_hold_gear_counter + 1U) & 0xFU)));
     chrysler_hold_gear_initialized = true;
     chrysler_hold_gear_counter = counter;
     chrysler_hold_gear_seen = valid;

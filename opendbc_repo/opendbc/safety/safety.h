@@ -556,8 +556,8 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
         continue;
       }
       const bool preap_pedal_ready = ((param == 1U) || (param == 3U) || (param == 7U)) &&
-        tesla_preap_pedal_staged_ready && (tesla_preap_pedal_staged[2] == param) &&
-        tesla_preap_pedal_config_valid(tesla_preap_pedal_staged);
+        tesla_preap_pedal_startup.staged_ready && (tesla_preap_pedal_startup.staged[2] == param) &&
+        tesla_preap_pedal_config_valid(tesla_preap_pedal_startup.staged);
       if ((mode == SAFETY_TESLA_PREAP) && (param != 0U) && (param != 2U) && (param != 6U) && !preap_pedal_ready) {
         current_hooks = &nooutput_hooks;
         current_safety_mode = SAFETY_NOOUTPUT;

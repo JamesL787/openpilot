@@ -94,7 +94,7 @@ def _invalid_controls_emits_no_commands(received):
 
 
 
-def assert_classic_location_independent_refusals(sd, card, state, now_ns):
+def assert_stock_location_warning_contract(sd, card, state, now_ns):
   from copy import copy
   from openpilot.starpilot.aol.wire import decode_safety
 
@@ -178,10 +178,22 @@ def assert_classic_location_independent_refusals(sd, card, state, now_ns):
         view.values['pandaStates'] = panda.as_reader().pandaStates
         native = dataclasses.replace(native, pandaInventory=tuple(inventory))
       view.values['aolSafetyWire'] = encode_safety(native)
+    # Production dispatches location SOFT withdrawals through observe() and
+    # the shared warning owner, rather than the older critical-only helper.
+    view.values['aolAxisState'] = proof.as_reader()
+    view.logMonoTime['aolAxisState'] = stamp
     before = (current.lateral_baseline_ns, current.lateral_native_ns)
-    retained = current._temporary_host_intent_current(view, card.CP, cs, proof, stamp, now_ns,
-      latched=card.aol_card_intent.allowed_latch, producer=feedback.availability_producer)
-    assert retained == (fault == 'none'), fault
+    retained = not current.observe(view, card.CP, cs, now_ns,
+      latched=card.aol_card_intent.allowed_latch, intent_producer_session=feedback.availability_producer)
+    # Pedals, belt and temporary EPS conditions preserve only armed intent.
+    # A denied native LAT receipt while both host axes are withdrawn is also
+    # a pause; it supplies no native permission and never resumes commands.
+    # Classic independent AOL does not require the cruise MAIN level. This
+    # is not a new MAIN button edge and cannot replay the configured toggle.
+    expected = fault in ('none', 'seatbelt', 'brake', 'regen', 'gas', 'cancel', 'temporary_eps', 'native_denial') or (
+      fault == 'main_off' and qualified_classic(card.CP, marked_only=True))
+    assert retained == expected, (fault, current.__dict__)
+    assert not original.aolAxisState.lateralActive and not original.aolAxisState.longitudinalActive
     assert (current.lateral_baseline_ns, current.lateral_native_ns) == before
 
 
@@ -633,7 +645,7 @@ def test_real_classic_stock_engagement_then_location_loss_keeps_intent(raw_fault
             continue
           fault_ticks += 1
           if fault_ticks == 1:
-            assert_classic_location_independent_refusals(sd, card, state, now[0])
+            assert_stock_location_warning_contract(sd, card, state, now[0])
           assert log.OnroadEvent.EventName.pcmDisable in sd.events.names
           assert not axis.lateralActive and not axis.longitudinalActive
           assert not command.latActive and not command.longActive

@@ -327,7 +327,6 @@ class FullrateCollector:
       or type(value.control_ns) is not int
       or type(value.state_ns) is not int
       or not 0 < value.state_ns <= value.control_ns <= now_ns
-      or now_ns - value.control_ns > MAX_AGE_NS
       or value.control_ns - value.state_ns > JOIN_NS
       or not 1 <= len(value.features) <= 8
       or not all(finite(v) for v in (value.requested, value.baseline_prediction, *value.features, *value.applied_coordinates))
@@ -411,6 +410,15 @@ class FullrateCollector:
     ):
       self.split('ineligible_control')
       return False
+    if now_ns - value.control_ns > MAX_AGE_NS:
+      # Expiry alone rejects this row, but may retain an already suspended
+      # numerical study. Explicit original native refusal is not a timing gap.
+      if value.native_required and (not value.native_allowed or not identity(value.native_identity) or
+          not 0 < value.native_observed_ns <= value.control_ns <= value.native_expires_ns <= value.native_observed_ns + 200_000_000):
+        self.split('original_native_admission_unavailable')
+        return False
+      self.split('stale_control')
+      return False
     previous = self.recent_controls.get(value.control_ns)
     if previous is not None:
       if previous != value:
@@ -443,7 +451,6 @@ class FullrateCollector:
       or any(type(n) is not int for n in (value.control_ns, value.state_ns, value.apply_ns))
       or not 0 < value.control_ns <= value.apply_ns <= now_ns
       or not 0 < value.state_ns <= value.apply_ns
-      or now_ns - value.apply_ns > MAX_AGE_NS
       or value.apply_ns - value.control_ns > MAX_AGE_NS
     ):
       self.split('invalid_applied_output')
@@ -471,6 +478,12 @@ class FullrateCollector:
         self.split('actual_carrier_unavailable', reset=True)
         return False
       self.last_carrier_frame = value.carrier_frame
+    if now_ns - value.apply_ns > MAX_AGE_NS:
+      if value.domain != self.adapter.command_domain:
+        self.split('consumed_source_mismatch', reset=True)
+        return False
+      self.split('stale_applied_output')
+      return False
     key = (value.control_ns, value.apply_ns)
     previous = self.recent_applied.get(key)
     if previous is not None:

@@ -1,5 +1,5 @@
 """Host source loss and loop-lag lifecycle regression coverage."""
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 from unittest import mock
 
@@ -10,6 +10,9 @@ from openpilot.starpilot.aol.tests import test_ioniq_availability as fixture
 from openpilot.starpilot.aol.tests.test_input_deadline_continuity import BASE
 from openpilot.starpilot.aol.tests.test_ordinary_source_availability import settings
 from openpilot.starpilot.aol.wire import decode_safety, encode_safety, decode_intent, encode_intent
+
+
+from openpilot.starpilot.aol.tests.legacy_lag_test_helpers import legacy_lag_publications, source_availability_refusals
 
 
 FAULTS = ['current_mismatch', 'current_user', 'current_steer_temp',
@@ -26,12 +29,13 @@ def test_prior_real_lag_off_proof_does_not_excuse_fault_or_forged_marker(fault):
     cleanup.callback(case.doCleanups)
     cleanup.enter_context(OpenpilotPrefix())
     sd, _, drive, _, _ = case._ioniq_availability_callers(full_op=False)
+    cleanup.enter_context(legacy_lag_publications(sd))
     drive(2, state_stamp=BASE, offset_ns=4_497_535, **settings('lateral_only', BASE, 3))
     source = BASE + 10_000_000
     with mock.patch.object(sd.rk.avg_dt, 'get_average', return_value=0.02):
       axis, state, _ = drive(3, state_stamp=source, **settings('lateral_only', source, 4))
-      # A genuine independent AOL-only lag still publishes critical/OFF;
-      # ordinary fresh active proofs now follow the existing SOFT lifecycle.
+      # Exercise the historical all-OFF publication compatibility guards.
+      # The helper first asserts the current producer uses a SOFT pause.
       assert not state.enabled and not state.active
       assert str(axis.faultReason) == 'critical' and not sd.aol_authority_lost
       assert not axis.desiredLateral and not axis.desiredLongitudinal and not axis.nativeAcknowledged
@@ -100,12 +104,23 @@ def test_prior_real_lag_off_proof_does_not_excuse_fault_or_forged_marker(fault):
             return queue.pop(0) if queue else None
           return original_receive(sock)
         cleanup.enter_context(mock.patch('openpilot.starpilot.aol.intent_companion.messaging.recv_one_or_none', side_effect=receive))
-      with mock.patch.object(sd, 'update_events', side_effect=events):
+      historical = fault in ('prior_mismatch', 'prior_user', 'prior_steer_temp', 'prior_desired_lat',
+                             'prior_desired_long', 'prior_ack', 'fault_event_zero', 'unpublished_critical')
+      refusal = source_availability_refusals(sd, historical=True) if historical else nullcontext()
+      with refusal, mock.patch.object(sd, 'update_events', side_effect=events):
         axis, state, command = drive(7, timeout=fault not in ('physical_brake', 'physical_cancel'),
           state_stamp=source, offset_ns=5_399_000, observed_state=observed, **options)
       assert not axis.lateralActive and not axis.longitudinalActive
       assert not command.latActive and not command.longActive
-      assert not sd.aol_ordinary_source_pause
+      if historical and sd.aol_ordinary_source_pause:
+        # Historical refusal was witnessed above; this later SOFT owner must
+        # independently validate its current native grant and keeps commands OFF.
+        native = sd.aol_ordinary_source_native
+        assert str(axis.faultReason) == 'availabilityPause' and not sd.aol_authority_lost
+        assert native.requestedLateral and native.lateralAllowed
+        assert axis.sourceCarStateMonoTime == 0 and not sd.events.contains('enable')
+      else:
+        assert not sd.aol_ordinary_source_pause
       assert not state.enabled
       if fault == 'restrictive_burst':
         assert sd.aol_step_intent_drain_count == 2

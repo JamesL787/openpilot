@@ -43,7 +43,8 @@ def interrupted_owner():
 def test_recovery_uses_only_information_and_new_probe_revalidation_then_new_uncensored_rows():
   owner, old, hint, before, future, now = interrupted_owner()
   assert set(hint) == {'group', 'name', 'delta', 'demand', 'binding', 'profile_sha256', 'model_revision',
-    'controller_domain', 'selected_ns', 'expires_ns', 'source_episode_ids', 'quota'}
+    'controller_domain', 'selected_ns', 'expires_ns', 'source_episode_ids', 'quota', 'minimum_episodes'}
+  assert hint['minimum_episodes'] == len(before)
   assert owner.preferred_probe_group(now) == hint['group']
   _refresh(owner, now)
   revalidation = _episode(owner, 100, now, owner.accepted, .6, .35, 22.)
@@ -92,11 +93,29 @@ def test_zero_error_recovery_rows_are_uncensored_but_do_not_force_an_underpowere
       assert owner.comparison == compared  # Every zero row counts; none is replaced.
   assert all(row.episode_id in owner.seen for row in compared)
   assert all(row in owner.planning_history for row in compared)
-  assert owner.discovery is None and owner.comparison == [] and owner.selector_hint is None
-  assert owner.reason == 'independent_baseline_trial_power_insufficient'
-  assert owner.sequence == old.target_sequence and owner.before == ()
+  assert owner.discovery is None and owner.comparison == []
+  # A declared minimum pilot is now allowed; zero baseline error supplies no
+  # evidence of improvement. Exercise the unchanged independent final refusal.
   offer = owner.offer(now)
-  assert offer is not None and offer.phase == 'rollback' and offer.trial_id == old.trial_id
+  assert offer is not None and offer.phase == 'trial' and offer.trial_id != old.trial_id
+  assert owner.sequence == old.target_sequence+1 and owner.before == tuple(compared)
+  assert owner.selector_hint is not None
+  assert all(row.error_rms == 0. for row in owner.before)
+  _ack(owner, offer, now+NS)
+  assert owner.offer_state is not None
+  maximum = max(owner.offer_state['look_quotas'])
+  for index in range(maximum):
+    now += 8*NS
+    _refresh(owner, now)
+    row = _episode(owner, 1000+index, now, dict(offer.target), .6, 0., 22.)
+    assert owner.observe_episode(row, now_ns=now)
+  rollback = owner.offer(now)
+  assert rollback is not None and rollback.phase == 'rollback' and rollback.trial_id == offer.trial_id
+  assert rollback.target == rollback.baseline
+  assert owner.reason == 'independent_future_tracking_not_improved'
+  assert owner.accepted == dict(old.baseline) and owner.selector_hint is None
+  assert len(owner.future) == maximum
+
 
 
 @pytest.mark.parametrize('bad', ('missing', 'invisible', 'energy', 'physical'))

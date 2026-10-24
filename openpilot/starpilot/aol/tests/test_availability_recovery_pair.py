@@ -34,7 +34,10 @@ def _exercise_recovery(full_op, order, fault):
       assert not state.enabled and not command.latActive and not command.longActive
       assert receive(10_020_000_000, axis=sd.pm.messages['aolAxisState'], event=sd.pm.messages['onroadEvents'],
                      state=sd.CS_prev.as_builder())
-      assert card.aol_transport_feedback.retention_verified
+      # The canonical shared SOFT owner retains only driver intent; the
+      # location-only retention marker is not the active production path.
+      assert card.aol_transport_feedback.ordinary_warning_qualified
+      assert not card.aol_transport_feedback.retention_verified
       recovered, state, command = step(3, gas=True, native_request_long=False)
       assert recovered.lateralActive and command.latActive and str(recovered.faultReason) == 'none'
       assert not state.enabled and not command.longActive and not recovered.longitudinalActive
@@ -79,8 +82,11 @@ def _exercise_recovery(full_op, order, fault):
         if fault == 'healthy':
           assert latch
           if key != 'both' and index == 0:
-            assert card.aol_transport_feedback.retention_started_ns == now
-            assert card.aol_transport_feedback.retention_pending
+            # This receive cannot grant commands. Validate current ownership
+            # rather than requiring the retired location-specific join fields.
+            assert not card.aol_transport_feedback.failed
+            assert card.aol_transport_feedback.availability_producer == card.slc_producer_session
+            assert not card.sm['carControl'].longActive
       assert latch == (fault == 'healthy')
       if fault == 'healthy':
         feedback = card.aol_transport_feedback
@@ -91,3 +97,44 @@ def _exercise_recovery(full_op, order, fault):
         final, final_state, final_command = step(4, gas=True, native_request_long=False)
         assert final.lateralActive and final_command.latActive
         assert not final_state.enabled and not final.longitudinalActive and not final_command.longActive
+
+
+@pytest.mark.parametrize('order', ['axis_first', 'event_first'])
+@pytest.mark.parametrize('renew_first_half', [False, True])
+def test_shared_soft_healthy_recovery_keeps_original_join_deadline(order, renew_first_half):
+  case = fixture.IoniqAvailabilityTests(methodName='runTest')
+  with ExitStack() as cleanup:
+    cleanup.callback(case.doCleanups)
+    cleanup.enter_context(OpenpilotPrefix())
+    sd, _, step, card, receive = case._ioniq_availability_callers(full_op=False)
+    step(2, car_output_valid=False, gas=True)
+    paused_proof, paused_event = sd.pm.messages['aolAxisState'], sd.pm.messages['onroadEvents']
+    assert receive(10_020_000_000, axis=paused_proof, event=paused_event, state=sd.CS_prev.as_builder())
+    assert card.aol_transport_feedback.ordinary_warning_qualified
+    recovered, _, command = step(3, gas=True, native_request_long=False)
+    assert recovered.lateralActive and command.latActive and not command.longActive
+    proof, event = sd.pm.messages['aolAxisState'], sd.pm.messages['onroadEvents']
+    first = {'axis': proof} if order == 'axis_first' else {'event': event}
+    assert receive(10_030_000_000, **first, state=sd.CS_prev.as_builder())
+    original_deadline_start = card.aol_transport_feedback.retention_started_ns
+    assert original_deadline_start == 10_030_000_000
+    assert card.aol_transport_feedback.retention_pending
+    if renew_first_half:
+      # Keep every source/native lease current. A fresh first half still must
+      # not extend the original unmatched recovery join.
+      if order == 'axis_first':
+        step(4, gas=True, native_request_long=False)
+        first = {'axis': sd.pm.messages['aolAxisState']}
+      else:
+        advanced = paused_proof.as_builder()
+        advanced.logMonoTime = 10_050_000_000
+        advanced.aolAxisState.observedMonoTime = 10_050_000_000
+        advanced.aolAxisState.sourceCarStateMonoTime = 10_050_000_000
+        advanced.aolAxisState.validUntilMonoTime = 10_080_000_000
+        advanced.aolAxisState.sequence += 10
+        first = {'axis': advanced.as_reader(), 'event': event}
+    assert receive(10_050_000_000, **first, state=sd.CS_prev.as_builder())
+    assert card.aol_transport_feedback.retention_started_ns == original_deadline_start
+    assert not receive(10_061_000_000, **first, state=sd.CS_prev.as_builder())
+    assert not card.aol_card_intent.allowed_latch
+    assert not receive(10_062_000_000, axis=proof, event=event, state=sd.CS_prev.as_builder())

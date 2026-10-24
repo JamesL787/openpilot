@@ -5,16 +5,30 @@ const SPECIAL_PAGES = new Set(["ui_layout", "favorites"])
 const PAGE_SECTIONS = new Map(SETTINGS_SECTIONS.flatMap((section) =>
   section.pages.filter((page) => !SPECIAL_PAGES.has(page)).map((page) => [page, section.label])))
 const INITIAL_PAGES = [...PAGE_SECTIONS.keys()]
+const normalize = (value) => value.toLocaleLowerCase().replace(/&/g, " and ")
 
-const searchable = (row, title, section) => [row.label, row.value, row.reason, row.unit, title, section]
-  .filter((value) => typeof value === "string").join(" ").toLocaleLowerCase()
+const searchable = (row, title, section) => normalize([row.label, row.value, row.reason, row.unit, title, section]
+  .filter((value) => typeof value === "string").join(" "))
 
 export function searchSettings(entries, query, limit = 30) {
-  const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  const words = normalize(query.trim()).split(/\s+/).filter(Boolean)
   if (!words.length) return []
   return entries.filter((entry) => words.every((word) => entry.search.includes(word)))
-    .sort((a, b) => Number(b.label.toLocaleLowerCase().startsWith(words[0])) - Number(a.label.toLocaleLowerCase().startsWith(words[0])) ||
-      a.section.localeCompare(b.section) || a.label.localeCompare(b.label)).slice(0, limit)
+    .sort((a, b) => Number(normalize(b.label).startsWith(words[0])) - Number(normalize(a.label).startsWith(words[0])) ||
+      (a.section || "").localeCompare(b.section || "") || a.label.localeCompare(b.label)).slice(0, limit)
+}
+
+export function toolSearchEntries(tools) {
+  const entries = []
+  const visit = (tool, parents = [], visited = new Set()) => {
+    entries.push({ path: tool.path, label: tool.name, kind: "Tool", context: parents.join(" · "),
+      search: normalize([tool.name, tool.description, ...parents, "Tools"].join(" ")) })
+    if (visited.has(tool.path)) return
+    const next = new Set(visited).add(tool.path)
+    for (const child of tool.children || []) visit(child, [...parents, tool.name], next)
+  }
+  for (const tool of tools) visit(tool)
+  return entries
 }
 
 export class SettingsSearchIndex {
@@ -88,7 +102,7 @@ export class SettingsSearchIndex {
                 queue.push(row.page)
               }
               if (row.page || isPipCropRow(row)) continue
-              this.entries.push({ page, label: row.label, title: data.title, section,
+              this.entries.push({ page, label: row.label, title: data.title, section, kind: "Toggle", context: `${section} · ${data.title}`,
                 search: searchable(row, data.title, section) })
             }
           } catch {
@@ -109,6 +123,7 @@ export class SettingsSearchIndex {
 
 export const ToggleSearch = {
   props: { enabled: { type: Boolean, required: true }, unauthorized: { type: Function, required: true },
+    settingsEnabled: { type: Boolean, required: true }, tools: { type: Array, required: true },
     openPage: { type: Function, required: true } },
   setup(props) {
     const state = reactive({ query: "", open: false, active: 0, status: "idle", entries: [], failed: 0, rect: null })
@@ -116,7 +131,7 @@ export const ToggleSearch = {
     return { state, index }
   },
   computed: {
-    results() { return searchSettings(this.state.entries, this.state.query) },
+    results() { return searchSettings([...toolSearchEntries(this.tools), ...this.state.entries], this.state.query) },
     showResults() { return this.enabled && this.state.open && !!this.state.query.trim() },
     resultsStyle() {
       const rect = this.state.rect
@@ -125,6 +140,7 @@ export const ToggleSearch = {
   },
   watch: {
     enabled(value) { if (!value) { this.index.stop(); this.close() } },
+    settingsEnabled(value) { if (!value) this.index.stop() },
   },
   mounted() {
     this.onViewportChange = () => { if (this.state.open) this.measure() }
@@ -164,7 +180,7 @@ export const ToggleSearch = {
       if (this.$el?.contains(event.target) || this.$refs.results?.contains(event.target)) return
       this.close()
     },
-    onInput() { this.state.open = true; this.state.active = 0; if (this.enabled) this.index.load(); this.$nextTick(() => this.measure()) },
+    onInput() { this.state.open = true; this.state.active = 0; if (this.settingsEnabled) this.index.load(); this.$nextTick(() => this.measure()) },
     onFocus() { this.openSearch() },
     onKey(event) {
       if (event.key === "Escape") {
@@ -182,26 +198,26 @@ export const ToggleSearch = {
   },
   template: `
     <div class="gx-searchbox" :class="{ open: state.open }">
-      <button type="button" ref="toggle" class="gx-icon-btn gx-search-toggle" :aria-label="state.open ? 'Close search' : 'Search toggles'" :aria-expanded="state.open"
+      <button type="button" ref="toggle" class="gx-icon-btn gx-search-toggle" :aria-label="state.open ? 'Close search' : 'Search Galaxy'" :aria-expanded="state.open"
         :disabled="!enabled" @click="toggle"><i class="bi" :class="state.open ? 'bi-x-lg' : 'bi-search'"></i><span v-if="!state.open" class="gx-search-toggle__label" aria-hidden="true">Search</span></button>
       <div class="gx-searchwrap">
       <i class="bi bi-search gx-search__icon" aria-hidden="true"></i>
-      <input ref="input" v-model="state.query" class="gx-search gx-appbar__search" type="search" placeholder="Search toggles…"
-        aria-label="Search toggles" :disabled="!enabled" role="combobox" aria-autocomplete="list"
+      <input ref="input" v-model="state.query" class="gx-search gx-appbar__search" type="search" placeholder="Search Galaxy…"
+        aria-label="Search Galaxy" :disabled="!enabled" role="combobox" aria-autocomplete="list"
         :aria-expanded="showResults" aria-controls="gx-toggle-search-results"
         :aria-activedescendant="showResults && results.length ? 'gx-toggle-result-' + state.active : undefined"
         @input="onInput" @focus="onFocus" @keydown="onKey">
       </div>
       <Teleport to="body">
-        <div v-if="showResults && state.rect" id="gx-toggle-search-results" ref="results" class="gx-search-results" :style="resultsStyle" role="listbox" aria-label="Toggle search results">
+        <div v-if="showResults && state.rect" id="gx-toggle-search-results" ref="results" class="gx-search-results" :style="resultsStyle" role="listbox" aria-label="Galaxy search results">
           <p v-if="state.status === 'loading' && !results.length" class="gx-search-results__status" role="status">Searching…</p>
-          <button v-for="(hit, index) in results" :key="hit.page + ':' + hit.label" type="button" role="option"
+          <button v-for="(hit, index) in results" :key="(hit.path || hit.page) + ':' + hit.label" type="button" role="option"
             :id="'gx-toggle-result-' + index" class="gx-search-results__item" :class="{active:index === state.active}"
             :aria-selected="index === state.active" @click="choose(hit)">
-            <strong>{{ hit.label }}</strong><span>{{ hit.section }} · {{ hit.title }}</span>
+            <strong>{{ hit.label }}</strong><span>{{ hit.kind }}<template v-if="hit.context"> · {{ hit.context }}</template></span>
           </button>
           <p v-if="state.status === 'partial' && !state.entries.length" class="gx-search-results__status" role="status">Some settings couldn't be searched. Try again.</p>
-          <p v-if="state.status === 'ready' && !results.length" class="gx-search-results__status">No matching settings.</p>
+          <p v-if="(state.status === 'ready' || !settingsEnabled) && !results.length" class="gx-search-results__status">No matching results.</p>
         </div>
       </Teleport>
     </div>`,

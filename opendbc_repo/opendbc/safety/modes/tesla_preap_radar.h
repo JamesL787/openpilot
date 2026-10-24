@@ -1,6 +1,18 @@
 #pragma once
 #include "opendbc/safety/can_tx.h"
 
+static uint8_t tesla_preap_crc(const CANPacket_t *msg) {
+  unsigned int crc = 255U;
+  for (int i = 0; i < 7; i++) {
+    crc ^= msg->data[i];
+    for (int bit = 0; bit < 8; bit++) {
+      crc = ((crc & 128U) != 0U) ? ((crc << 1U) ^ 29U) : (crc << 1U);
+      crc &= 255U;
+    }
+  }
+  return (uint8_t)(crc ^ 255U);
+}
+
 static bool tesla_preap_radar_enabled = false;
 static bool tesla_preap_radar_nosecone = false;
 static const CANPacket_t *tesla_preap_radar_ticket = NULL;
@@ -80,7 +92,7 @@ static void tesla_preap_radar_rx(const CANPacket_t *msg) {
       uint32_t low = tesla_preap_radar_word(msg, 0U);
       uint32_t high = tesla_preap_radar_word(msg, 4U);
       if (((low >> 16U) & 0xFF3FU) == 0xFF3FU) {
-        low = (low & 0x00C0FFFFU) | (0x20U << 16U);
+        low = (low & 0x00C0FFFFU) | 0x00200000U;
         high = (high & 0x00FFFFF0U) | 4U;
         tesla_preap_radar_put(&packet, 0U, low);
         tesla_preap_radar_put(&packet, 4U, high);
@@ -102,9 +114,10 @@ static void tesla_preap_radar_rx(const CANPacket_t *msg) {
       const unsigned int raw_speed = (tesla_preap_radar_word(msg, 0U) >> 16U) & 4095U;
       uint32_t speed = 8191U;
       if (raw_speed != 4095U) {
-        const int mph_x100 = (int)raw_speed * 5 - 2500;
-        const int kph_x100 = mph_x100 * 1609 / 1000;
-        speed = (kph_x100 < 0) ? 0U : ((uint32_t)(kph_x100 / 4) & 8191U);
+        const int mph_x100 = ((int)raw_speed * 5) - 2500;
+        const int kph_x100 = (mph_x100 * 1609) / 1000;
+        const int scaled_speed = kph_x100 / 4;
+        speed = (kph_x100 < 0) ? 0U : ((uint32_t)scaled_speed & 8191U);
       }
       CANPacket_t packet = {0};
       packet.addr = 0x169U;

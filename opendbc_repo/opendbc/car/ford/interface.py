@@ -55,12 +55,12 @@ class CarInterface(CarInterfaceBase):
 
     new_port = bool(ret.flags & FordFlags.NEW_PORT)
     if candidate in GENERIC_CANFD_CARS:
-      ret.alphaLongitudinalAvailable = not is_release
+      ret.alphaLongitudinalAvailable = True
       ret.steerActuatorDelay = 0.22
-      longitudinal_requested = bool(alpha_long and not is_release)
+      longitudinal_requested = bool(alpha_long)
     elif candidate == CAR.FORD_MUSTANG_MACH_E_MK1:
-      ret.alphaLongitudinalAvailable = not is_release
-      longitudinal_requested = bool(alpha_long and not is_release)
+      ret.alphaLongitudinalAvailable = True
+      longitudinal_requested = bool(alpha_long)
     elif candidate in CLASSIC_EXTENDED_CARS:
       # Original shared classic ownership is explicit stock/OP-long selection.
       # Actuator delay is live; modern LongControl already supplies the original P=0.
@@ -68,7 +68,7 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.22
       longitudinal_requested = bool(alpha_long)
     else:
-      ret.alphaLongitudinalAvailable = (not is_release if ret.flags & FordFlags.CANFD else True) if new_port else ret.radarUnavailable
+      ret.alphaLongitudinalAvailable = True if new_port else ret.radarUnavailable
       longitudinal_requested = bool(alpha_long and ret.alphaLongitudinalAvailable) if new_port else alpha_long or not ret.radarUnavailable
     if longitudinal_requested:
       ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.LONG_CONTROL.value
@@ -139,11 +139,6 @@ class CarInterface(CarInterfaceBase):
       and ret.safetyConfigs[-1].safetyParam in (2, 3)
     )
     if mach_e_extended:
-      if is_release:
-        # The native CANFD LONG profile is DEBUG-only; RELEASE stays stock.
-        ret.alphaLongitudinalAvailable = False
-        ret.openpilotLongitudinalControl = False
-        ret.safetyConfigs[-1].safetyParam = FordSafetyFlags.CANFD.value
       ret.safetyConfigs[-1].safetyParam |= FordSafetyFlags.MACH_E_EXTENDED.value
     if (candidate in GENERIC_CANFD_CARS and ret.flags & FordFlags.CANFD and
         not ret.flags & ~int(FordFlags.CANFD | FordFlags.HAS_BSM) and

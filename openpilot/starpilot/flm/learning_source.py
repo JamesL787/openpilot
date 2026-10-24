@@ -176,7 +176,7 @@ class AutomaticLearningConsumer:
     try:
       if not (sm.seen[SERVICE] and sm.alive[SERVICE] and sm.valid[SERVICE] and sm.freq_ok[SERVICE]):
         return None
-      received_ns = int(sm.recv_time[SERVICE] * 1e9)
+      received_ns = int(round(sm.recv_time[SERVICE] * 1e9))
       if not 0 <= now_ns - received_ns <= MAX_AGE_NS:
         return None
       state = learning_payload(sm[SERVICE])

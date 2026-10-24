@@ -31,6 +31,7 @@ class ProcessCustody(unittest.TestCase):
     saved_modules = sys.modules.copy()
     saved_env = dict(os.environ)
     saved_path = sys.path[:]
+    saved_meta_path = sys.meta_path[:]
     saved_importers = sys.path_importer_cache.copy()
     saved_bytecode = sys.dont_write_bytecode
     saved_prefix = sys.pycache_prefix
@@ -41,6 +42,7 @@ class ProcessCustody(unittest.TestCase):
       os.environ.clear()
       os.environ.update(saved_env)
       sys.path[:] = saved_path
+      sys.meta_path[:] = saved_meta_path
       sys.dont_write_bytecode = saved_bytecode
       sys.pycache_prefix = saved_prefix
       importlib.invalidate_caches()

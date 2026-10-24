@@ -69,7 +69,7 @@ def test_parent_renews_actual_source_and_retains_real_collector_block(tmp_path, 
     instances.append(collector)
     return collector
 
-  sm = Mock()
+  sm = Mock(updated={'deviceMotion': False}, logMonoTime={'deviceMotion': 0})
   outer_updates = [0]
   def update(timeout=None):
     if timeout == 0:
@@ -92,6 +92,7 @@ def test_parent_renews_actual_source_and_retains_real_collector_block(tmp_path, 
                   source_receipt_ns=BASE if stamp < BASE + SOURCE_LEASE_NS else stamp)
     return serialized_control(row), serialized_output(applied)
 
+  after_drain = []
   def drain(socket, callback, receive, sink, now):
     if socket is control_socket:
       event, _ = row_at(current[0])
@@ -106,10 +107,15 @@ def test_parent_renews_actual_source_and_retains_real_collector_block(tmp_path, 
       current[0] = BASE + 512_000_000
       _, event = row_at(stamp)
       callback(event, sink, now)
+      after_drain.append(current[0])
 
   def native(*args):
-    # Admission guards have run; stop before any fitting/publication work.
-    raise StopIteration
+    # Arrival bookkeeping now samples health before draining/renewing receipts.
+    # Those calls confer no native authority; stop only at the original
+    # post-drain physical-admission boundary, before any fitting/publication.
+    if after_drain and current[0] >= BASE + 512_000_000:
+      raise StopIteration
+    return False
 
   persistence = Mock()
   with patch.object(steerlearnerd, 'FullrateCollector', side_effect=factory), \
@@ -118,7 +124,13 @@ def test_parent_renews_actual_source_and_retains_real_collector_block(tmp_path, 
     with pytest.raises(StopIteration):
       steerlearnerd.run(cp, sm, control_socket, output_socket, Mock(), Mock(return_value=Adapter()), Mock(),
                         reader, lambda row: ('ff',), lambda row: 'ff', Mock(), persistence, fitter, Mock(), clock=lambda: current[0])
-  assert len(reads) == 2  # Rejected receipt is not reread repeatedly this loop.
+  expected_reads = [BASE + 490_000_000, BASE + (510_000_000 if boundary == 'control' else 512_000_000)]
+  # The final queued-input refresh requires its own genuine Params read when
+  # history remains. Explicit configuration changes discard the collector.
+  if change in (None, 'expired', 'future', 'slow_read'):
+    assert len(after_drain) == 1
+    expected_reads.append(after_drain[0])
+  assert reads == expected_reads
   assert metadata_reads
   assert any(call.args == (0,) for call in sm.update.call_args_list)
   if change is None and queued_calibration:
@@ -145,7 +157,7 @@ def test_parent_renews_actual_source_and_retains_real_collector_block(tmp_path, 
     assert not instances[0].blocks
     assert fitter.cancel.call_count >= 1
   persistence.save_current.assert_not_called()
-  assert len(reads) == 2  # Rejected receipt is not reread repeatedly this loop.
+  assert reads == expected_reads  # No repeated read outside the three declared phases.
 
 
 def test_old_command_cannot_enter_collector_after_receipt_renewal():

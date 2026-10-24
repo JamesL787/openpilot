@@ -1,11 +1,11 @@
 #pragma once
 #include "opendbc/safety/declarations.h"
 #include "tesla_preap_pedal.h"
+#include "tesla_preap_radar.h"
 
 static bool tesla_preap_admitted = false;
 static bool tesla_preap_pedal_long_armed = false;
 static bool tesla_preap_pedal_pull_seen = false;
-static uint32_t tesla_preap_pedal_pull_ts = 0U;
 static bool tesla_preap_doors_open = true;
 static int tesla_preap_gear = 0;
 static int tesla_preap_lever_previous = 2;
@@ -53,21 +53,6 @@ static void tesla_preap_reset(void) {
   tesla_preap_stw_seen = false;
   tesla_preap_echo_pending = false;
 }
-
-static uint8_t tesla_preap_crc(const CANPacket_t *msg) {
-  unsigned int crc = 255U;
-  for (int i = 0; i < 7; i++) {
-    crc ^= msg->data[i];
-    for (int bit = 0; bit < 8; bit++) {
-      crc = ((crc & 128U) != 0U) ? ((crc << 1U) ^ 29U) : (crc << 1U);
-      crc &= 255U;
-    }
-  }
-  return (uint8_t)(crc ^ 255U);
-}
-
-
-#include "tesla_preap_radar.h"
 
 static uint32_t tesla_preap_checksum(const CANPacket_t *msg) { return msg->data[7]; }
 static uint32_t tesla_preap_compute_checksum(const CANPacket_t *msg) { return tesla_preap_crc(msg); }
@@ -145,6 +130,8 @@ static void tesla_preap_optional_rx(const CANPacket_t *msg) {
       // real zero/disabled command before any resumed active demand.
       tesla_preap_pedal_tx_seen = false;
       tesla_preap_pedal_tx_enabled = false;
+    } else {
+      // Healthy feedback without driver demand preserves the accepted TX state.
     }
   }
 
@@ -238,6 +225,7 @@ static void tesla_preap_rx_hook(const CANPacket_t *msg) {
           if (established_counter && (lever == 2) && (tesla_preap_lever_previous == 0) && tesla_preap_sources_ready(!tesla_preap_axis) &&
               (tesla_preap_gear == 4) && !tesla_preap_doors_open && !steering_disengage && (!brake_pressed || tesla_preap_axis)) {
             if (tesla_preap_pedal_configured) {
+              static uint32_t tesla_preap_pedal_pull_ts = 0U;
               const uint32_t now = microsecond_timer_get();
               tesla_preap_pedal_long_armed = tesla_preap_pedal_pull_seen && !brake_pressed &&
                 tesla_preap_pedal_feedback_ready(now) &&
@@ -271,10 +259,9 @@ static bool tesla_preap_tx_hook(const CANPacket_t *msg) {
     const bool allowed = tesla_preap_admitted && tesla_preap_pedal_long_armed && tesla_preap_sources_ready(true) &&
       (tesla_preap_gear == 4) && !tesla_preap_doors_open && !brake_pressed && !steering_disengage &&
       !tesla_preap_eps_fault && get_longitudinal_allowed();
-    return tesla_preap_pedal_tx(msg->data, msg->bus, microsecond_timer_get(),
+    accepted = tesla_preap_pedal_tx(msg->data, msg->bus, microsecond_timer_get(),
       (float)vehicle_speed.values[0] / VEHICLE_SPEED_FACTOR, allowed);
-  }
-  if (msg->bus == 1U) {
+  } else if (msg->bus == 1U) {
     accepted = tesla_preap_radar_tx(msg);
   } else if (msg->addr == 0x214U) {
     const unsigned int sum = 0x14U + 2U + msg->data[0] + msg->data[1];
@@ -320,7 +307,7 @@ static bool tesla_preap_fwd_hook(int bus, int addr) {
 
 static safety_config tesla_preap_init(uint16_t param) {
   const bool pedal = ((param == 1U) || (param == 3U) || (param == 7U)) && tesla_preap_pedal_profile_init(param);
-  if ((param != 1U) && (param != 3U) && (param != 7U)) { tesla_preap_pedal_staged_ready = false; }
+  if ((param != 1U) && (param != 3U) && (param != 7U)) { tesla_preap_pedal_startup.staged_ready = false; }
   tesla_preap_admitted = (((param == 0U) || (param == 2U) || (param == 6U)) || pedal) &&
     ((alternative_experience == 0) || (alternative_experience == 32));
   tesla_preap_axis = alternative_experience == 32;

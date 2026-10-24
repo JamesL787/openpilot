@@ -654,7 +654,7 @@ def test_actual_sd_belt_classification_wire_reaches_next_card_cycle(gesture, fau
       now = NOW + tick * 10_000_000
       current['now'], current['controls'] = now, False
       cs = receive_card(now, gesture if tick < 3 else None, tick < 3, (tick + 1) % 4)
-      if tick == 2 and fault is not None:
+      if tick == 2 and fault == 'immediate':
         assert card.aol_transport_feedback.failed and not card.aol_card_intent.allowed_latch
         return
       assert not card.aol_transport_feedback.failed and card.aol_card_intent.allowed_latch
@@ -679,8 +679,11 @@ def test_actual_sd_belt_classification_wire_reaches_next_card_cycle(gesture, fau
       assert native.observedMonoTime == NOW and native.validUntilMonoTime == NOW + 200_000_000
       assert native.requestedLateral and native.lateralAllowed and native.requestedLongitudinal and native.longitudinalAllowed
       assert not axis.longitudinalActive and not command.longActive
-      if fault is not None:
+      if fault == 'immediate':
         assert str(axis.faultReason) == 'critical'
+      elif fault == 'other_soft' and tick == 1:
+        assert str(axis.faultReason) == 'availabilityPause'
+        assert not axis.lateralActive and not command.latActive
       else:
         assert str(axis.faultReason) == 'none' and axis.lateralActive
         assert not sd.enabled  # Pedal/Cancel still disables ordinary LONG; rebuckling cannot resume it.

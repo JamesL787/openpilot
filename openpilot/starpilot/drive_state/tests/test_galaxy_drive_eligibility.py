@@ -89,12 +89,17 @@ def test_normal_garage_flow_current_nooutput_and_manager_offroad(fixture):
 def test_forced_offroad_does_not_borrow_old_park_while_ignition_on(fixture):
   f = fixture
   f.sm.values['pandaStates'][0].ignitionLine = True
+  f.sm.values['pandaStates'][0].safetyModel = 'toyota'
   f.sm.values['deviceState'] = NS(started=False)
+  for table, value in ((f.sm.seen, True), (f.sm.alive, True), (f.sm.valid, True),
+                       (f.sm.logMonoTime, 2_000_000_000), (f.sm.recv_time, 2.0)):
+    table['deviceState'] = value
   f.sm.logMonoTime['carState'] = 1_000_000_000
   status = f.source.update_status(True)
   assert not status['allowed']
   assert 'ignition' in status['reason']
   f.sm.values['pandaStates'][0].ignitionLine = False
+  f.sm.values['pandaStates'][0].safetyModel = 'noOutput'
   for table, value in ((f.sm.seen, True), (f.sm.alive, True), (f.sm.valid, True),
                        (f.sm.logMonoTime, 2_000_000_000), (f.sm.recv_time, 2.0)):
     table['deviceState'] = value
@@ -127,11 +132,12 @@ def test_authenticated_remote_force_drive_modes_use_shared_owner():
     result = case.drive_action('onroad', remote=True)
     assert result[0] == 200 and result[1]['mode'] == 'onroad'
     assert result[1]['effective'] == 'offroad'
-    assert case.drive_action('offroad', remote=True)[0] == 403
+    assert case.drive_action('offroad', remote=True)[0] == 409
     assert case.drive.snapshot().mode == Mode.ONROAD
     case.allowed = True
     result = case.drive_action('offroad', remote=True)
-    assert result[0] == 403
+    assert result[0] == 200 and result[1]['mode'] == 'offroad'
+    assert case.drive.snapshot().mode == Mode.OFFROAD
     case.control.change('offroad', case.drive.snapshot().revision, lambda: True)
     assert case.drive.snapshot().mode == Mode.OFFROAD
 

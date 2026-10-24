@@ -18,8 +18,8 @@ def request(row, value):
 
 def test_shared_owner_changes_nosecone_to_off_atomically_and_preserves_legacy(tmp_path):
   saved, cp = Params(str(tmp_path)), params()
-  saved.put("NAPRadarEnabled", True)
-  saved.put("NAPRadarBehindNosecone", True)
+  saved.put_bool("NAPRadarEnabled", True, block=True)
+  saved.put_bool("NAPRadarBehindNosecone", True, block=True)
   feature = owner(saved, cp)
   row = next(r for r in feature.snapshot("vehicle", parked=True, system_long=False, lateral_context=False, metric=True).rows
              if r.key == "preap_radar:mode")
@@ -35,7 +35,7 @@ def test_onroad_and_changed_source_cannot_commit_hardware_choice(tmp_path):
   feature = owner(saved, cp)
   row = feature.preap_radar.rows()[0]
   change = request(row, "Front")
-  saved.put("NAPRadarEnabled", True)
+  saved.put_bool("NAPRadarEnabled", True, block=True)
   assert not feature.apply(change)
   row = owner(saved, cp, parked=False).preap_radar.rows()[0]
   assert not row.available

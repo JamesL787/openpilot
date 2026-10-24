@@ -680,7 +680,7 @@ class TestToyotaHighlanderAol(unittest.TestCase):
       self.assertEqual(self.safety.aol_get_permission_mask(), 0)
 
   def test_exact_profile_admission_and_reset(self):
-    for word, ae in ((585, 160), (585, 288), (72, 32), (329, 32), (1096, 32), (73, 33), (73, 289), (73, 416)):
+    for word, ae in ((585, 96), (585, 544), (72, 32), (329, 32), (1096, 32), (73, 33), (73, 289), (73, 416)):
       self.init(word, ae)
       self.physical()
       self.assertEqual(self.safety.aol_get_request_mask(), 0)
@@ -717,7 +717,7 @@ class TestToyotaHighlanderAol(unittest.TestCase):
         self.assertEqual(self.safety.aol_get_permission_mask(), 0)
 
   def test_prius_filter_exact_experience_and_word_admission(self):
-    for word, ae in ((4169, 0), (4169, 160), (4169, 288), (4681, 0), (4681, 160), (4681, 288),
+    for word, ae in ((4169, 0), (4169, 96), (4169, 544), (4681, 0), (4681, 96), (4681, 544),
                      (4168, 32), (4170, 32), (4680, 32), (4682, 32)):
       with self.subTest(word=word, ae=ae):
         self.init(word=word, ae=ae)
@@ -743,3 +743,29 @@ class TestToyotaHighlanderAol(unittest.TestCase):
         self.assertEqual(self.safety.aol_get_permission_mask(), 0)
         self.physical()
         self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+
+
+class TestToyotaLtaIndependentHealth(unittest.TestCase):
+  def test_lta_and_lka_must_both_be_healthy(self):
+    # Reuse the current library so instrumented CI observes these native branches.
+    from opendbc.safety.tests.test_toyota_eps8_sdsu import Physical
+    for word in (0x449, 0x649, 0x1449, 0x1649, 0x8449, 0x8649):
+      with self.subTest(word=word):
+        case = Physical(word)
+        try:
+          for _ in range(25):
+            case.tick(cruise=False)
+          for _ in range(25):
+            case.tick()
+          expected = 1 if word & 0x200 else 3
+          self.assertEqual(case.native.aol_get_permission_mask(), expected)
+          for lka, lta in [(1, fault) for fault in (0, 3, 9, 11, 17, 21, 25)] + [(9, 1)]:
+            frame = case.packer.make_can_msg('EPS_STATUS', 0, {'LKA_STATE': lka, 'LTA_STATE': lta})
+            address, data, bus = frame
+            case.native.safety_rx_hook(libsafety_py.make_CANPacket(address, bus, data))
+            self.assertEqual(case.native.aol_get_permission_mask(), 0)
+            case.tick(cruise=False)
+            case.tick()
+            self.assertEqual(case.native.aol_get_permission_mask(), expected)
+        finally:
+          case.close()

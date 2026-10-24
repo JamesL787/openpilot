@@ -16,7 +16,7 @@ class ManualTurnInputs:
   def __init__(self, params, *, track_assist_permission: bool = False):
     self.params = params
     self.track_assist_permission = track_assist_permission
-    self.sm = messaging.SubMaster(["modelV2", "lateralDelay"] + (["pandaStates"] if track_assist_permission else []))
+    self.sm = messaging.SubMaster(["modelV2", "lateralDelay"] + (["pandaStates", "aolSafetyWire"] if track_assist_permission else []))
     self.enabled = bool(self.params.get("FordHumanTurnDetection", return_default=True))
     self.frames = 0
     self.blend_settings = self._read_blend_settings()
@@ -104,16 +104,32 @@ class ManualTurnInputs:
         return False
       if len(pandas) != len(cp.safetyConfigs):
         return False
+      aol = cp.brand == "ford" and cp.alternativeExperience == 32
+      if aol:
+        from openpilot.starpilot.aol.runtime import current_native
+        native = current_native(self.sm, cp, now_ns=boot)
+        if (native is None or not native.pandaInventory or not native.requestedLateral or not native.lateralAllowed or
+            native.sourcePandaStatesMonoTime != stamp or boot - native.observedMonoTime > max_age_ns):
+          return False
       for i, (panda, config) in enumerate(zip(pandas, cp.safetyConfigs, strict=True)):
         if (panda.safetyModel != config.safetyModel or panda.safetyParam != config.safetyParam or
             panda.alternativeExperience != cp.alternativeExperience or panda.safetyRxChecksInvalid or
             panda.heartbeatLost or len(panda.faults) or str(panda.faultStatus) != "none"):
           return False
-        if bool(panda.controlsAllowed) != (i == len(pandas) - 1):
+        if (not aol and bool(panda.controlsAllowed) != (i == len(pandas) - 1) or
+            aol and i != len(pandas) - 1 and panda.controlsAllowed):
           return False
       return True
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
       return False
+
+  def native_tx_blocked(self):
+    """Read only after native_permission qualified this same Panda snapshot."""
+    try:
+      value = self.sm["pandaStates"][-1].safetyTxBlocked
+      return int(value) if 0 <= value <= 0xFFFFFFFF else None
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError, OverflowError):
+      return None
 
   def assist_permission(self):
     if not self.track_assist_permission:
@@ -175,6 +191,22 @@ def configure_controller(CI, params):
       prepare_rav4h_stock(cp)
     elif controller is not None:
       controller.rav4h_filter_input = Rav4hFilterPreference(cp, params)
+  from opendbc.car.toyota import dsu_bypass
+  if dsu_bypass.enabled(cp):
+    from openpilot.starpilot.car.toyota.bypass_preferences import BypassPreference
+    from openpilot.starpilot.car.toyota.prius_preferences import filter_preference_enabled
+    if not filter_preference_enabled(params):
+      dsu_bypass.prepare_stock(cp)
+    elif controller is not None:
+      controller.bypass_input = BypassPreference(cp, params)
+  from opendbc.car.toyota import advert_filter
+  if advert_filter.enabled(cp):
+    from openpilot.starpilot.car.toyota.advert_preferences import AdvertFilterPreference
+    from openpilot.starpilot.car.toyota.prius_preferences import filter_preference_enabled
+    if not filter_preference_enabled(params):
+      advert_filter.prepare_stock(cp)
+    elif controller is not None:
+      controller.advert_filter_input = AdvertFilterPreference(cp, params)
   from opendbc.car.toyota.prius_longitudinal import enabled as prius_filter_enabled, prepare_stock as prepare_prius_stock
   if prius_filter_enabled(cp):
     from openpilot.starpilot.car.toyota.prius_preferences import PriusFilterPreference, filter_preference_enabled

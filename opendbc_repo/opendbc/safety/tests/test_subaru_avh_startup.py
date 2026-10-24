@@ -114,3 +114,26 @@ class TestSubaruAvhDiscovery(unittest.TestCase):
                   'alt_gear', 'alt_gas', 'engine', 'main_gear'):
       with self.subTest(fault=fault):
         test_native_refusals(fault)
+
+
+def test_explicit_release_blocks_avh_and_preserves_stock_aol():
+  from opendbc.safety.tests.test_subaru_stock_aol import TestSubaruStockAol
+
+  original = libsafety_py.libpath
+  try:
+    libsafety_py.load(libsafety_py._build_libsafety(release=True))
+    assert libsafety_py.libsafety.set_safety_hooks(structs.CarParams.SafetyModel.allOutput, 0) != 0
+    for param in (1169, 1425):
+      for ae in (0, 32):
+        test_exact_pair_debug_only_and_status_never_tx(param, ae)
+    # RELEASE must retain normal engagement and lateral-only permission after
+    # rejecting the optional DEBUG AVH words, including both Legacy bases.
+    case = TestSubaruStockAol()
+    for param in (145, 401):
+      case.configure(param)
+      case.arm()
+      case.safety.aol_set_host_request(3)
+      assert case.safety.aol_get_permission_mask() == 1
+      assert case.feed(main=False) == 0
+  finally:
+    libsafety_py.load(original)

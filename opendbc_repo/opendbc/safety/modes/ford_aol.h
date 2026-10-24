@@ -1,5 +1,6 @@
 #pragma once
 
+static bool ford_aol_manual = false;
 static bool ford_aol_enabled = false;
 static bool ford_aol_token = false;
 static bool ford_aol_main_available = false;
@@ -15,7 +16,10 @@ static uint16_t ford_aol_param = 0U;
 static bool ford_aol_drive = false;
 static uint8_t ford_aol_eps = 0U;
 static bool ford_aol_lka_ready = false;
-static bool ford_aol_owned = false;
+// Keep steering and display ownership separate without adding state storage.
+#define FORD_AOL_STEERING_OWNED 1U
+#define FORD_AOL_DISPLAY_OWNED 2U
+static uint8_t ford_aol_owned = 0U;
 static uint32_t ford_aol_accepted_ts = 0U;
 
 static void ford_aol_clear(void) {
@@ -27,7 +31,7 @@ static void ford_aol_clear(void) {
   ford_aol_token_ts = 0U;
   ford_aol_main_neutral = false;
   ford_aol_button_neutral = false;
-  ford_aol_owned = false;
+  ford_aol_owned = 0U;
 }
 
 static void ford_aol_reset(void) {
@@ -58,6 +62,9 @@ static void ford_aol_arm(void) {
 
 static void ford_aol_host_request(uint8_t mask) {
   ford_aol_request_seen |= mask != 0U;
+  if (((ford_aol_param & 0xFFFEU) == 18U) && ((mask & 1U) == 0U)) {
+    ford_aol_owned &= FORD_AOL_STEERING_OWNED;
+  }
 }
 
 static uint8_t ford_aol_request_mask(void) {
@@ -108,6 +115,9 @@ static uint8_t ford_aol_permission_mask(void) {
       !brake_pressed && !gas_pressed && !gas_pressed_prev) {
     result |= 2U;
   }
+  if ((base == 18U) && ((result & 1U) == 0U)) {
+    ford_aol_owned &= FORD_AOL_STEERING_OWNED;
+  }
   return result;
 }
 
@@ -151,7 +161,9 @@ static void ford_aol_rx(const CANPacket_t *msg) {
       ford_aol_lka_ready = ((ford_aol_param & 0xFFFEU) == 12U) ?
         ((((msg->data[0] >> 4U) & 3U) == 3U) && ((msg->data[0] & 0x40U) == 0U)) :
         ((state == 1U) || (state == 2U) || (state == 3U));
-    } else {
+    } else if (ford_aol_manual && msg_matches(msg, 0x3C3U, 0U, 8U)) {
+      ford_aol_drive = !GET_BIT(msg, 9U);
+    } else if (!ford_aol_manual) {
       const uint16_t base = ford_aol_param & 0xFFFEU;
       const uint16_t gear_addr = (base == 8U) ? 0x230U : ((base == 10U) ? 0x5AU : 0x176U);
       if (msg_matches(msg, gear_addr, 0U, 8U)) {
@@ -159,6 +171,14 @@ static void ford_aol_rx(const CANPacket_t *msg) {
                                   ((base == 10U) ? (msg->data[6] & 15U) : (msg->data[3] & 15U));
         ford_aol_drive = (gear == 3U) || (gear == 4U) || (gear == 5U);
       }
+    } else {
+      // Manual profiles consume only the dedicated reverse lamp source.
+    }
+    // A transient physical veto revokes only display ownership, even when a
+    // healthy packet follows in the same RX batch. AOL intent is retained.
+    if (((ford_aol_param & 0xFFFEU) == 18U) &&
+        (!ford_aol_main_available || !ford_aol_drive || (ford_aol_eps != 0U) || !ford_aol_lka_ready)) {
+      ford_aol_owned &= FORD_AOL_STEERING_OWNED;
     }
   }
 }
@@ -177,15 +197,14 @@ static void ford_aol_full_engagement(bool cruise_rising) {
 
 static bool ford_aol_param_valid(uint16_t param) {
   bool result = false;
-  switch (param) {
+  switch (param & ~256U) {
     case 8U: case 9U: case 10U: case 12U: case 13U: case 18U: case 32U: case 33U: case 66U:
       result = true;
       break;
-#ifdef ALLOW_DEBUG
+    case 146U: case 147U: case 160U: case 161U: case 194U: case 195U:
     case 11U: case 19U: case 67U:
       result = true;
       break;
-#endif
     default:
       break;
   }
@@ -195,7 +214,8 @@ static bool ford_aol_param_valid(uint16_t param) {
 static void ford_aol_configure(uint16_t param) {
   ford_aol_reset();
   ford_aol_enabled = ford_aol_param_valid(param) && ((unsigned int)alternative_experience == 32U);
-  ford_aol_param = param;
+  ford_aol_manual = (param & 256U) != 0U;
+  ford_aol_param = param & ~(256U | 128U);
   if (ford_aol_enabled) {
     static const AolSafetyPolicy policy = {
       .reset = ford_aol_reset,
@@ -218,16 +238,36 @@ static void ford_aol_tx(const CANPacket_t *msg, bool accepted) {
     const bool active = (msg->addr == 0x3CAU) ? (((msg->data[0] >> 5U) == 2U) || ((msg->data[0] >> 5U) == 4U)) :
                        ((msg->addr == 0x3D3U) ? (((msg->data[4] >> 2U) & 7U) != 0U) :
                                                (((msg->data[0] >> 4U) & 7U) != 0U));
-    ford_aol_owned = accepted && active && (ford_aol_permission_mask() != 0U) && !relay_malfunction;
+    const bool mache = (ford_aol_param & 0xFFFEU) == 18U;
+    const bool retained_display = mache && ((ford_aol_owned & FORD_AOL_DISPLAY_OWNED) != 0U) &&
+      (safety_get_ts_elapsed(microsecond_timer_get(), ford_aol_accepted_ts) <= AOL_HOST_REQUEST_TIMEOUT_US);
+    const uint8_t permission = (accepted && (active || retained_display)) ? ford_aol_permission_mask() : 0U;
+    const bool steering_owned = accepted && active && (permission != 0U) && !relay_malfunction;
+    const bool display_owned = steering_owned || (accepted && retained_display && ((permission & 1U) != 0U) && !relay_malfunction);
+    ford_aol_owned = (steering_owned ? FORD_AOL_STEERING_OWNED : 0U) | (display_owned ? FORD_AOL_DISPLAY_OWNED : 0U);
     ford_aol_accepted_ts = microsecond_timer_get();
   }
 }
 
 static bool ford_aol_fwd(int bus, int addr) {
   bool blocked = false;
-  if (ford_aol_enabled && (bus == 2) && ford_aol_owned && (ford_aol_permission_mask() != 0U) &&
+  if (ford_aol_enabled && (bus == 2) && (ford_aol_owned != 0U) && (ford_aol_permission_mask() != 0U) &&
       (safety_get_ts_elapsed(microsecond_timer_get(), ford_aol_accepted_ts) <= AOL_HOST_REQUEST_TIMEOUT_US)) {
-    blocked = (addr == (int)ford_aol_replacement()) || (addr == 0x3D8) || (addr == 0x18A);
+    const bool display_permitted = ((ford_aol_param & 0xFFFEU) != 18U) || ((ford_aol_permission_mask() & 1U) != 0U);
+    blocked = (((ford_aol_owned & FORD_AOL_STEERING_OWNED) != 0U) && (addr == (int)ford_aol_replacement())) ||
+      (((ford_aol_owned & FORD_AOL_DISPLAY_OWNED) != 0U) && display_permitted && ((addr == 0x3D8) || (addr == 0x18A)));
   }
   return blocked;
+}
+
+// An unowned Mach-E display must remain stock, including a rejected first
+// steering command. This cannot grant steering or longitudinal permission.
+static bool ford_aol_display_tx_allowed(void) {
+  bool allowed = true;
+  if (ford_aol_enabled && ((ford_aol_param & 0xFFFEU) == 18U)) {
+    allowed = ((ford_aol_owned & FORD_AOL_DISPLAY_OWNED) != 0U) &&
+      ((ford_aol_permission_mask() & 1U) != 0U) && !relay_malfunction &&
+      (safety_get_ts_elapsed(microsecond_timer_get(), ford_aol_accepted_ts) <= AOL_HOST_REQUEST_TIMEOUT_US);
+  }
+  return allowed;
 }

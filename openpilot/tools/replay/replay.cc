@@ -1,4 +1,5 @@
 #include "tools/replay/replay.h"
+#include "tools/replay/local_timeline.h"
 
 #include <capnp/dynamic.h>
 #include <csignal>
@@ -80,6 +81,8 @@ int Replay::segmentAt(double seconds) const {
 }
 
 bool Replay::loadMachineRoute() {
+  LocalTimeline timeline;
+  bool timeline_ok = true;
   struct Coverage { int segment; uint64_t begin, end; };
   std::vector<Coverage> coverage;
   std::vector<int64_t> offsets;
@@ -88,20 +91,33 @@ bool Replay::loadMachineRoute() {
   for (auto which : {cereal::Event::Which::INIT_DATA, cereal::Event::Which::CLOCKS,
                      cereal::Event::Which::SPOT_MONITOR_STATE, cereal::Event::Which::NARROW_ROAD_ENCODE_IDX,
                      cereal::Event::Which::WIDE_ROAD_ENCODE_IDX}) filters[which] = true;
+  const auto coverage_filters = filters;
+  for (auto which : {cereal::Event::Which::CAR_CONTROL, cereal::Event::Which::SELFDRIVE_STATE,
+                     cereal::Event::Which::CONTROLS_STATE, cereal::Event::Which::AOL_AXIS_STATE,
+                     cereal::Event::Which::USER_BOOKMARK}) filters[which] = true;
   for (const auto &[n, files] : route().segments()) {
     const bool narrow = !files.narrow_road_cam.empty() || !files.qcamera.empty();
     const bool wide = hasFlag(REPLAY_FLAG_WIDE_ROAD) && !files.wide_road_cam.empty();
     if ((!narrow && !wide) || (files.rlog.empty() && files.qlog.empty())) continue;
     std::shared_ptr<LogReader> metadata;
+    bool enriched = false, sampled = false;
     for (const auto &path : {files.qlog, files.rlog}) {
       if (path.empty()) continue;
       auto fd = files.openLocal(path);
-      auto candidate = std::make_shared<LogReader>(filters, 128 * 1024 * 1024);
-      if (fd && candidate->load("/proc/self/fd/" + std::to_string(static_cast<int>(*fd)), load_abort_ ? load_abort_ : &exit_) && !candidate->corrupt()) {
-        metadata = std::move(candidate); break;
+      if (!fd) continue;
+      for (bool enrichment : {true, false}) {
+        auto candidate = std::make_shared<LogReader>(enrichment ? filters : coverage_filters, 128 * 1024 * 1024);
+        if (candidate->load("/proc/self/fd/" + std::to_string(static_cast<int>(*fd)), load_abort_ ? load_abort_ : &exit_) && !candidate->corrupt()) {
+          metadata = std::move(candidate);
+          enriched = enrichment;
+          sampled = path == files.qlog;
+          break;
+        }
+        if ((load_abort_ && *load_abort_) || exit_) break;
       }
+      if (metadata || (load_abort_ && *load_abort_) || exit_) break;
     }
-    if (!metadata) continue;
+    if (!metadata) { timeline.skip(n); continue; }
     for (const auto &e : metadata->events) {
       if (e.which != cereal::Event::Which::INIT_DATA) continue;
       capnp::FlatArrayMessageReader reader(e.data);
@@ -132,7 +148,17 @@ bool Replay::loadMachineRoute() {
         end = std::max<uint64_t>(end, e.mono_time + 50000000ULL);
       }
     }
-    if (end > begin) coverage.push_back({n, begin, end});
+    if (end > begin) {
+      coverage.push_back({n, begin, end});
+      if (timeline_ok) {
+        try {
+          if (enriched) timeline.consume(n, metadata->events, sampled);
+          else timeline.skip(n);
+        } catch (const std::exception &) {
+          timeline_ok = false;
+        }
+      }
+    } else timeline.skip(n);
   }
   for (const auto offset : offsets) {
     if (boot_offset_ns_ >= 0 && std::abs(offset - boot_offset_ns_) > 5000000) {
@@ -166,6 +192,12 @@ bool Replay::loadMachineRoute() {
   if (seek_ranges_.empty()) { fail("No closed recorded camera intervals are available"); return false; }
   min_seconds_ = seek_ranges_.front().begin;
   max_seconds_ = seek_ranges_.back().end;
+  try {
+    timeline_state_ = timeline_ok && timeline.write(util::getenv("COMMA_CACHE", "") + "/timeline.jsonl", route_start_ts_, seek_ranges_) ? "ready" : "unavailable";
+    timeline_incomplete_ = timeline.incomplete();
+  } catch (const std::exception &) {
+    timeline_state_ = "unavailable";
+  }
   seg_mgr_->setPlayable(playable, boot_offset_ns_);
   return true;
 }

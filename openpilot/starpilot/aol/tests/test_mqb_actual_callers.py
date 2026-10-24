@@ -1,4 +1,4 @@
-"""Actual SD.step/Controls.publish/Card.controls_update + native TX. Root runtime only.
+"""Actual SD.step/Controls.publish/Card.controls_update + native TX.
 
 Synthetic physical CAN/transport; no native/axis/CarParams permission is fabricated.
 The shared actual-caller harness serializes measured native booleans/inventory and
@@ -44,8 +44,7 @@ def test_mqb_full_engagement_brake_reverse_drive_actual_callers(gearbox, alpha, 
     fp[offset + 1][0xFD] = 8
     cp = CarInterface.get_params(CAR.VOLKSWAGEN_GOLF_MK7, fp, [], alpha, False, False)
     cp.fingerprintSource = structs.CarParams.FingerprintSource.fixed if fixed else structs.CarParams.FingerprintSource.fw
-    # Root preloads the matching compiled library. This runner never invokes a compiler.
-    assert 'libsafety' in libsafety_py.__dict__, 'Root must preload the source-matched native library'
+    # Use the standard source-built loader in fresh pytest processes; private runners may preload it.
     native = libsafety_py.libsafety
     quiet = None
     if offset:
@@ -142,7 +141,7 @@ def test_mqb_full_engagement_brake_reverse_drive_actual_callers(gearbox, alpha, 
     cleanup.callback(native.init_tests)
     native.init_tests()
     native.set_alternative_experience(32)
-    native.set_safety_hooks(15, (24 if gearbox == 'manual' else 8) | int(alpha))
+    native.set_safety_hooks(15, (24 if gearbox == 'manual' else 40 if gearbox == 'direct' else 8) | int(alpha))
     native.set_aol_test_heartbeat(True)
     card.CI.update([])
     dbc = ParsedDBC('vw_mqb')

@@ -44,7 +44,7 @@ def hardware_supported(candidate, fingerprint, car_fw):
   ):
     return False
   # TSS2 camera ACC is normally on bus2. It is not evidence of a DSU bypass.
-  if not CAR(candidate).config.flags & ToyotaFlags.TSS2 and any(address in fingerprint.get(2, {}) for address in (0x343, 0x4CB)):
+  if not CAR(candidate).config.flags & ToyotaFlags.TSS2 and any(fingerprint.get(2, {}).get(address, 8) != 8 for address in (0x343, 0x4CB)):
     return False
   from opendbc.car.toyota.fingerprints import FW_VERSIONS
 
@@ -71,6 +71,8 @@ def apply(cp, alpha_long):
 
 
 def configured(cp):
+  from opendbc.car.toyota.pedal_composite import parent_cp
+  cp = parent_cp(cp)
   if (
     cp is None
     or cp.brand != "toyota"
@@ -101,6 +103,9 @@ def configured(cp):
 
 
 def prepare_stock(cp):
+  from opendbc.car.toyota import pedal_composite
+  if pedal_composite.marked(cp):
+    return pedal_composite.prepare_stock(cp)
   if not configured(cp):
     return False
   cp.openpilotLongitudinalControl = False

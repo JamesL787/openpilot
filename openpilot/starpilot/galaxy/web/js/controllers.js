@@ -1,5 +1,6 @@
 import { guardUnload } from "./unload-guard.js"
 import { GxNotice } from "./notice.js"
+import { reportSave } from "./save-feedback.js"
 import { reactive } from "../vendor/vue/vue.esm-browser.js"
 
 const HEX = /^[0-9a-f]{64}$/
@@ -156,8 +157,8 @@ export const ControllersPage = {
     reload() { return this.feed.refresh(true) },
     async save() {
       if (!this.canEdit || !this.dirty) return
-      const saved = await this.feed.action({ operation: "save", revision: this.state.draft.revision,
-        enabled: this.state.draft.enabled, slots: this.state.draft.slots.map((value) => value || null) })
+      const saved = await reportSave(() => this.feed.action({ operation: "save", revision: this.state.draft.revision,
+        enabled: this.state.draft.enabled, slots: this.state.draft.slots.map((value) => value || null) }))
       if (!saved && this.state.status) this.state.draft = draftFrom(this.state.status)
       return saved
     },

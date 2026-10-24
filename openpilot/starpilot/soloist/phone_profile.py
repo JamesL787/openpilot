@@ -11,6 +11,11 @@ from pathlib import Path
 import subprocess
 import sys
 
+if __package__:
+  from . import bluealsa_runtime
+else:
+  import bluealsa_runtime
+
 DROP_IN = Path('/run/systemd/system/bluealsa.service.d/90-starpilot-phone.conf')
 # BlueALSA is tiny but must drain the Bluetooth socket on time; at nice 0 it competes with driving
 # processes on busy cores and the music chain (nice 10) cannot make up for lost incoming packets.
@@ -25,32 +30,40 @@ def systemctl(*args):
 def configure(action: str, path: Path = DROP_IN, run=systemctl) -> None:
   if action not in ('acquire', 'release'):
     raise ValueError('Unknown profile action')
-  if path.exists() and path.read_text() not in (CONTENTS, LEGACY_CONTENTS):
+  previous = path.read_text() if path.exists() else None
+  if previous is not None and previous not in (CONTENTS, LEGACY_CONTENTS):
     raise RuntimeError('Phone audio profile override was changed externally')
+  bluealsa_runtime.check_owned(path)
+  override, _ = bluealsa_runtime.paths(path)
   if action == 'release':
-    if path.exists():
-      path.unlink()
+    if previous is not None or override.exists():
+      bluealsa_runtime.remove(path)
+      path.unlink(missing_ok=True)
       run('daemon-reload')
       run('try-restart', 'bluealsa.service')
     return
-  if path.exists() and path.read_text() == LEGACY_CONTENTS:
-    path.write_text(CONTENTS)
-    run('daemon-reload')
-    run('restart', 'bluealsa.service')
-    return
-  command = run('show', '--property=ExecStart', '--value', 'bluealsa.service')
-  if 'argv[]=/usr/bin/bluealsa -p a2dp-source -p a2dp-sink ;' in command:
+  bluealsa_runtime.validate()
+  if previous == CONTENTS and override.exists():
     run('start', 'bluealsa.service')
     return
-  if 'argv[]=/usr/bin/bluealsa -p a2dp-source ;' not in command:
-    raise RuntimeError('Unsupported BlueALSA service configuration; phone audio was not enabled')
+  if previous is None:
+    command = run('show', '--property=ExecStart', '--value', 'bluealsa.service')
+    if not any(f'argv[]=/usr/bin/bluealsa {profiles} ;' in command for profiles in
+               ('-p a2dp-source', '-p a2dp-source -p a2dp-sink')):
+      raise RuntimeError('Unsupported BlueALSA service configuration; phone audio was not enabled')
   path.parent.mkdir(parents=True, exist_ok=True)
-  path.write_text(CONTENTS)
   try:
+    # Keep this file byte-for-byte compatible with old commits recovery code.
+    path.write_text(CONTENTS)
+    bluealsa_runtime.install(path)
     run('daemon-reload')
     run('restart', 'bluealsa.service')
   except Exception:
-    path.unlink(missing_ok=True)
+    bluealsa_runtime.remove(path)
+    if previous is None:
+      path.unlink(missing_ok=True)
+    else:
+      path.write_text(previous)
     run('daemon-reload')
     run('try-restart', 'bluealsa.service')
     raise

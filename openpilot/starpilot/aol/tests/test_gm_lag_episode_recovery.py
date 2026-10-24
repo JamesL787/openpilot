@@ -25,7 +25,10 @@ def test_long_isolated_lag_recovery_keeps_only_existing_intent(c9, alpha):
         axis, _, command = drive(tick, cs, allowed=tick == 2, native_request_lat=tick == 2)
       assert not axis.lateralActive and not axis.longitudinalActive
       assert not command.latActive and not command.longActive
-      assert str(axis.faultReason) == 'critical'
+      assert str(axis.faultReason) == 'availabilityPause'
+      assert axis.faultSessionId == sd.aol_session_id and not axis.nativeAcknowledged
+      assert axis.sourceCarStateMonoTime == BASE + tick * 10_000_000
+      assert sd.aol_published_fault_proof is None
       assert not axis.desiredLateral and not axis.desiredLongitudinal
       assert axis.validUntilMonoTime == axis.observedMonoTime + 30_000_000
       if event_ns is None:
@@ -64,7 +67,9 @@ def test_stock_pcm_off_lag_never_exempts_other_rejection(bad):
     assert card.aol_card_intent.allowed_latch and not command.latActive
     cs = parse(3, 'cancel' if bad == 'cancel' else 'none', main=bad != 'main_off')
     cs.doorOpen = bad == 'door'
-    options = {'critical_event': log.OnroadEvent.EventName.processNotRunning} if bad == 'other_fault' else {}
+    # processNotRunning is a SOFT availability pause. This negative case must
+    # inject the actual immediate fault whose disarm behavior it protects.
+    options = {'critical_event': log.OnroadEvent.EventName.controlsMismatch} if bad == 'other_fault' else {}
     with mock.patch.object(sd.rk.avg_dt, 'get_average', return_value=.02):
       axis, _, command = drive(3, cs, allowed=False, native_request_lat=False, native_valid=bad != 'native_invalid', **options)
     if bad == 'epoch':
@@ -73,4 +78,10 @@ def test_stock_pcm_off_lag_never_exempts_other_rejection(bad):
       sd.pm.messages['aolAxisState'] = wire.as_reader()
     deliver_card(card, sd, controls, cs, 3)
     assert not command.latActive and not command.longActive
-    assert not card.aol_card_intent.allowed_latch
+    if bad == 'cancel':
+      # GM's ordinary Cancel withdraws LONG; MAIN still owns lateral intent.
+      assert card.aol_card_intent.allowed_latch and not card.aol_card_intent._main_cycle_required
+      assert any(str(event.type) == 'cancel' and event.pressed for event in cs.buttonEvents)
+      assert not axis.longitudinalActive and not sd.events.contains('enable')
+    else:
+      assert not card.aol_card_intent.allowed_latch

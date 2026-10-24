@@ -464,3 +464,12 @@ try {
   else delete globalThis.navigator
 }
 console.log('Android Auto page: manage view, pairing gates and phone detection passed')
+
+// Audio setup belongs to Android Auto; old bookmarks still open the same page.
+const catalog = JSON.parse(readFileSync(new URL("../web/data/catalog.json", import.meta.url), "utf8"))
+assert.ok(!catalog.tools.some(tool => tool.path === "/spotify" || tool.path === "/android-auto/audio"))
+const audioTool = catalog.tools.find(tool => tool.path === "/android-auto").children
+  .find(tool => tool.path === "/android-auto/audio")
+assert.equal(audioTool.name, "Spotify and Phone Audio")
+assert.match(AndroidAutoPage.template, /href="#\/android-auto\/audio"/)
+assert.ok(app.includes(`SpotifyPage v-else-if="['/android-auto/audio', '/spotify'].includes(route.path)"`))

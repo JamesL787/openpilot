@@ -13,13 +13,24 @@ TOYOTA_NO_LEAD_CRUISE_SIGN_FLIP_MIN_SET_SPEED_ERROR = .35
 
 
 def configured(cp):
+  from opendbc.car.toyota.pedal_composite import parent_cp
+  cp = parent_cp(cp)
+  from opendbc.car.toyota import prius_sdsu, prius_advert_filter
+  if prius_sdsu.configured(cp) or prius_advert_filter.configured(cp):
+    return True
   return (cp.brand == 'toyota' and cp.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) and
           cp.pcmCruise and not cp.dashcamOnly and not cp.notCar and
           not cp.passive and cp.steerControlType == structs.CarParams.SteerControlType.torque and
           cp.flags & ~int(ToyotaFlags.ZSS) == int(ToyotaFlags.HYBRID | ToyotaFlags.LONG_FILTER | ToyotaFlags.RAISED_ACCEL_LIMIT) and
           len(cp.safetyConfigs) == 1 and cp.safetyConfigs[0].safetyModel == structs.CarParams.SafetyModel.toyota and
-          cp.safetyConfigs[0].safetyParam in (4169, 4681) and
-          cp.openpilotLongitudinalControl == (cp.safetyConfigs[0].safetyParam == 4169))
+          cp.safetyConfigs[0].safetyParam in (0x8049, 0x8249) and
+          cp.openpilotLongitudinalControl == (cp.safetyConfigs[0].safetyParam == 0x8049))
+
+
+def eps73_status_configured(cp):
+  from opendbc.car.toyota.pedal_composite import parent_cp
+  cp = parent_cp(cp)
+  return configured(cp) and cp.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) and cp.safetyConfigs[0].safetyParam in (0x8049, 0x8249)
 
 
 def enabled(cp):
@@ -31,10 +42,16 @@ def stopping_decel_rate(cp):
 
 
 def prepare_stock(cp):
+  from opendbc.car.toyota import pedal_composite
+  if pedal_composite.marked(cp):
+    return pedal_composite.prepare_stock(cp)
+  from opendbc.car.toyota import prius_sdsu, prius_advert_filter
+  if prius_sdsu.prepare_stock(cp) or prius_advert_filter.prepare_stock(cp):
+    return True
   if not configured(cp):
     return False
   cp.openpilotLongitudinalControl = False
-  cp.safetyConfigs[0].safetyParam = 4681
+  cp.safetyConfigs[0].safetyParam = 0x8249
   cp.autoResumeSng = False
   return True
 

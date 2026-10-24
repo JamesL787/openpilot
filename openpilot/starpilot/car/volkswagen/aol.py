@@ -1,18 +1,19 @@
 from opendbc.car import structs
-from opendbc.car.volkswagen.stock_aol import qualified as stock_qualified, safety_config as aol_safety_config, AOL_WORD, MANUAL_WORD, AOL_WORDS
+from opendbc.car.volkswagen.stock_aol import qualified as stock_qualified, safety_config as aol_safety_config, AOL_WORD, MANUAL_WORD, DIRECT_WORD, AOL_WORDS
 from opendbc.car.volkswagen.long_aol import qualified as long_qualified, WORDS as LONG_WORDS
+from opendbc.car.volkswagen.meb_modes import qualified as meb_qualified, profile_word as meb_word, base_word as meb_base_word, AOL_WORDS as MEB_WORDS
 from openpilot.starpilot.aol.intent import AolCardIntent, AOL_TOGGLE, ButtonType
 from openpilot.starpilot.aol.policy import AolVehiclePolicy
 
 
 def qualified(cp, *, marked_only=False):
-  return stock_qualified(cp, marked_only=marked_only) or long_qualified(cp, marked_only=marked_only)
+  return stock_qualified(cp, marked_only=marked_only) or long_qualified(cp, marked_only=marked_only) or meb_qualified(cp, marked_only=marked_only)
 
 
 def temporary_restriction(cp, state):
   gears = structs.CarState.GearShifter
   return bool(state is not None and qualified(cp, marked_only=True) and state.canValid and not state.canTimeout and
-              not state.steerFaultPermanent and (state.steerFaultTemporary or state.standstill or
+              not state.steerFaultPermanent and (state.steerFaultTemporary or (state.standstill and not cp.steerAtStandstill) or
               state.gearShifter not in (gears.drive, gears.sport, gears.eco, gears.manumatic)))
 
 
@@ -20,6 +21,9 @@ def policy_for(cp):
   if not qualified(cp):
     return AolVehiclePolicy()
   word = AOL_WORD | (MANUAL_WORD if cp.transmissionType == structs.CarParams.TransmissionType.manual else 0)
+  word |= DIRECT_WORD if cp.transmissionType == structs.CarParams.TransmissionType.direct else 0
+  if meb_qualified(cp):
+    word = meb_word(cp) & ~meb_base_word(cp)
   return AolVehiclePolicy(intent_supported=True, settings_supported=True, runtime_supported=True,
                          normal_runtime_supported=True, ordinary_axis_ack_required=qualified(cp, marked_only=True),
                          explicit_latch=True, lkas_button_supported=False, safety_param_addition=word,
@@ -27,7 +31,8 @@ def policy_for(cp):
 
 
 def native_profile_supported(model, param):
-  return model == int(structs.CarParams.SafetyModel.volkswagen) and param in AOL_WORDS | LONG_WORDS
+  return (model == int(structs.CarParams.SafetyModel.volkswagen) and param in AOL_WORDS | LONG_WORDS or
+          model == int(structs.CarParams.SafetyModel.volkswagenMeb) and param in MEB_WORDS)
 
 
 def native_accepts_cp(cp, model, param):
@@ -50,6 +55,9 @@ class VolkswagenStockCardIntent(AolCardIntent):
   observe_stock_engagement = True
 
   def __init__(self, cp, settings):
+    self.cp = cp
+    self.physical_eps_pause = False
+    self.eps_recovery_ns = 0
     self.main_seen = False
     self.main_startup_pending = True
     self.main_available = False
@@ -58,6 +66,21 @@ class VolkswagenStockCardIntent(AolCardIntent):
     super().__init__(settings, explicit_latch=True, lkas_button_supported=False)
 
   def update(self, CS, **kwargs):
+    from openpilot.starpilot.aol.runtime import SAFETY_MAX_AGE_NS
+    now_ns = kwargs.get('now_ns', 0)
+    if temporary_eps_restriction(self.cp, CS):
+      self.physical_eps_pause = True
+      self.eps_recovery_ns = 0
+    elif self.physical_eps_pause and _eps_physical_state(self.cp, CS):
+      self.physical_eps_pause = False
+      self.eps_recovery_ns = now_ns
+    elif not _eps_physical_state(self.cp, CS):
+      self.physical_eps_pause = False
+      self.eps_recovery_ns = 0
+    rejection_ns = kwargs.get('native_rejection_ns', 0)
+    if (kwargs.get('fault_active') is False and 0 < rejection_ns <= self.eps_recovery_ns <= now_ns and
+        now_ns - self.eps_recovery_ns <= SAFETY_MAX_AGE_NS):
+      kwargs['native_rejection_ns'] = 0
     state = structs.CarState(**CS.to_dict())
     events = []
     for event in CS.buttonEvents:
@@ -103,3 +126,60 @@ class VolkswagenStockCardIntent(AolCardIntent):
 
 def create_intent(cp, settings):
   return VolkswagenStockCardIntent(cp, settings)
+
+
+def _eps_physical_state(cp, state):
+  try:
+    gears = structs.CarState.GearShifter
+    return bool(qualified(cp, marked_only=True) and state is not None and state.canValid and not state.canTimeout and
+      not state.steerFaultPermanent and state.cruiseState.available and not state.cruiseState.enabled and
+      state.gearShifter in (gears.drive, gears.sport, gears.eco, gears.manumatic) and
+      not state.brakePressed and not state.regenBraking and not state.gasPressed and not state.doorOpen and
+      not state.seatbeltUnlatched and not state.accFaulted and not state.vehicleSensorsInvalid and
+      not state.steeringDisengage and not state.buttonEvents)
+  except (AttributeError, KeyError, IndexError, TypeError, ValueError, OverflowError):
+    return False
+
+
+def temporary_eps_restriction(cp, state):
+  """Exact already armed LAT-only EPS withdrawal; never output permission."""
+  return bool(_eps_physical_state(cp, state) and state.steerFaultTemporary)
+
+
+def retain_eps_recovery(feedback, sm, cp, state, axis, now_ns, *, latched, producer):
+  """Join only an older EPS denial to its verified physical recovery; grant no axis."""
+  from openpilot.cereal import log
+  from openpilot.starpilot.aol.runtime import AXIS_MAX_AGE_NS, SAFETY_MAX_AGE_NS
+  from openpilot.starpilot.aol.transport_pause import _configured_transport_native
+  try:
+    last = int(getattr(feedback, 'volkswagen_eps_source_ns', 0))
+    stamp = int(sm.logMonoTime['aolAxisState'])
+    if (not latched or not _eps_physical_state(cp, state) or state.steerFaultTemporary or
+        feedback.failed or feedback.paused or feedback.pending_event or feedback.retention_started_ns or
+        not feedback.temporary_eps_event_ns or not feedback.lateral_only_baseline or
+        not feedback.lateral_baseline_ns or not feedback.lateral_inventory or
+        not producer or producer != feedback.availability_producer or
+        axis.intentProducerSessionId != producer or axis.intentIntegrityEpoch != feedback.availability_epoch or
+        not feedback.session or str(axis.sessionId) != feedback.session or axis.faultSessionId != axis.sessionId or
+        str(axis.faultReason) != 'none' or str(axis.mode) not in ('off', 'lateralOnly') or
+        axis.lateralActive or axis.desiredLongitudinal or axis.longitudinalActive or
+        not 0 < last <= axis.sourceCarStateMonoTime <= stamp == axis.observedMonoTime <= now_ns <= axis.validUntilMonoTime or
+        now_ns - last > SAFETY_MAX_AGE_NS or now_ns - axis.sourceCarStateMonoTime > AXIS_MAX_AGE_NS or
+        axis.validUntilMonoTime - axis.observedMonoTime > AXIS_MAX_AGE_NS or
+        not sm.seen['onroadEvents'] or not sm.valid['onroadEvents'] or not sm.alive['onroadEvents']):
+      return False
+    event_ns = int(sm.logMonoTime['onroadEvents'])
+    temporary = (log.OnroadEvent.EventName.steerTempUnavailable, log.OnroadEvent.EventName.steerTempUnavailableSilent)
+    if (not 0 < feedback.temporary_eps_event_ns <= event_ns <= now_ns or now_ns - event_ns > 1_500_000_000 or
+        any(event.immediateDisable or event.softDisable and event.name not in temporary or
+            event.userDisable and not (cp.pcmCruise and event.name == log.OnroadEvent.EventName.pcmDisable)
+            for event in sm['onroadEvents'])):
+      return False
+    native = _configured_transport_native(sm, cp, feedback.session, now_ns,
+                                         require_longitudinal=False, allow_restricted_lateral=True)
+    return bool(native is not None and native.pandaInventory and
+      feedback.lateral_native_ns <= native.observedMonoTime <= last and
+      not native.lateralAllowed and not native.requestedLongitudinal and not native.longitudinalAllowed and
+      (native.pandaSerial, tuple(p.hardwareSerial for p in native.pandaInventory)) == feedback.lateral_inventory)
+  except (AttributeError, KeyError, IndexError, TypeError, ValueError, OverflowError):
+    return False

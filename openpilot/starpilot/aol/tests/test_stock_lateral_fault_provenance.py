@@ -24,7 +24,7 @@ from openpilot.starpilot.aol.tests.test_input_deadline_continuity import BASE
 from openpilot.starpilot.aol.tests.test_ordinary_source_availability import settings
 
 
-from openpilot.starpilot.aol.tests.stock_lateral_test_helpers import stock_family
+from openpilot.starpilot.aol.tests.legacy_lag_test_helpers import legacy_stock_family as stock_family, legacy_lag_publications, source_availability_refusals
 from openpilot.starpilot.aol.tests.stock_lateral_test_helpers import callers
 from openpilot.starpilot.aol.tests.test_stock_lateral_pcm import receive_pair
 
@@ -97,10 +97,17 @@ def test_current_health_cannot_replace_exact_completed_prior_stock_role(fault):
       opts = settings('lateral_only', BASE + 10_000_000, 4)
       if fault == 'current_native_denied':
         opts['allowed'] = False
-      with mock.patch.object(sd, 'update_events', side_effect=events):
+      with source_availability_refusals(sd, historical=True), mock.patch.object(sd, 'update_events', side_effect=events):
         axis, state, command = drive(6, timeout=True, state_stamp=BASE + 10_000_000, offset_ns=5_399_000, **opts)
       assert not axis.lateralActive and not axis.longitudinalActive and not command.latActive and not command.longActive
-      assert str(axis.faultReason) != 'availabilityPause' and not sd.aol_ordinary_source_pause
+      assert axis.sourceCarStateMonoTime == 0
+      if sd.aol_ordinary_source_pause:
+        # The later SOFT owner requires its own current real native grant.
+        # The context above still witnessed refusal of the forged legacy role.
+        native = sd.aol_ordinary_source_native
+        assert str(axis.faultReason) == 'availabilityPause' and not sd.aol_authority_lost
+        assert native.requestedLateral and native.lateralAllowed
+        assert not axis.lateralActive and not axis.longitudinalActive
       assert not state.enabled and not command.longActive and not sd.events.contains('enable')
 
 
@@ -182,18 +189,18 @@ def test_stock_temp_lag_cannot_claim_a_lat_only_origin_from_long_request(origin)
     assert old.longitudinalActive == (origin == 'ordinary_combined')
     assert receive(BASE)
     assert not card.aol_transport_feedback.lateral_only_baseline
-    from openpilot.selfdrive.selfdrived import selfdrived as sd_module
-
-    receiver = sd_module.messaging.recv_one
-
-    def delivered(sock):
-      packet = receiver.return_value.as_builder()
-      packet.carState.cruiseState.enabled = False
-      return packet.as_reader()
+    from openpilot.starpilot.aol.tests.test_ioniq_availability import car_state
 
     first = BASE + 10_000_000
-    with mock.patch.object(receiver, 'side_effect', side_effect=delivered), mock.patch.object(sd.rk.avg_dt, 'get_average', return_value=0.02):
-      off, state, command = drive(3, state_stamp=first, **dict(settings('combined', first, 4), native_request_long=False, long_allowed=False))
+    physical = car_state()
+    physical.cruiseState.available = True
+    physical.cruiseState.enabled = False
+    packet = messaging.new_message('carState', valid=True, logMonoTime=first)
+    packet.carState = physical
+    with legacy_lag_publications(sd), mock.patch.object(sd.rk.avg_dt, 'get_average', return_value=0.02):
+      off, state, command = drive(3, car_state_message=packet, state_stamp=first,
+        **dict(settings('combined', first, 4), native_request_long=False, long_allowed=False))
+    assert not sd.CS_prev.cruiseState.enabled
     assert str(off.faultReason) == 'critical' and not state.enabled
     assert sd.aol_published_stock_lateral_proof is None
     receive_pair(sd, controls, card, first, axis=sd.pm.messages['aolAxisState'], event=sd.pm.messages['onroadEvents'])

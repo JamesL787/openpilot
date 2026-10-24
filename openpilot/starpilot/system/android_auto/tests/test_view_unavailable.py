@@ -1,8 +1,10 @@
 import uuid
 
+import pytest
+
 from unittest.mock import Mock
 
-from openpilot.starpilot.system.android_auto.frame_source import FrameRequest
+from openpilot.starpilot.system.android_auto.frame_source import FrameProducer, FrameRequest
 from openpilot.starpilot.system.android_auto.view import ViewSource
 
 
@@ -103,8 +105,9 @@ def test_stalled_renderer_output_is_captured_before_restart(tmp_path):
     deadline = time.monotonic() + 10
     while not (tmp_path / 'car_ui.log').read_text() and time.monotonic() < deadline:
       time.sleep(0.05)
-    source.check(source.started_at + 30.0)
-    assert ('car_view_output', {'reason': 'no frames after 25 s', 'lines': ['stuck']}) in events
+    from openpilot.starpilot.system.android_auto import view
+    source.check(source.started_at + view.CAR_STARTUP_TIMEOUT + 1.0)
+    assert ('car_view_output', {'reason': f'no frames after {view.CAR_STARTUP_TIMEOUT:.0f} s', 'lines': ['stuck']}) in events
     assert source.view == 'car'
   finally:
     source.close()
@@ -119,3 +122,53 @@ def test_unavailable_frame_draws_the_logo():
   pixels = memoryview(frame).cast('B')
   purple = sum(1 for i in range(0, len(frame), 4 * 97) if pixels[i + 2] > 120 and pixels[i + 2] > pixels[i + 1] + 60)
   assert purple > 100
+
+
+@pytest.mark.parametrize('cold_start_seconds', [26.0, 40.0, 59.0])
+def test_cold_renderer_can_publish_first_frame_before_restart(tmp_path, cold_start_seconds):
+  import time
+  from openpilot.starpilot.system.android_auto import view
+
+  events = []
+  source = crashing_view(tmp_path, events, 'import time; time.sleep(120)')
+  producer = FrameProducer(str(tmp_path / 'frame'))
+  try:
+    process = source.process
+    # Advance only the watchdog clock, without spending a minute in the test.
+    source.check(source.started_at + cold_start_seconds)
+    assert source.process is process and process.poll() is None
+    assert source.waiting_for_first_frame
+    assert not any(event == 'car_view_restart' for event, _ in events)
+    source.demand()
+    req = producer.pending_request()
+    assert req is not None and req == request()
+    pixels = bytes([17, 29, 43, 255]) * (req.width * req.height)
+    captured_ns = time.monotonic_ns()
+    producer.publish(req, pixels, captured_ns)
+    frame = source.latest()
+    assert frame is not None and frame.data == pixels and frame.captured_ns == captured_ns
+    assert source.frames == 1 and not source.waiting_for_first_frame
+    # A real first frame switches immediately to the original active watchdog.
+    source.check(source.last_frame_at + view.CAR_STALL_TIMEOUT - 0.1)
+    assert source.process is process
+    source.check(source.last_frame_at + view.CAR_STALL_TIMEOUT + 0.1)
+    assert source.process is not process
+    assert sum(event == 'car_view_restart' for event, _ in events) == 1
+  finally:
+    producer.close()
+    source.close()
+
+
+def test_cold_start_timeout_still_exhausts_restart_budget(tmp_path):
+  from openpilot.starpilot.system.android_auto import view
+
+  events = []
+  source = crashing_view(tmp_path, events, 'import time; time.sleep(120)')
+  try:
+    for _ in range(view.MAX_RESTARTS + 1):
+      source.check(source.started_at + view.CAR_STARTUP_TIMEOUT + 1.0)
+    assert source.view == 'unavailable' and not source.waiting_for_first_frame
+    assert sum(event == 'car_view_restart' for event, _ in events) == view.MAX_RESTARTS
+    assert source.latest() is None
+  finally:
+    source.close()

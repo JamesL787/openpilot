@@ -55,7 +55,7 @@ class TestPairedPedal(unittest.TestCase):
   def test_factory_current_words_and_exact_negatives(self):
     self.assertTrue(pedal.configured(self.cp))
     self.assertEqual(self.cp.safetyConfigs[0].safetyParam, 0x2049)
-    for fp in ({0: {0x201: 7}, 1: {}, 2: {}}, {0: {}, 1: {0x201: 6}, 2: {}}, {0: {0x201: 6, 0x2FF: 8}, 1: {}, 2: {}}):
+    for fp in ({0: {0x201: 7}, 1: {}, 2: {}}, {0: {}, 1: {0x201: 6}, 2: {}}, {0: {0x201: 5, 0x2FF: 8}, 1: {}, 2: {}}):
       cp = CarInterface.get_params(self.candidate, fp, firmware(self.candidate), False, False, False)
       self.assertFalse(pedal.configured(cp))
     self.assertTrue(pedal.prepare_stock(self.cp))
@@ -107,9 +107,9 @@ class TestPairedPedal(unittest.TestCase):
     self.safety.set_timer(1_300_001)
     self.assertFalse(self.tx(0.1))
     self.assertTrue(self.tx(0))
-    for word in (0x2149, 0x2449, 0x3049, 0xA049):
+    for word in (0x2149, 0x2849, 0x3048, 0xA048):
       self.init(word)
-      self.assertFalse(self.tx(0))
+      self.assertFalse(self.tx(0), hex(word))
       self.assertFalse(self.tx(0.1))
 
   def test_native_command_pair_bounds_checksum_bus_and_neutral(self):

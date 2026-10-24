@@ -147,8 +147,8 @@ def run(frames_path: str, touch_path: str | None = None, control_path: str | Non
   parent = os.getppid()
   # SCHED_IDLE placement, set before any thread starts so they all inherit it:
   # never compete with openpilot's own processes (see placement.py).
-  from openpilot.starpilot.system.android_auto.placement import RendererPlacement
-  placement = RendererPlacement(report=lambda event: print(json.dumps(event), flush=True))
+  from openpilot.starpilot.system.android_auto.placement import BACKGROUND_RENDER_CORES, RendererPlacement
+  placement = RendererPlacement(core=BACKGROUND_RENDER_CORES, report=lambda event: print(json.dumps(event), flush=True))
   placement.start()
 
   os.environ['BIG'] = '1'

@@ -48,8 +48,8 @@ class AA:
     self.http = None
   def call(self, command, **kwargs):
     self.calls.append((command, kwargs))
-    assert command == 'bluetooth_action'
-    assert set(kwargs) == {'source', 'operation', 'address'}
+    assert command in ('bluetooth_action', 'bluetooth_power')
+    assert set(kwargs) == ({'source', 'operation', 'address'} if command == 'bluetooth_action' else {'source', 'enabled'})
     assert self.http is not None
     code, data, _ = self.http('/api/android-auto/source/' + kwargs['source'])
     assert code == 200 and data == {'valid': True}, 'Real minted source proof was not live'
@@ -113,6 +113,37 @@ class ProjectionBluetoothHttpTest(unittest.TestCase):
     return self.http('/api/bluetooth/action', {'operation': operation, 'address': CAR},
                      self.cookie if cookie is None else cookie)
 
+  def power(self, enabled=False):
+    return self.http('/api/bluetooth/action', {'operation': 'power', 'enabled': enabled}, self.cookie)
+
+  def test_power_goes_to_the_daemon_holding_the_adapter_and_falls_back_without_it(self):
+    snapshot = self.bluetooth.snapshot()
+    snapshot['powered'] = False
+    self.aa.result = {'handled': True, 'bluetooth': snapshot}
+    code, result, _ = self.power(False)
+    self.assertEqual((code, result), (200, snapshot))
+    self.assertEqual(self.bluetooth.calls, [])
+    command, arguments = self.aa.calls[-1]
+    self.assertEqual((command, arguments['enabled']), ('bluetooth_power', False))
+    self.assertEqual(self.http('/api/android-auto/source/' + arguments['source'])[0], 410)
+    self.aa.result = {'handled': False}
+    self.assertEqual(self.power(False)[0], 200)
+    self.assertEqual(self.bluetooth.calls[-1][0], 'power')
+    self.aa.error = OSError('daemon is not running')
+    self.assertEqual(self.power(True)[0], 200)
+    self.assertEqual([call[0] for call in self.bluetooth.calls], ['power', 'power'])
+    self.params.enabled = False
+    calls = len(self.aa.calls)
+    self.assertEqual(self.power(False)[0], 200)
+    self.assertEqual(len(self.aa.calls), calls, 'Android Auto off: the daemon is never contacted')
+
+  def test_power_refusals_from_the_daemon_never_fall_back(self):
+    for error, code in [('projection_active', 409), ('busy', 409), ('park_required', 409), ('service_unavailable', 503)]:
+      self.aa.result = {'handled': True, 'error_code': error}
+      actual, result, _ = self.power(False)
+      self.assertEqual((actual, result['code']), (code, error))
+      self.assertEqual(self.bluetooth.calls, [])
+
   def test_layout_requires_actual_auth_then_saves_only_projection_document(self):
     self.assertEqual(self.http('/api/android-auto/layout')[0], 401)
     payload = self.layout_payload()
@@ -169,6 +200,21 @@ class ProjectionBluetoothHttpTest(unittest.TestCase):
     self.assertEqual(len(self.aa.calls), 1)
     self.assertEqual(len(self.bluetooth.calls), 2)
     self.assertEqual(self.bluetooth.calls[-1][0], 'disconnect')
+
+  def test_forget_is_delegated_to_a_running_projection_and_falls_back_without_the_daemon(self):
+    snapshot = self.bluetooth.snapshot()
+    self.aa.result = {'handled': True, 'bluetooth': snapshot}
+    code, result, _ = self.action('forget')
+    self.assertEqual((code, result), (200, snapshot))
+    self.assertEqual(self.aa.calls[0][1]['operation'], 'forget')
+    self.assertEqual(self.bluetooth.calls, [])
+    self.aa.result = {'handled': False}
+    self.assertEqual(self.action('forget')[0], 200)
+    self.assertEqual(self.bluetooth.calls[-1][0], 'forget')
+    self.aa.error = OSError('daemon is not running')
+    self.assertEqual(self.action('forget')[0], 200)
+    self.assertEqual([call[0] for call in self.bluetooth.calls], ['forget', 'forget'])
+    self.assertEqual(self.action('connect')[0], 503)
 
   def test_owner_busy_and_error_codes_never_fall_back(self):
     for error, code in [('busy', 409), ('park_required', 409), ('changed', 409), ('service_unavailable', 503)]:

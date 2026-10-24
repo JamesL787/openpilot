@@ -4,7 +4,7 @@ from unittest.mock import patch
 from openpilot.cereal import messaging
 
 
-def selfdrive_step(sd, published, native, previous_controls, cp, safety, now, *, calibration):
+def selfdrive_step(sd, published, native, previous_controls, cp, safety, now, *, calibration, driver_lockout=False, driver_monitoring_valid=True):
   peers = []
   for service in sd.sm.data:
     if service in ('alertDebug', 'lateralManeuverPlan', 'laneChangeAssistWire', 'starpilotLongitudinalPlan'):
@@ -28,6 +28,9 @@ def selfdrive_step(sd, published, native, previous_controls, cp, safety, now, *,
       value[0].alternativeExperience = cp.alternativeExperience
       value[0].controlsAllowed = bool(safety.get_controls_allowed())
       value[0].safetyRxChecksInvalid = not bool(safety.safety_config_valid())
+    elif service == 'driverMonitoringState':
+      value.lockout = driver_lockout
+      event.valid = driver_monitoring_valid
     elif service == 'extrinsicsCalibration':
       value.calStatus, value.rpyCalib = calibration, [0.0, 0.0, 0.0]
     elif service == 'vehicleParameters':

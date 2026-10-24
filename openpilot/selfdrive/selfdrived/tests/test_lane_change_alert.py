@@ -28,18 +28,6 @@ class FakeMaster:
     return self.values[key]
 
 
-class FakeAlerts:
-  def __init__(self):
-    self.alerts = []
-    self.current_alert = None
-
-  def add_many(self, _frame, alerts):
-    self.alerts = alerts
-
-  def process_alerts(self, _frame, _clear):
-    self.current_alert = max(self.alerts, key=lambda alert: alert.priority, default=None)
-
-
 class TestLaneChangeAlert(unittest.TestCase):
   def _run_alert(self, raw=None, *, frame_id=77, every=False, alert_types=(ET.WARNING,)):
     model = SimpleNamespace(frameId=frame_id, timestampEof=10_000_000_000,
@@ -57,13 +45,13 @@ class TestLaneChangeAlert(unittest.TestCase):
     drive.switchback_cooldown_ns = 300_000_000_000
     drive.switchback_cooldown = SwitchbackCooldown()
     self.enterContext(patch.object(drive, "sm", FakeMaster(model, raw), create=True))
-    alerts = FakeAlerts()
+    alerts = AlertManager()
     self.enterContext(patch.object(drive, "AM", alerts, create=True))
     drive.lane_status_session = ""
     drive.lane_status_sequence = -1
     with patch("openpilot.selfdrive.selfdrived.selfdrived.time.monotonic_ns", return_value=1_050_000_000):
       drive.update_alerts(object())
-    return alerts.alerts if every else alerts.alerts[0]
+    return [entry.alert for entry in alerts.alerts.values() if entry.alert is not None] if every else alerts.current_alert
 
   def test_turn_desire_shows_turning_banner_for_its_model_frame(self):
     def status(turn, frame=77, engaged=True):

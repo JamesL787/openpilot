@@ -6,6 +6,7 @@ CREDITS.md and THIRD_PARTY_NOTICES.md; this module only selects admitted callers
 """
 
 from opendbc.car import structs
+from opendbc.car.ford.aol import base_safety_param
 from opendbc.car.ford.explorer_lateral import ExplorerLateralController, bounded_command as bounded_command, qualified as explorer_qualified
 from opendbc.car.ford.lateral_strategy import FordLateralController
 from opendbc.car.ford.values import CAR, FordFlags, FordSafetyFlags
@@ -16,8 +17,6 @@ CLASSIC_EXTENDED_CARS = GENERIC_CLASSIC_CARS | {CAR.FORD_EXPLORER_MK6}
 
 
 def qualified(cp):
-  if cp.alternativeExperience == 32 and len(cp.safetyConfigs) != 1:
-    return False
   if cp.carFingerprint == CAR.FORD_EXPLORER_MK6:
     return explorer_qualified(cp)
   if (cp.brand != "ford" or cp.carFingerprint not in GENERIC_CLASSIC_CARS or
@@ -29,7 +28,7 @@ def qualified(cp):
     return False
   safety = cp.safetyConfigs[-1]
   expected = int(FordSafetyFlags.CLASSIC_EXTENDED | (FordSafetyFlags.LONG_CONTROL if cp.openpilotLongitudinalControl else 0))
-  return safety.safetyModel == structs.CarParams.SafetyModel.ford and safety.safetyParam == expected
+  return safety.safetyModel == structs.CarParams.SafetyModel.ford and base_safety_param(cp) == expected
 
 
 class GenericClassicLateralController(FordLateralController):

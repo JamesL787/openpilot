@@ -778,6 +778,17 @@ class Supervisor:
     owner = self._shared_bluetooth_owner
     return None if owner is None else owner.phone_window(operation, session, **arguments)
 
+  def companion_power(self, enabled: bool, session: tuple):
+    owner = self._shared_bluetooth_owner
+    if owner is None:
+      return None
+    if not enabled and self._session_alive():
+      from openpilot.starpilot.bluetooth.owner import BluetoothRejected
+      raise BluetoothRejected('Stop Android Auto before turning Bluetooth off', code='projection_active')
+    # Same lock order as select_receiver: supervisor first, then the owner releases its lease.
+    with self._lock:
+      return owner.companion_power(enabled, session)
+
   def companion_bluetooth_action(self, operation: str, address: str, session: tuple):
     owner = self._shared_bluetooth_owner
     if owner is None:
@@ -802,6 +813,8 @@ class Supervisor:
             owner.phone_lease is not lease or lease.released or
             not owner.session_valid(session) or not lease.enabled()):
           raise RuntimeError('Selected car connection was not confirmed')
+        if '0000111e-0000-1000-8000-00805f9b34fb' not in device.get('uuids', []):
+          return result  # An accessory must never replace the dongle's selected car.
         self.config.update(companion_address=device['address'], companion_name=device['name'])
         identity_store.save_config(self.config)
         for previous in list(owner.companion_devices):

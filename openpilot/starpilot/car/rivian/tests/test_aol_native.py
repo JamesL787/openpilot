@@ -18,11 +18,19 @@ class NativeRig:
     for _ in range(3):
       self.feed(feature=0)
 
-  def feed(self, *, request=1, **kwargs):
+  def feed(self, *, request=1, eps_state=None, **kwargs):
     self.tick += 1
     self.native.set_timer(1_000_000 + self.tick * 10_000)
     self.car.feed(**kwargs)
-    for address, data, bus in self.car.last_frames:
+    frames = self.car.last_frames
+    if eps_state is not None:
+      # Replace only the physical EPS-status sample with a fresh DBC/checksum
+      # frame at the original counter; all other monitored sources stay real.
+      frames = [frame for frame in frames if frame[0] != 0x390]
+      frames.append(self.car.packer.make_can_msg('EPAS_AdasStatus', 0, {
+        'EPAS_AdasStatus_Counter': self.car.tick % 15, 'EPAS_EacStatus': eps_state,
+      }))
+    for address, data, bus in frames:
       assert self.native.safety_rx_hook(libsafety_py.make_CANPacket(address, bus, data))
     self.native.safety_tick()
     self.native.aol_set_host_request(request)
@@ -99,3 +107,37 @@ def test_native_long_axis_not_inherited_from_lateral_token():
   assert rig.feed(request=3, feature=0) == 1
   address, data, bus = rig.car.packer.make_can_msg('ACM_longitudinalRequest', 0, {'ACM_AccelerationRequest': 0.1})
   assert not rig.native.safety_tx_hook(libsafety_py.make_CANPacket(address, bus, data))
+
+
+@pytest.mark.parametrize('param', [2, 3, 4, 65535])
+def test_native_unqualified_aol_profile_has_no_transmit_catalog(param):
+  rig = NativeRig()
+  rig.native.init_tests()
+  rig.native.set_alternative_experience(32)
+  assert rig.native.set_safety_hooks(structs.CarParams.SafetyModel.rivian, param) == 0
+  rig.native.set_aol_test_heartbeat(True)
+  for _ in range(4):
+    assert rig.feed(feature=1, request=3) == 0
+  # Even an ordinary physical cruise engagement cannot give an unsupported
+  # AE32 profile a steering, longitudinal, wheel-touch or cruise-cancel TX slot.
+  messages: tuple[tuple[str, int, dict[str, float]], ...] = (
+    ('ACM_lkaHbaCmd', 0, {'ACM_lkaStrToqReq': 0, 'ACM_lkaActToi': False}),
+    ('ACM_longitudinalRequest', 0, {'ACM_AccelerationRequest': 0.0}),
+    ('SCCM_WheelTouch', 2, {'SCCM_WheelTouch_HandsOn': 0}),
+    ('VDM_AdasSts', 2, {'VDM_AdasInterfaceStatus': 0}),
+  )
+  for name, bus, values in messages:
+    address, data, frame_bus = rig.car.packer.make_can_msg(name, bus, values)
+    assert not rig.native.safety_tx_hook(libsafety_py.make_CANPacket(address, frame_bus, data))
+
+
+def test_native_permanent_eps_fault_retires_lateral_session():
+  rig = NativeRig()
+  rig.engage()
+  assert rig.feed(brake=True, feature=0) == 1
+  assert not rig.native.get_controls_allowed()
+  assert rig.feed(feature=0, eps_state=4) == 0
+  # Healthy EPS status alone cannot resurrect the retired session.
+  for _ in range(4):
+    assert rig.feed(feature=0, eps_state=1) == 0
+  rig.engage()

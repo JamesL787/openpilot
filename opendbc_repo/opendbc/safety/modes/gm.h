@@ -409,7 +409,11 @@ static void gm_rx_hook(const CANPacket_t *msg) {
 
     if (gm_malibu_cc_f1 || gm_volt_cc_f1) {
       if (msg_matches(msg, 0xF1U, 0U) && (GET_LEN(msg) == 6U)) {
-        gm_malibu_f1_brake = gm_volt_cc_f1 ? (msg->data[1] >= 6U) : ((msg->data[1] >= 21U) || GET_BIT(msg, 1U));
+        if (gm_volt_cc_f1) {
+          gm_malibu_f1_brake = msg->data[1] >= 6U;
+        } else {
+          gm_malibu_f1_brake = (msg->data[1] >= 21U) || GET_BIT(msg, 1U);
+        }
       }
       if (msg_matches(msg, 0xC9U, 0U) && (GET_LEN(msg) == 8U)) {
         gm_malibu_c9_brake = GET_BIT(msg, 40U);
@@ -551,9 +555,7 @@ static bool gm_ascm_adas_valid(const CANPacket_t *msg) {
   return valid;
 }
 
-static bool gm_tx_hook(const CANPacket_t *msg) {
-  // This topology has no camera-side receiver after harness interception.
-  if (gm_volt_camera_removed && (msg->bus == 2U)) { return false; }
+static bool gm_vehicle_tx_hook(const CANPacket_t *msg) {
   const TorqueSteeringLimits GM_STEERING_LIMITS = {
     .max_torque = 300,
     .max_rate_up = 10,
@@ -862,6 +864,11 @@ static bool gm_tx_hook(const CANPacket_t *msg) {
   return tx;
 }
 
+static bool gm_tx_hook(const CANPacket_t *msg) {
+  // This topology has no camera-side receiver after harness interception.
+  return !(gm_volt_camera_removed && (msg->bus == 2U)) && gm_vehicle_tx_hook(msg);
+}
+
 static bool gm_fwd_hook(int bus_num, int addr) {
   const bool dashboard_owned = gm_acc_pedal_dashboard_current() && gm_acc_pedal_dashboard_seen &&
     (safety_get_ts_elapsed(microsecond_timer_get(), gm_acc_pedal_dashboard_us) <= 100000U);
@@ -878,9 +885,6 @@ static bool gm_fwd_hook(int bus_num, int addr) {
          (gm_ordinary_camera_removed && (bus_num == 0) && (addr == 0x184)) ||
          (gm_ordinary_camera_removed && (bus_num == 2) && ((addr == 0x180) ||
           (gm_ordinary_camera_removed_long && ((addr == 0x315) || (addr == 0x2CB) || (addr == 0x370) || (addr == 0x2CD))))) ||
-         (gm_volt_camera_removed && (bus_num == 0) && (addr == 0x184)) ||
-         (gm_volt_camera_removed && (bus_num == 2) && ((addr == 0x180) ||
-          (gm_volt_removed_long && ((addr == 0x315) || (addr == 0x2CB) || (addr == 0x370) || (addr == 0x2CD))))) ||
          (gm_sdgm && (bus_num == 0) && (addr == 0x184)) ||
          ((gm_volt_sdgm_long || gm_ordinary_sdgm_long) && (bus_num == 2) && ((addr == 0x315) || (addr == 0x2CD))) ||
          (gm_pedal_acc && (bus_num == 2) && (addr == 0x315) && gm_pedal_owns_longitudinal() && gm_pedal_main_ready() &&

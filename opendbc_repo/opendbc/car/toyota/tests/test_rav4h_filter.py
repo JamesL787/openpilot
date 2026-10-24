@@ -46,8 +46,8 @@ class TestRav4hFilter(unittest.TestCase):
   def test_missing_or_mismatched_hardware_never_grants_long_or_aol(self):
     fps = ({0: {}, 1: {}, 2: {}}, {0: {0x2FF: 7}, 1: {}, 2: {}},
            {0: {}, 1: {0x2FF: 8}, 2: {}}, {0: {0x2FF: 8}, 1: {0x2FF: 8}, 2: {}},
-           {0: {0x2FF: 8, 0x201: 6}, 1: {}, 2: {}}, {0: {0x2FF: 8, 0x2AA: 8}, 1: {}, 2: {}},
-           {0: {0x2FF: 8}, 1: {}, 2: {0x343: 8}})
+           {0: {0x2FF: 8, 0x201: 5}, 1: {}, 2: {}}, {0: {0x2FF: 8, 0x2AA: 8}, 1: {}, 2: {}},
+           {0: {0x2FF: 8}, 1: {}, 2: {0x343: 7}})
     for fp in fps:
       cp = factory(fp=fp)
       self.assertFalse(enabled(cp), fp)

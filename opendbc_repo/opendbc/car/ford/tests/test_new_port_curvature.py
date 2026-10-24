@@ -28,7 +28,7 @@ class TestNewPortCurvature(unittest.TestCase):
     for identity in PROFILES:
       for alpha, release in ((False, False), (True, False), (False, True), (True, True)):
         cp = factory(identity, alpha, release)
-        expected_long = bool(alpha and (identity == CAR.FORD_EDGE_MK2 or not release))
+        expected_long = bool(alpha)
         self.assertTrue(cp.pcmCruise)
         self.assertEqual(cp.openpilotLongitudinalControl, expected_long)
         self.assertEqual(cp.safetyConfigs[-1].safetyParam, (8 if identity == CAR.FORD_EDGE_MK2 else 10) + int(expected_long))
@@ -156,6 +156,7 @@ class TestNewPortCurvature(unittest.TestCase):
                 command, controller_log = controls.state_control()
                 self.assertTrue(command.enabled)
                 control_events = []
+
                 def capture_control(service, event, collector=control_events):
                   if service == "carControl":
                     collector.append(messaging.log_from_bytes(event.to_bytes()))

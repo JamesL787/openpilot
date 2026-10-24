@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { compile } from "../web/vendor/vue/vue.esm-browser.js"
 import { LocalAccess, LocalAccessFeed, validLocalAccess } from "../web/js/local-access.js"
 import { Home } from "../web/js/home.js"
+import { GalaxyPage } from "../web/js/galaxy.js"
 const snapshot = { available: true, addresses: [{ interface: 'wlan0', label: 'Wi-Fi', url: 'http://192.168.20.5:8082/' }], reason: '' }
 assert.equal(validLocalAccess(snapshot), true)
 assert.equal(validLocalAccess({ available: false, addresses: [], reason: 'No active addresses' }), true)
@@ -61,3 +62,10 @@ assert.ok(LocalAccess.template.includes('Connect your phone to the Galaxy hotspo
 assert.ok(LocalAccess.template.includes('full http:// address into a new browser tab'))
 assert.ok(LocalAccess.template.includes('public Galaxy link uses the Internet tunnel'))
 console.log('Local access: actual Vue component/setup, bounded automatically synchronized read, sample exclusion, authentication, safe links and unmount race passed')
+
+assert.equal(GalaxyPage.components.LocalAccess, LocalAccess)
+const installStep = GalaxyPage.template.slice(GalaxyPage.template.indexOf('<h3>Install Galaxy</h3>'), GalaxyPage.template.indexOf('</li>', GalaxyPage.template.indexOf('<h3>Install Galaxy</h3>')))
+assert.ok(installStep.includes('<LocalAccess v-if="!ios" :mode="mode" :on-unauthorized="unauthorized" />'))
+assert.ok(installStep.indexOf('Download Android APK') < installStep.indexOf('<LocalAccess'))
+compile(GalaxyPage.template, { decodeEntities: value => value.replaceAll('&amp;', '&') })
+console.log('Galaxy APK installation exposes authenticated local links with current mode and session handling')

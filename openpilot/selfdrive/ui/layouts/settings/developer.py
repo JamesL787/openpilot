@@ -2,6 +2,9 @@ from collections.abc import Callable
 
 from openpilot.common.params import Params
 from openpilot.starpilot.car.hyundai.aol import ioniq6_settings_capable
+from openpilot.starpilot.car.ford.longitudinal_preferences import release_long_available as ford_release_long_available
+from opendbc.car.volkswagen.meb_modes import MEB_CARS, settings_capable as meb_settings_capable
+from openpilot.starpilot.car.volkswagen.preferences import stock_long_requested
 from openpilot.selfdrive.ui.widgets.ssh_key import ssh_key_item
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.widgets import Widget
@@ -140,8 +143,9 @@ class DeveloperLayout(Widget):
 
     # CP gating
     if ui_state.CP is not None:
-      alpha_avail = ui_state.CP.alphaLongitudinalAvailable or ioniq6_settings_capable(ui_state.CP)
-      if not alpha_avail or self._is_release:
+      alpha_avail = (meb_settings_capable(ui_state.CP) if ui_state.CP.brand == 'volkswagen' and ui_state.CP.carFingerprint in MEB_CARS
+                     else ui_state.CP.alphaLongitudinalAvailable or ioniq6_settings_capable(ui_state.CP))
+      if not alpha_avail or (self._is_release and not (meb_settings_capable(ui_state.CP) or ford_release_long_available(ui_state.CP))):
         self._alpha_long_toggle.set_visible(False)
       else:
         self._alpha_long_toggle.set_visible(True)
@@ -166,7 +170,9 @@ class DeveloperLayout(Widget):
       ("ShowDebugInfo", self._ui_debug_toggle),
       ("CellularDisabled", self._cellular_disabled_toggle),
     ):
-      item.action_item.set_state(self._params.get_bool(key))
+      value = (not stock_long_requested(self._params) if key == "AlphaLongitudinalEnabled" and meb_settings_capable(ui_state.CP)
+               else self._params.get_bool(key))
+      item.action_item.set_state(value)
 
   def _on_enable_ui_debug(self, state: bool):
     self._params.put_bool("ShowDebugInfo", state, block=True)
@@ -209,7 +215,9 @@ class DeveloperLayout(Widget):
       def confirm_callback(result: DialogResult):
         if result == DialogResult.CONFIRM:
           if (not ui_state.is_offroad() or ui_state.CP is None or
-              not (ui_state.CP.alphaLongitudinalAvailable or ioniq6_settings_capable(ui_state.CP))):
+              not (meb_settings_capable(ui_state.CP) if ui_state.CP.brand == 'volkswagen' and ui_state.CP.carFingerprint in MEB_CARS
+                     else ui_state.CP.alphaLongitudinalAvailable or ioniq6_settings_capable(ui_state.CP)) or
+              self._is_release and not (meb_settings_capable(ui_state.CP) or ford_release_long_available(ui_state.CP))):
             self._alpha_long_toggle.action_item.set_state(False)
             return
           self._params.put_bool("AlphaLongitudinalEnabled", True, block=True)

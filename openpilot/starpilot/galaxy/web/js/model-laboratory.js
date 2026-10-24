@@ -2,6 +2,7 @@ import { GxState } from "./state.js"
 import { guardUnload } from "./unload-guard.js"
 import { GxSummary } from "./summary.js"
 import { GxNotice } from "./notice.js"
+import { reportSave } from "./save-feedback.js"
 import { GalaxySelect } from "./galaxy-select.js"
 import { ModelManagerFeed } from "./models.js"
 
@@ -131,6 +132,7 @@ export const LaboratoryPage = {
   },
   beforeUnmount() { this._stopUnloadGuard(); document.removeEventListener("visibilitychange", this.visibility); this.feed.stop() },
   methods: {
+    reportSave,
     statusLabel: laboratoryStatusLabel,
     actionAvailable(action, model = null) { return laboratoryActionAllowed(this.status, action, model, this.configuration) },
     can(action, model = null) { return !this.busy && this.actionAvailable(action, model) },
@@ -155,6 +157,7 @@ export const LaboratoryPage = {
             if (this.status) this.configuration = laboratoryDraft(this.status, this.configuration, false)
           }
         }
+        return result
       } finally { this.busy = false }
     },
   },
@@ -167,7 +170,7 @@ export const LaboratoryPage = {
       <GxState v-else-if="loading" loading>Loading Model Laboratory…</GxState>
       <GxNotice tone="danger" v-if="error">{{ error }}</GxNotice>
       <GxNotice tone="danger" v-if="status?.configurationError">{{ status.configurationError }}</GxNotice>
-      <GxNotice v-if="message" class="gx-settings__save-status" tone="info">{{ message }}</GxNotice>
+      <GxNotice v-if="message" tone="info">{{ message }}</GxNotice>
       <template v-if="mode === 'local' && !loading">
       <section class="gx-card">
         <div class="gx-section__header"><i class="bi bi-download"></i><span class="gx-section__title">Available models</span></div>
@@ -187,7 +190,7 @@ export const LaboratoryPage = {
           <div class="gx-row"><div class="gx-row__info"><span class="gx-row__label">Enable model pair</span></div>
             <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Enable model pair" :checked="status?.configuration.enabled === true"
               :disabled="busy || !actionAvailable(status?.configuration.enabled ? 'disable' : 'enable')"
-              @change="$event.target.checked=status.configuration.enabled; act(status.configuration.enabled ? 'disable' : 'enable')"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
+              @change="$event.target.checked=status.configuration.enabled; reportSave(() => act(status.configuration.enabled ? 'disable' : 'enable'))"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
           <div class="gx-actions"><button class="gx-btn gx-btn--tonal" :disabled="!actionAvailable('refresh')" @click="act('refresh')">Check model catalog</button></div>
         </div>
       </section>

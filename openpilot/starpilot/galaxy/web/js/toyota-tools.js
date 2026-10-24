@@ -1,6 +1,7 @@
 import { reactive } from "../vendor/vue/vue.esm-browser.js"
 import { GxDialog } from "./dialog.js"
 import { GxNotice } from "./notice.js"
+import { beginSave, finishSave } from "./save-feedback.js"
 
 export const ToyotaToolsPage = {
   props: { mode: String, unauthorized: Function },
@@ -53,7 +54,9 @@ export const ToyotaToolsPage = {
     async confirm() {
       const payload = this.state.pending
       this.state.pending = null
+      const feedback = beginSave()
       const result = await this.request(payload)
+      finishSave(feedback, result?.saved === true)
       this.state.value = ""
       if (result?.saved) await this.load()
       else if (this.alive) this.timer = setTimeout(() => this.load(), 2000)

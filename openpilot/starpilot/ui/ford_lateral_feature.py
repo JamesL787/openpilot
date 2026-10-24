@@ -1,5 +1,7 @@
 """One saved Ford enum shared by Galaxy and the native feature presentation."""
 from opendbc.bluepilot_lateral.hosts.starpilot import supported
+from opendbc.car import structs
+from opendbc.car.ford.aol import qualified as aol_qualified
 from openpilot.starpilot.car.ford.lateral_preferences import KEY, CHOICES, read_choice
 from openpilot.starpilot.saved_source import read_saved
 from openpilot.starpilot.saved_document import commit_exact
@@ -13,8 +15,15 @@ class FordLateralFeature:
   def capability(self):
     cp = self.owner.vehicle_params()
     try:
-      if cp is None or not supported(cp):
+      if cp is None:
         return None
+      if not supported(cp):
+        if not aol_qualified(cp, marked_only=True):
+          return None
+        next_drive = structs.CarParams(**cp.to_dict())
+        next_drive.alternativeExperience = 0
+        if not supported(next_drive):
+          return None
       return (str(cp.carFingerprint), int(cp.flags), int(cp.alternativeExperience), bool(cp.openpilotLongitudinalControl),
               bool(cp.pcmCruise), str(cp.steerControlType), bool(cp.passive), bool(cp.dashcamOnly), bool(cp.notCar),
               tuple((str(c.safetyModel), int(c.safetyParam)) for c in cp.safetyConfigs))
@@ -25,7 +34,7 @@ class FordLateralFeature:
     values = []
     for key in ("SafeMode", "AlwaysOnLateral"):
       raw, readable = read_saved(self.owner.params, key, 8)
-      if not readable or raw not in (None, b"0"):
+      if not readable or raw not in ((None, b"0") if key == "SafeMode" else (None, b"0", b"1")):
         return None
       values.append((key, raw))
     return tuple(values)
@@ -40,7 +49,7 @@ class FordLateralFeature:
                        choices=tuple(CHOICES.values()), available=parked and self.owner.authority("parked_preferences") and
                        readable and dependencies is not None, capability=capability,
                        dependencies=dependencies or (), repair_value="" if valid else CHOICES[0], default_value=CHOICES[0],
-                       reason="Applies next drive. BluePilot angle is available with normal cruise control on supported Ford vehicles."),)
+                       reason="Applies next drive. BluePilot angle works with Always On Lateral. Safe Mode must be off."),)
 
   def apply(self, request):
     value = next((code for code, label in CHOICES.items() if label == request.value), None)

@@ -23,7 +23,7 @@ from openpilot.starpilot.aol.runtime import current_native
 from openpilot.starpilot.aol.tests import test_ioniq_availability as caller_fixture
 from openpilot.starpilot.aol.tests.test_classic_location_stock_intent import host_heartbeat_bridge as host_heartbeat_bridge
 from openpilot.starpilot.aol.tests.test_classic_location_stock_intent import (
-  assert_classic_location_independent_refusals as assert_stock_location_refusals,
+  assert_stock_location_warning_contract as assert_stock_location_refusals,
 )
 from openpilot.starpilot.aol.wire import PandaSlot, SafetyState, encode_safety
 

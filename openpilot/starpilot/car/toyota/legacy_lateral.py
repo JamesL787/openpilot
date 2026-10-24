@@ -2,12 +2,17 @@
 from opendbc.car import structs
 from opendbc.car.toyota.values import CAR
 from opendbc.car.toyota.rav4h_filter import configured
+from opendbc.car.toyota import dsu_bypass, legacy_sdsu, legacy_advert_filter
 from openpilot.starpilot.aol.runtime import AXIS_MAX_AGE_NS, INTENT_MAX_AGE_NS, SAFETY_MAX_AGE_NS, native_inventory_matches_cp
 
 
 def below_engage_lateral_allowed(cp, cs, intent, native, *, source_ns, now_ns, axis_session_id):
   try:
-    return bool(configured(cp) and cp.carFingerprint in (CAR.TOYOTA_HIGHLANDER, CAR.TOYOTA_AVALON) and cp.alternativeExperience == 32 and
+    bypass = dsu_bypass.configured(cp)
+    legacy_advert = legacy_advert_filter.configured(cp)
+    return bool((bypass or configured(cp) or legacy_advert) and
+      (bypass or cp.carFingerprint in (CAR.TOYOTA_HIGHLANDER, CAR.TOYOTA_AVALON) or legacy_sdsu.configured(cp) or legacy_advert) and
+      cp.alternativeExperience == 32 and
       cp.steerAtStandstill and cp.minSteerSpeed <= 0 and cp.minEnableSpeed > 0 and 0 <= cs.vEgo < cp.minEnableSpeed and
       intent is not None and intent.settingsQualified and intent.allowedLatch and intent.lateralArmed and not intent.pauseLateral and
       intent.producerSessionId and intent.carStateLogMonoTime == source_ns and

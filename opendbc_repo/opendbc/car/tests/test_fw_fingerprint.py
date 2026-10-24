@@ -326,14 +326,24 @@ class TestFwFingerprintTiming(unittest.TestCase):
         self._assert_timing(self.total_time / self.N, vin_ref_times[name])
         print(f'get_vin {name} case, query time={self.total_time / self.N} seconds')
 
+  def test_ford_firmware_queries_cover_both_panda_buses(self):
+    requests = FW_QUERY_CONFIGS['ford'].requests
+    fingerprint_requests = [request for request in requests if not request.logging]
+    assert len(requests) == 16
+    assert [request.bus for request in fingerprint_requests] == [0, 4]
+    first, second = fingerprint_requests
+    assert first.request == second.request
+    assert first.response == second.response
+    assert first.whitelist_ecus == second.whitelist_ecus
+
   def test_fw_query_timing(self):
-    total_ref_time = 8.3
+    total_ref_time = 8.4
     brand_ref_times = {
       'gm': 1.0,
       'body': 0.1,
       'byd': 0.0,
       'chrysler': 0.3,
-      'ford': 1.5,
+      'ford': 1.6,
       'honda': 0.45,
       'hyundai': 0.65,
       'mazda': 0.1,

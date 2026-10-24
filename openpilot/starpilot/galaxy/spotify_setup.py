@@ -160,13 +160,16 @@ class SpotifySetup:
     self._require_session(session)
     current = preferences.load(self.layout)
     fields = {'deviceName': 'device_name', 'cacheMb': 'cache_mb', 'initialVolume': 'initial_volume',
-              'output': 'output', 'outputAddress': 'output_address', 'source': 'source', 'phoneAddress': 'phone_address'}
+              'output': 'output', 'outputAddress': 'output_address', 'source': 'source', 'phoneAddress': 'phone_address',
+              'pauseMute': 'pause_mute', 'skipMute': 'skip_mute'}
     if not isinstance(payload, dict) or not payload or set(payload) - set(fields):
       raise SetupRejected('Invalid Spotify settings')
     values = {**current.__dict__, **{fields[key]: value for key, value in payload.items()}}
     changes_output = values['output'] != current.output or values['output_address'] != current.output_address
+    # Flipping between Spotify and the already chosen phone is a playback control; picking a different phone is setup.
+    if values['phone_address'] != current.phone_address:
+      self._require_parked('change the phone')
     if values['source'] != current.source or values['phone_address'] != current.phone_address:
-      self._require_parked('change the music source')
       if values['phone_address']:
         match = next((d for d in self.status(session)['devices'] if d['address'] == str(values['phone_address']).upper()), None)
         if match is None:

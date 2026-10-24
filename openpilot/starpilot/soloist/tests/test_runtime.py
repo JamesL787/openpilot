@@ -1,4 +1,5 @@
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,7 @@ def test_alsa_config_is_process_local_bluealsa_pcm():
 
 
 def test_launch_commands_isolate_the_server_and_player(layout):
-  prefs = preferences.Preferences(output_address='AA:BB:CC:DD:EE:FF')
+  prefs = preferences.Preferences(output_address='AA:BB:CC:DD:EE:FF', initial_volume=60)
   server = backend.server_launch(layout, prefs, alsa_base=Path('/usr/share/alsa/alsa.conf'))
   assert '-n' in server.argv and '--system=no' in server.argv
   assert any(arg.startswith('module-alsa-sink device=starpilot_spotify') for arg in server.argv)
@@ -65,9 +66,13 @@ def test_launch_commands_isolate_the_server_and_player(layout):
   assert (layout.runtime / 'alsa.conf').stat().st_mode & 0o777 == 0o600
   test = backend.server_launch(layout, preferences.Preferences(output='test'))
   assert any(arg.startswith('module-null-sink') for arg in test.argv) and 'ALSA_CONFIG_PATH' not in test.env
+  silent = backend.server_launch(layout, prefs, silent=True, alsa_base=Path('/usr/share/alsa/alsa.conf'))
+  assert 'module-null-sink sink_name=spotify_silent' in silent.argv and 'ALSA_CONFIG_PATH' in silent.env
   player = backend.player_launch(layout, prefs, 'sk_live_0123456789abcdef')
+  assert 'PULSE_SINK' not in player.env  # follows the server's default sink, so outputs can switch live
   assert player.argv[player.argv.index('--ws') + 1] == '127.0.0.1:0'
   assert player.argv[player.argv.index('--cache-size') + 1] == '256'
+  assert player.argv[player.argv.index('--initial-volume') + 1] == '60'
   assert player.env['PULSE_SERVER'] == f'unix:{layout.runtime}/pulse/native'
 
 
@@ -152,17 +157,19 @@ class FakeProcess:
 
 
 class FakeClient:
+  logged_in = True
   def __init__(self, _data):
     self.on_change = lambda: None
     self.started = self.stopped = False
     self.sent = []
   def start(self): self.started = True
   def stop(self): self.stopped = True
-  def snapshot(self): return {'connected': True, 'loggedIn': False, 'status': 'idle', 'active': False}
+  def snapshot(self): return {'connected': True, 'loggedIn': self.logged_in, 'status': 'idle', 'active': False}
   def send(self, action, args): self.sent.append((action, args))
 
 
 def ready_layout(layout, monkeypatch, *, expired=False):
+  monkeypatch.setattr(supervisor.phone_audio, 'profile', lambda action: None)
   monkeypatch.setattr(supervisor.package, 'release_status', lambda _l: {'installed': True, 'expired': expired})
   monkeypatch.setattr(supervisor.backend, 'bundle_ready', lambda: True)
   layout.root.mkdir(parents=True, exist_ok=True)
@@ -170,7 +177,7 @@ def ready_layout(layout, monkeypatch, *, expired=False):
   preferences.save(preferences.Preferences(output='test'), layout)
 
 
-def make_supervisor(layout, spawned):
+def make_supervisor(layout, spawned, logged_in=True):
   def spawn(argv, **kwargs):
     process = FakeProcess(argv, **kwargs)
     spawned.append(process)
@@ -178,7 +185,9 @@ def make_supervisor(layout, spawned):
       backend.runtime_paths(layout)['socket'].touch()
     return process
   now = [100.0]
-  sup = supervisor.Supervisor(layout, spawn=spawn, clock=lambda: now[0], make_client=FakeClient)  # ty: ignore[invalid-argument-type]  # test double
+  make_client = type('Client', (FakeClient,), {'logged_in': logged_in})
+  sup = supervisor.Supervisor(layout, spawn=spawn, clock=lambda: now[0], make_client=make_client, network=lambda: True)  # ty: ignore[invalid-argument-type]
+  sup.run_async = lambda fn: fn()
   return sup, now
 
 
@@ -197,7 +206,7 @@ def test_supervisor_reports_missing_setup_steps(layout, monkeypatch):
 def test_supervisor_starts_server_then_player_and_redacts_key(layout, monkeypatch):
   ready_layout(layout, monkeypatch)
   spawned = []
-  sup, _ = make_supervisor(layout, spawned)
+  sup, _ = make_supervisor(layout, spawned, logged_in=False)
   sup.tick()
   assert [Path(p.argv[0]).name for p in spawned] == ['pulseaudio', 'soloist']
   assert all(p.kwargs['start_new_session'] for p in spawned)
@@ -247,24 +256,73 @@ def test_supervisor_backs_off_and_rolls_back_a_failing_build(layout, monkeypatch
   assert rolled == [True]
 
 
-def test_supervisor_waits_for_the_selected_bluetooth_output(layout, monkeypatch):
+def _speaker_supervisor(layout, monkeypatch, *, can_switch):
   ready_layout(layout, monkeypatch)
   preferences.save(preferences.Preferences(output_address='AA:BB:CC:DD:EE:FF', output_name='Car'), layout)
   class Output:
     connected = False
     def ready(self, address):
       return self.connected
-  output = Output()
+  switched = []
+  monkeypatch.setattr(supervisor.backend, 'can_switch', lambda: can_switch)
+  monkeypatch.setattr(supervisor.backend, 'switch_output', lambda _layout, speaker: switched.append(speaker))
+  monkeypatch.setattr(supervisor, '_kill_group', lambda _p: None)
   spawned = []
   sup, now = make_supervisor(layout, spawned)
-  sup.output = output
+  sup.output = Output()
   sup.tick()
-  assert sup.status()['state'] == 'waiting_output' and 'Car' in sup.status()['message'] and spawned == []
-  output.connected = True
-  now[0] += supervisor.OUTPUT_RETRY_SECONDS + 1
+  assert sup.status()['state'] == 'ready' and sup.status()['outputWaiting'] == 'Car'
+  assert len(spawned) == 2 and sup.client.started
+  assert 'module-null-sink sink_name=spotify_silent' in spawned[0].argv
+  sup.output.connected = True
+  for _ in range(2):  # one check is not enough; the speaker has to stay connected
+    now[0] += supervisor.OUTPUT_RETRY_SECONDS + 1
+    sup.tick()
+    assert len(spawned) == 2 and switched == []
   sup.tick()
-  assert len(spawned) == 2
+  return sup, now, spawned, switched
 
+
+def test_speaker_returning_switches_audio_without_restarting_soloist(layout, monkeypatch):
+  sup, now, spawned, switched = _speaker_supervisor(layout, monkeypatch, can_switch=True)
+  client = sup.client
+  assert switched == [True] and len(spawned) == 2 and sup.client is client and not client.stopped
+  assert sup.status()['outputWaiting'] == ''
+  sup.output.connected = False
+  for _ in range(3):
+    now[0] += supervisor.OUTPUT_RETRY_SECONDS + 1
+    sup.tick()
+  assert switched == [True, False] and len(spawned) == 2
+  assert sup.status()['outputWaiting'] == 'Car'
+
+
+def test_speaker_switch_falls_back_to_a_restart(layout, monkeypatch):
+  sup, _now, spawned, switched = _speaker_supervisor(layout, monkeypatch, can_switch=False)
+  (layout.state / 'saved-session').write_text('retained')
+  sup.tick()
+  assert switched == [] and len(spawned) == 4
+  assert any(arg.startswith('module-alsa-sink') for arg in spawned[2].argv)
+  assert (layout.state / 'saved-session').read_text() == 'retained'
+  assert sup.status()['outputWaiting'] == ''
+
+
+def test_switch_output_moves_streams_and_drops_the_old_sink(layout):
+  calls = []
+  outputs = {('list', 'short', 'sink-inputs'): '7\t1\t3\tprotocol-native.c\ts16le 2ch 44100Hz\n',
+             ('list', 'short', 'modules'): ('0\tmodule-native-protocol-unix\tsocket=/x\n' +
+                                            '1\tmodule-null-sink\tsink_name=spotify_silent\n' +
+                                            '2\tmodule-alsa-sink\tdevice=starpilot_spotify sink_name=spotify channels=2 tsched=0\n')}
+  def run(argv, **kwargs):
+    calls.append(tuple(argv[1:]))
+    assert kwargs['env']['PULSE_SERVER'].startswith('unix:') and kwargs['timeout'] and kwargs['check']
+    return subprocess.CompletedProcess(argv, 0, outputs.get(tuple(argv[1:]), ''))
+  backend.switch_output(layout, True, run=run)
+  assert calls == [('load-module', 'module-alsa-sink', 'device=starpilot_spotify', 'sink_name=spotify', 'channels=2', 'tsched=0'),
+                   ('set-default-sink', 'spotify'), ('list', 'short', 'sink-inputs'), ('move-sink-input', '7', 'spotify'),
+                   ('list', 'short', 'modules'), ('unload-module', '1')]
+  calls.clear()
+  backend.switch_output(layout, False, run=run)
+  assert calls[0] == ('load-module', 'module-null-sink', 'sink_name=spotify_silent') and calls[-1] == ('unload-module', '2')
 
 def test_control_socket_round_trip(layout, tmp_path):
   import threading
@@ -276,19 +334,32 @@ def test_control_socket_round_trip(layout, tmp_path):
   stop = threading.Event()
   thread = threading.Thread(target=supervisor.serve, args=(sup, path, stop), daemon=True)
   thread.start()
-  for _ in range(50):
-    if Path(path).exists():
-      break
+  try:
     import time
-    time.sleep(0.02)
-  result = SpotifyClient(path).call('status')
-  assert result['status']['state'] == 'starting'
-  with pytest.raises(RuntimeError):
-    SpotifyClient(path).call('control', action='pause', args={})
-  stop.set()
-  thread.join(timeout=2)
-  Path(path).unlink(missing_ok=True)
-  os.rmdir(folder)
+    client = SpotifyClient(path)
+    result = None
+    for attempt in range(50):
+      if not Path(path).exists():
+        time.sleep(0.02)
+        continue
+      try:
+        result = client.call('status')
+        break
+      except (FileNotFoundError, ConnectionRefusedError):
+        if attempt == 49:
+          raise
+        time.sleep(0.02)
+    assert result is not None
+    assert result['status']['state'] == 'starting'
+    with pytest.raises(RuntimeError):
+      client.call('control', action='pause', args={})
+  finally:
+    stop.set()
+    thread.join(timeout=2)
+    Path(path).unlink(missing_ok=True)
+    os.rmdir(folder)
+  assert not thread.is_alive()
+
 
 
 def test_reap_orphans_only_targets_feature_binaries(layout, tmp_path, monkeypatch):
@@ -323,3 +394,71 @@ def test_status_publishes_the_phone_track_only_while_phone_audio_runs(layout):
   sup.player = object()
   found = sup.status()['nowPlaying']
   assert found['source'] == 'phone' and found['title'] == 'Phone Song'
+
+
+def test_supervisor_waits_for_network_before_starting(layout, monkeypatch):
+  ready_layout(layout, monkeypatch)
+  spawned = []
+  sup, _ = make_supervisor(layout, spawned)
+  up = [False]
+  sup.network = lambda: up[0]
+  sup.tick()
+  assert spawned == []
+  assert sup.status()['state'] == 'waiting_network'
+  assert sup.fast_failures == 0
+  up[0] = True
+  sup.tick()
+  assert [Path(p.argv[0]).name for p in spawned] == ['pulseaudio', 'soloist']
+
+
+def test_changing_mute_values_never_restarts_the_player(layout, monkeypatch):
+  from dataclasses import replace
+  ready_layout(layout, monkeypatch)
+  spawned = []
+  sup, now = make_supervisor(layout, spawned)
+  sup.tick()
+  assert len(spawned) == 2
+  preferences.save(replace(preferences.load(layout), pause_mute=1.2, skip_mute=0.0), layout)
+  assert preferences.load(layout).pause_mute == 1.2
+  now[0] += 1
+  sup.tick()
+  assert len(spawned) == 2 and not sup.client.stopped and all(p.poll() is None for p in spawned)
+  preferences.save(replace(preferences.load(layout), cache_mb=512), layout)  # a real change still restarts
+  sup.tick()
+  assert len(spawned) == 4
+
+
+def test_changing_mute_values_keeps_phone_audio_running(layout, monkeypatch):
+  from dataclasses import replace
+  ready_layout(layout, monkeypatch)
+  preferences.save(preferences.Preferences(output='test', source='phone', phone_address='AA:BB:CC:DD:EE:FF'), layout)
+  spawned = []
+  sup, now = make_supervisor(layout, spawned)
+  sup.phone.powered = lambda: True
+  sup.phone.ready = lambda *_a: True
+  sup.phone.track = lambda _a: None
+  monkeypatch.setattr(supervisor.phone_audio, 'profile', lambda *_a: None)
+  sup.tick()
+  assert [Path(p.argv[0]).name for p in spawned][0] == 'pulseaudio' and len(spawned) == 2
+  preferences.save(replace(preferences.load(layout), pause_mute=1.5, skip_mute=0.05), layout)
+  now[0] += 1
+  sup.tick()
+  assert len(spawned) == 2 and all(p.poll() is None for p in spawned)
+  preferences.save(replace(preferences.load(layout), cache_mb=512), layout)
+  sup.tick()
+  assert len(spawned) == 4
+
+
+@pytest.mark.parametrize(('ipv4', 'ipv6', 'expected'), [
+  ('', '', False),
+  ('Iface Destination Gateway Flags', '', False),
+  ('wlan0 00000000 0100000A 0003', '', True),
+  ('', '0' * 32 + ' 00 ' + '0' * 32 + ' 00 ' + '0' * 32 + ' 00000001 00000000 00000000 00000003 wlan0', True),
+  ('', '0' * 32 + ' 00 ' + '0' * 32 + ' 00 ' + '0' * 32 + ' 00000001 00000000 00000000 00200200 lo', False),
+  ('wlan0 00000000 0100000A 0201', '', False),
+  ('lo 00000000 00000000 0001', '', False),
+])
+def test_network_ready_accepts_either_address_family(monkeypatch, ipv4, ipv6, expected):
+  from io import StringIO
+  monkeypatch.setattr('builtins.open', lambda path: StringIO(ipv4 if path.endswith('/route') else ipv6))
+  assert supervisor.network_ready() is expected

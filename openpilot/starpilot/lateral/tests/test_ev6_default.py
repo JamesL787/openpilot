@@ -2,6 +2,9 @@
 
 import unittest
 
+from openpilot.common.params import Params
+from openpilot.common.prefix import OpenpilotPrefix
+
 from opendbc.can import CANParser
 from opendbc.car import Bus, DT_CTRL, gen_empty_fingerprint, structs
 from opendbc.car.hyundai.carcontroller import CarController, MAX_ANGLE_FRAMES
@@ -22,21 +25,20 @@ def ev6(lka_steering: bool):
   return CarInterface.get_params(CAR.KIA_EV6, fingerprint, [], False, False, False)
 
 
-class NoTorqueSettings:
-  def get_param_path(self, _key):
-    raise AssertionError("untuned EV6 must not read saved torque settings")
-
-
 class TestEV6DefaultLateral(unittest.TestCase):
   def test_hda_topologies_keep_vehicle_tune_and_generic_controller(self):
     for lka_steering in (False, True):
-      with self.subTest(lka_steering=lka_steering):
+      with self.subTest(lka_steering=lka_steering), OpenpilotPrefix():
         cp = ev6(lka_steering)
         self.assertEqual(bool(cp.flags & HyundaiFlags.CANFD_LKA_STEER_MSG), lka_steering)
         self.assertEqual(cp.lateralTuning.which(), "torque")
         self.assertAlmostEqual(cp.lateralTuning.torque.latAccelFactor, 3.2)
         self.assertAlmostEqual(cp.lateralTuning.torque.friction, 0.005)
-        self.assertFalse(runtime_enabled(cp, NoTorqueSettings()))
+        # Global custom torque admission reads the saved numeric choices. An
+        # empty real store must still select the exact vehicle/default tune.
+        original_tune = cp.lateralTuning.to_dict()
+        self.assertFalse(runtime_enabled(cp, Params()))
+        self.assertEqual(cp.lateralTuning.to_dict(), original_tune)
         lateral = LatControlTorque(cp.as_reader(), CarInterface(cp), DT_CTRL)
         self.assertIsNone(selected_policy(lateral))
         self.assertAlmostEqual(lateral.torque_params.latAccelFactor, cp.lateralTuning.torque.latAccelFactor)

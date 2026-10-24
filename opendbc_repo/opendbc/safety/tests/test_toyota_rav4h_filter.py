@@ -40,11 +40,47 @@ class TestRav4hFilterNative(unittest.TestCase):
       bad.data[4] ^= 1
       self.safety.safety_rx_hook(bad)
       self.assertEqual(self.safety.aol_get_permission_mask(), 0)
-    for word in (0x5049, 0x5249, 0x9048, 0x904A, 0x9149, 0x9449, 0xB049, 0xD049):
+    for word in (0x5049, 0x5249, 0x9048, 0x904A, 0x914A, 0x9448, 0x944A, 0x9648, 0x964A, 0xB049, 0xD049):
       self.init(word, 32)
       self.physical(cruise=True)
       self.assertEqual(self.safety.aol_get_permission_mask(), 0)
       self.assertFalse(self.safety.safety_tx_hook(self.packer.make_can_msg_safety("ACC_CONTROL", 0, {"ACCEL_CMD": .1})))
+
+  def test_explicit_legacy_advert_words_require_physical_sources(self):
+    # The four-byte advertisement owner is distinct from the eight-byte SDSU owner.
+    for word, permission in ((0x9449, 3), (0x9649, 1)):
+      for ae in (0, 32):
+        with self.subTest(word=hex(word), ae=ae):
+          self.init(word, ae)
+          steer = self.packer.make_can_msg_safety("STEERING_LKA", 0, {"STEER_REQUEST": 1, "STEER_TORQUE_CMD": 0})
+          accel = self.packer.make_can_msg_safety("ACC_CONTROL", 0, {"ACCEL_CMD": .1})
+          cancel = self.packer.make_can_msg_safety("ACC_CONTROL", 0, {"CANCEL_REQ": 1})
+          self.assertFalse(self.safety.safety_tx_hook(steer))
+          self.assertFalse(self.safety.safety_tx_hook(accel))
+          self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+          # Only real physical CAN supplies MAIN and EPS; no 0x2FF status is sent.
+          self.base.physical(cruise=True)
+          self.assertEqual(self.safety.aol_get_permission_mask(), permission if ae else 0)
+          self.assertTrue(self.safety.safety_tx_hook(steer))
+          self.assertEqual(bool(self.safety.safety_tx_hook(accel)), word == 0x9449)
+          self.assertTrue(self.safety.safety_tx_hook(cancel))
+          self.assertEqual(self.safety.safety_fwd_hook(2, 0x343), 0)
+          for fault in ({"main": False}, {"gear": 32}, {"door": True}, {"eps": 9}):
+            self.base.physical(cruise=True, **fault)
+            self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+            self.assertFalse(self.safety.safety_tx_hook(steer))
+            self.assertFalse(self.safety.safety_tx_hook(accel))
+            self.assertTrue(self.safety.safety_tx_hook(cancel))
+            self.base.physical(cruise=False)
+            self.base.physical(cruise=True)
+            self.assertTrue(self.safety.safety_tx_hook(steer))
+            self.assertEqual(bool(self.safety.safety_tx_hook(accel)), word == 0x9449)
+          self.safety.set_timer(1_400_001)
+          self.safety.safety_tick()
+          self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+          self.assertFalse(self.safety.safety_tx_hook(steer))
+          self.assertFalse(self.safety.safety_tx_hook(accel))
+          self.assertTrue(self.safety.safety_tx_hook(cancel))
 
   def test_required_filter_source_expiry_and_wrong_length(self):
     self.init(0x9049, 32)

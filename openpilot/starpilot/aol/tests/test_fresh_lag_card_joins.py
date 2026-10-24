@@ -94,7 +94,10 @@ def test_pre_enabled_lag_cannot_use_existing_old_anchor_for_first_actuation():
     with mock.patch.object(sd.rk.avg_dt, 'get_average', return_value=0.02):
       axis, _, command = drive(4, state_stamp=stamp, **settings('combined', stamp, 5))
     assert not axis.lateralActive and not axis.longitudinalActive and not command.latActive and not command.longActive
-    assert str(axis.faultReason) == 'critical'
+    assert str(axis.faultReason) == 'availabilityPause'
+    assert not sd.aol_authority_lost
+    assert log.OnroadEvent.EventName.selfdrivedLagging in sd.events.names
+    assert not sd.events.contains('enable')
 
 
 def test_accepted_proof_without_new_event_retains_only_bounded_intent_memory():

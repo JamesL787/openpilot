@@ -223,3 +223,32 @@ class TestChryslerAolSafety(unittest.TestCase):
         self.feed(26, active=False, brake=True)
         self.assertEqual(self.native.aol_get_permission_mask(), 1)
         self.assertFalse(self.native.get_controls_allowed())
+
+  def test_malformed_physical_buttons_require_fresh_engagement(self):
+    for candidate in CHRYSLER_AOL_CARS:
+      for fault in ('checksum', 'short', 'long'):
+        with self.subTest(candidate=candidate, fault=fault):
+          self.arm(candidate)
+          address, data, bus = self.packer.make_can_msg('CRUISE_BUTTONS', 0, {})
+          if fault == 'checksum':
+            invalid = bytearray(data)
+            invalid[-1] ^= 1
+            data = bytes(invalid)
+          elif fault == 'short':
+            data = data[:2]
+          else:
+            data += b'\x00'
+          self.native.safety_rx_hook(self.packet((address, data, bus)))
+          self.assertEqual(self.native.aol_get_permission_mask(), 0)
+          self.assertFalse(self.native.safety_tx_hook(self.packet(create_lkas_command(self.packer, self.cp, 3, True))))
+          # Fresh healthy source traffic alone cannot undo the physical inhibit.
+          self.feed(23)
+          self.native.aol_set_host_request(1)
+          self.assertEqual(self.native.aol_get_permission_mask(), 0)
+          self.assertFalse(self.native.get_controls_allowed())
+          self.feed(24, active=True)
+          self.native.aol_set_host_request(1)
+          self.assertEqual(self.native.aol_get_permission_mask(), 1)
+          self.feed(25, active=False, brake=True)
+          self.assertEqual(self.native.aol_get_permission_mask(), 1)
+          self.assertFalse(self.native.get_controls_allowed())

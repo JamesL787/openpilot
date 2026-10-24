@@ -40,6 +40,8 @@ class CarState(CarStateBase):
     self.lkas_available = False
     self.lkas_available_ts_nanos = 0
     self.lateral_motion_control = None
+    self.bluepilot_speed_samples = [0] * 6 if CP.safetyConfigs and CP.safetyConfigs[-1].safetyParam & 128 else None
+    self.bluepilot_speed_window = None
 
   def get_car_gps(self):
     return self.car_gps_tracker.get()
@@ -63,6 +65,14 @@ class CarState(CarStateBase):
 
     # car speed
     ret.vEgoRaw = cp.vl["BrakeSysFeatures"]["Veh_V_ActlBrk"] * CV.KPH_TO_MS
+    if self.bluepilot_speed_samples is not None:
+      # Match Panda's six raw ABS speed samples, including its millimetre/second rounding.
+      for value in cp.vl_all["BrakeSysFeatures"]["Veh_V_ActlBrk"]:
+        self.bluepilot_speed_samples.append(math.floor(value * CV.KPH_TO_MS * 1000 + .5))
+      self.bluepilot_speed_samples = self.bluepilot_speed_samples[-6:]
+      samples = self.bluepilot_speed_samples
+      step = max(abs(b - a) for a, b in zip(samples, samples[1:], strict=False)) / 1000
+      self.bluepilot_speed_window = (min(samples) / 1000, max(samples) / 1000, step)
     ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
     ret.yawRate = cp.vl["Yaw_Data_FD1"]["VehYaw_W_Actl"]
     ret.standstill = cp.vl["DesiredTorqBrk"]["VehStop_D_Stat"] == 1
@@ -215,6 +225,8 @@ class CarState(CarStateBase):
         gear = ("Gear_Shift_by_Wire_FD1" if CP.flags & FordFlags.CANFD else
                 "TransGearData" if CP.flags & FordFlags.ALT_STEER_ANGLE else "PowertrainData_10")
         pt_messages.append((gear, 10))
+    if CP.transmissionType == TransmissionType.manual:
+      pt_messages.append(("BCM_Lamp_Stat_FD1", 10))
     if CP.flags & FordFlags.LKA_STEERING:
       pt_messages.append(("Lane_Assist_Data3_FD1", 30))
       cam_messages.append(("LateralMotionControl", 20))

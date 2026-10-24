@@ -549,6 +549,8 @@ class DisplaySettingsTests(unittest.TestCase):
         self.label, self.value, self.click = label, value, None
       def set_click_callback(self, callback):
         self.click = callback
+      def set_enabled(self, enabled):
+        self.enabled = enabled
     class Scroller:
       def __init__(self):
         self._scroller = self
@@ -574,6 +576,34 @@ class DisplaySettingsTests(unittest.TestCase):
       page.items[1].click()
       self.assertEqual(page.items[1].value, "on")
       self.assertTrue(read_preferences(self.params, large=False).enabled)
+      for key, label, maximum, step in (("ScreenTimeout", "parked screen timeout", 60, 5),
+                                        ("ScreenTimeoutOnroad", "driving interaction timeout", 60, 5),
+                                        ("ScreenBrightness", "parked brightness", 100, 1),
+                                        ("ScreenBrightnessOnroad", "driving brightness", 100, 1)):
+        with self.subTest(key=key):
+          self.params.put(key, maximum, block=True)
+          display_compact.DisplayCompact(Session())._populate(page)
+          minus = next(item for item in page.items if item.label == label + " -")
+          plus = next(item for item in page.items if item.label == label + " +")
+          self.assertTrue(minus.enabled)
+          self.assertFalse(plus.enabled)
+          minus.click()
+          self.assertEqual(self.params.get(key), maximum - step)
+          next(item for item in page.items if item.label == label + " +").click()
+          self.assertEqual(self.params.get(key), maximum)
+          self.params.put(key, 5, block=True)
+          display_compact.DisplayCompact(Session())._populate(page)
+          self.assertFalse(next(item for item in page.items if item.label == label + " -").enabled)
+      next(item for item in page.items if item.label == "use auto driving brightness set auto").click()
+      self.assertEqual([item.label for item in page.items if item.label.startswith("driving brightness")], ["driving brightness"])
+      next(item for item in page.items if item.label == "driving brightness").click()
+      self.assertEqual(self.params.get("ScreenBrightnessOnroad"), 5)
+      Path(self.params.get_param_path("ScreenTimeout")).write_bytes(b"invalid")
+      display_compact.DisplayCompact(Session())._populate(page)
+      repair = [item for item in page.items if item.label.startswith("parked screen timeout")]
+      self.assertEqual([item.label for item in repair], ["parked screen timeout set 30 s"])
+      repair[0].click()
+      self.assertEqual(self.params.get("ScreenTimeout"), 30)
 
   def test_large_system_tile_routes_to_display_and_back(self):
     from openpilot.starpilot.ui.runtime_app import StarShellSession

@@ -30,7 +30,11 @@ def test_actual_capture_resumes_with_original_checkpoint(vehicle, mode, missing)
       if tick == 145 and missing == 'stage_trace':
         runtime.observation.stage = None
       controls.pm.send.reset_mock()
-      with mock.patch('openpilot.selfdrive.controls.controlsd.time.monotonic_ns', return_value=now):
+      # Publication stamps use the same synthetic clock as controller preparation.
+      with (
+        mock.patch('openpilot.selfdrive.controls.controlsd.time.monotonic_ns', return_value=now),
+        mock.patch('openpilot.cereal.messaging.time.monotonic', return_value=now / 1e9),
+      ):
         controls.publish(*output)
       event = next(call.args[1] for call in controls.pm.send.call_args_list if call.args[0] == 'starpilotLateralState')
       event = messaging.log_from_bytes(event.to_bytes())

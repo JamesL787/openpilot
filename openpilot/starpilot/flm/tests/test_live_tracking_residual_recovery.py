@@ -58,24 +58,58 @@ def test_withdraw_once_cancel_probe_no_same_epoch_retry_then_new_epoch(monkeypat
   for i in range(69):
     _, now = feed(monitor, i, bad=True)
   interrupted = []
-  monkeypatch.setattr(actor, 'ingress', SimpleNamespace(monitor=monitor, interrupt=lambda reason, **kwargs: interrupted.append(reason)))
+  monkeypatch.setattr(actor, 'ingress', SimpleNamespace(monitor=monitor, optimizer=SimpleNamespace(offer_state=None),
+    interrupt=lambda reason, **kwargs: interrupted.append(reason)))
   actor.certificate = monitor.certificate
-  collector = SimpleNamespace(ready=[None], original_source_capture=SimpleNamespace(epoch=1), live_tracking=actor.ingress)
+  from openpilot.starpilot.flm.runtime_adapter_registry import SourceState
+  from openpilot.starpilot.flm.torque_emission_replay import EmissionHistory
+  source = SourceState(True, False, b.reset_generation, b.source_epoch, now, now+500_000_000,
+    b.cp_sha256, (), b.calibration_generation, b.persistent_source_epoch)
+  collector = SimpleNamespace(ready=[None], adapter=SimpleNamespace(
+    replay=SimpleNamespace(raw_mode=False, emissions=EmissionHistory(None))),
+    original_source_capture=SimpleNamespace(epoch=1), live_tracking=actor.ingress)
   snapshots = []
   def snapshot(*args):
     snapshots.append(1)
     return {'lifecycle_only': True}
   monkeypatch.setattr(live_tracking_bootstrap_producer, 'response_snapshot', snapshot)
-  actor.tick(collector, object(), now_ns=now, current_native=True)
+  class SnapshotPreparation:
+    pid: int | None = None
+    epoch: int | None = None
+    token: tuple[object, ...] | None = None
+    pending: dict[str, object] | None = None
+    reason = 'snapshot_submitted'
+
+    def cancel(self, reason):
+      self.pid = self.pending = None
+
+    def poll(self, *, token, now_ns):
+      result, self.pending = self.pending, None
+      self.pid = None
+      return result if token == self.token else None
+
+    def submit(self, collector, seed, *, token, now_ns):
+      self.epoch, self.token, self.pid = collector.original_source_capture.epoch, token, 1
+      self.pending = {'snapshot': live_tracking_bootstrap_producer.response_snapshot(collector, seed, now_ns)}
+      return True
+
+  # Lifecycle-only asynchronous preparation seam; source/decoder/monitor and
+  # current bootstrap admission decisions remain actual production code.
+  monkeypatch.setattr(actor, 'snapshot_process', SnapshotPreparation())
+  actor.tick(collector, source, now_ns=now, current_native=True)
   assert actor.ingress is actor.certificate is collector.live_tracking is None
   assert actor.attempted_epoch == actor.response_recovery_generation == 1
   assert interrupted == cancellations == ['persistent_physical_response_drift']
-  actor.tick(collector, object(), now_ns=now+1, current_native=True)
+  actor.tick(collector, source, now_ns=now+1, current_native=True)
   assert not snapshots and not process.submissions
   assert actor.response_recovery_generation == 1
-  actor.tick(collector, object(), now_ns=now+2, current_native=False)
+  actor.tick(collector, source, now_ns=now+2, current_native=False)
   assert not snapshots
   collector.original_source_capture.epoch = 2
-  actor.tick(collector, object(), now_ns=now+3, current_native=True)
+  actor.tick(collector, source, now_ns=now+3, current_native=True)
+  assert len(snapshots) == 1 and not process.submissions
+  assert actor.attempted_epoch == 1  # No attempt until the owned preparation result is polled.
+  actor.tick(collector, source, now_ns=now+4, current_native=True)
   assert len(snapshots) == len(process.submissions) == 1
+  assert actor.attempted_epoch == 2
   assert actor.certificate is None  # Recalibration result + fresh residual are still required.

@@ -90,8 +90,9 @@ class TestHighlanderAol(unittest.TestCase):
     for car in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT):
       fw = [structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps,
              fwVersion=b'8965B47070\x00\x00\x00\x00\x00\x00')]
-      cp = CarInterface.get_params(car, {0: {0x2FF: 4}, 1: {}, 2: {}}, fw, False, False, False)
-      self.assertEqual(cp.safetyConfigs[0].safetyParam, 4169)
+      # This legacy EPS73 owner consumes eight-byte smartDSU traffic, not advertisements.
+      cp = CarInterface.get_params(car, {0: {0x2FF: 8}, 1: {}, 2: {}}, fw, False, False, False)
+      self.assertEqual(cp.safetyConfigs[0].safetyParam, 0x8049)
       self.assertTrue(qualified(cp))
       for reduced in (False, True):
         selected = cp.as_reader().as_builder()
@@ -99,7 +100,7 @@ class TestHighlanderAol(unittest.TestCase):
           self.assertTrue(prepare_stock(selected))
         selected.alternativeExperience = 32
         self.assertTrue(qualified(selected, marked_only=True))
-        self.assertEqual(selected.safetyConfigs[0].safetyParam, 4681 if reduced else 4169)
+        self.assertEqual(selected.safetyConfigs[0].safetyParam, 0x8249 if reduced else 0x8049)
         for mutation in ('identity', 'flags', 'word', 'long', 'experience', 'passive', 'model'):
           bad = selected.as_reader().as_builder()
           if mutation == 'identity':
@@ -201,9 +202,22 @@ class TestHighlanderAol(unittest.TestCase):
     bad.safetyConfigs[0].safetyParam ^= 0x4000
     self.assertFalse(qualified(bad))
     for car in (CAR.LEXUS_RC,
-                CAR.TOYOTA_RAV4_TSS2_2023, CAR.TOYOTA_RAV4_PRIME, CAR.TOYOTA_SIENNA_4TH_GEN):
+                CAR.TOYOTA_RAV4_PRIME, CAR.TOYOTA_SIENNA_4TH_GEN):
       cp = CarInterface.get_params(car, gen_empty_fingerprint(), [], True, False, False)
       self.assertFalse(qualified(cp))
+
+  def test_rav4_2023_angle_factory_and_exact_experience(self):
+    for alpha, word in ((False, 0x649), (True, 0x449)):
+      with self.subTest(alpha=alpha):
+        cp = CarInterface.get_params(CAR.TOYOTA_RAV4_TSS2_2023, gen_empty_fingerprint(), [], alpha, False, False)
+        self.assertEqual(cp.safetyConfigs[0].safetyParam, word)
+        self.assertEqual(cp.steerControlType, structs.CarParams.SteerControlType.angle)
+        self.assertTrue(qualified(cp))
+        cp.alternativeExperience |= policy_for(cp).alternative_experience_addition
+        self.assertEqual(cp.alternativeExperience, 32)
+        self.assertTrue(qualified(cp, marked_only=True))
+        cp.safetyConfigs[0].safetyParam ^= 1
+        self.assertFalse(qualified(cp, marked_only=True))
 
   def test_camera_torque_group_consumes_same_physical_sources(self):
     for car in CAMERA_TORQUE_CASES:
@@ -287,7 +301,7 @@ class TestHighlanderAol(unittest.TestCase):
           self.assertEqual(bool(selected.CP.flags & ToyotaFlags.AUTO_BRAKE_HOLD), hold)
           self.assertTrue(qualified(selected.CP, marked_only=True))
           if prepared_cp is not None:
-            self.assertEqual(selected.CP.safetyConfigs[0].safetyParam, 4681 if filter_disabled or late_disable else 4169)
+            self.assertEqual(selected.CP.safetyConfigs[0].safetyParam, 0x8249 if filter_disabled or late_disable else 0x8049)
             self.assertEqual(selected.CP.openpilotLongitudinalControl, not (filter_disabled or late_disable))
             self.assertFalse(selected.CP.autoResumeSng)
           with structs.CarParams.from_bytes(saved.get('CarParams')) as published:

@@ -10,14 +10,14 @@ from opendbc.car.ford.values import CAR, FordFlags
 
 @pytest.mark.parametrize("car", sorted(GENERIC_CANFD_CARS))
 @pytest.mark.parametrize("alpha,release", ((False,False),(True,False),(False,True),(True,True)))
-def test_actual_profile_and_release_long_denial(car, alpha, release):
+def test_actual_profile_and_release_long_support(car, alpha, release):
   fp = gen_empty_fingerprint()
   fp[0][0x5A] = 8
   fp[2].update({0x3D6:8,0x186:8})
   cp = CarInterface.get_params(car, fp, [], alpha, release, False)
-  assert cp.alphaLongitudinalAvailable == (not release)
-  assert cp.openpilotLongitudinalControl == (alpha and not release)
-  assert cp.safetyConfigs[-1].safetyParam == (67 if alpha and not release else 66)
+  assert cp.alphaLongitudinalAvailable
+  assert cp.openpilotLongitudinalControl == alpha
+  assert cp.safetyConfigs[-1].safetyParam == (67 if alpha else 66)
   assert cp.steerActuatorDelay == pytest.approx(.22)
   assert qualified(cp)
 
@@ -212,8 +212,8 @@ def test_mache_camera_source_preserves_exact_factory_words(alpha, release, bsm):
   if bsm:
     fp[0].update({0x3A6: 8, 0x3A7: 8})
   cp = CarInterface.get_params(CAR.FORD_MUSTANG_MACH_E_MK1, fp, [], alpha, release, False)
-  assert cp.safetyConfigs[-1].safetyParam == (19 if alpha and not release else 18)
-  assert cp.openpilotLongitudinalControl == (alpha and not release)
+  assert cp.safetyConfigs[-1].safetyParam == (19 if alpha else 18)
+  assert cp.openpilotLongitudinalControl == alpha
   assert not cp.radarUnavailable
   radar = RadarInterface(cp)
   assert radar.rcp.bus == 2 and radar.generic_canfd_lead

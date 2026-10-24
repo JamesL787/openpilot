@@ -1,4 +1,5 @@
 """MQB DEBUG OP-long uses a fresh native SET/RES release; release firmware denies the profile."""
+import unittest
 import pytest
 from opendbc.car import structs
 from opendbc.safety.tests import test_volkswagen_stock_aol as stock_tests
@@ -135,3 +136,14 @@ def test_expired_host_and_source_lease_cannot_restore_longitudinal_from_stale_co
       assert owner.safety.aol_get_permission_mask() == 0
   finally:
     owner.tearDown()
+
+
+class TestVolkswagenLongUnittest(unittest.TestCase):
+  """Keep the actual native engagement assertions in unittest's coverage gate too."""
+  def test_long_lifecycle(self):
+    for word in (9, 25):
+      for button in ('GRA_Tip_Setzen', 'GRA_Tip_Wiederaufnahme'):
+        test_longitudinal_needs_ordinary_native_grant_and_never_resumes_after_brake(word, button)
+      test_reverse_and_permanent_eps_require_fresh_longitudinal_press(word)
+      test_press_held_across_permanent_fault_cannot_regrant_on_release(word)
+      test_expired_host_and_source_lease_cannot_restore_longitudinal_from_stale_controls_allowed(word)

@@ -14,6 +14,7 @@ class TestHyundaiBlendedAlpha(unittest.TestCase):
   def select(self, hda2):
     self.bus = int(hda2)
     self.primary_counter = 0
+    self.safety.set_alternative_experience(0)
     self.assertEqual(self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai,
                                                0x2014 if hda2 else 0x2004), 0)
     self.safety.init_tests()

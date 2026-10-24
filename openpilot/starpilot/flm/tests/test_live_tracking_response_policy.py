@@ -101,15 +101,20 @@ def test_parent_discards_unqualified_successful_child_report(monkeypatch):
 
 
 def test_daemon_explicitly_constructs_production_response_process():
+  # Current live source tracking owns no numerical plant-bootstrap process.
   import openpilot.starpilot.flm.steerlearnerd as daemon
   tree = ast.parse(Path(daemon.__file__).read_text())
   calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and
     isinstance(node.func, ast.Name) and node.func.id == 'LiveTrackingActor']
   assert len(calls) == 1
   keywords = {item.arg: item.value for item in calls[0].keywords}
-  assert isinstance(keywords['bootstrap_process'], ast.Call)
-  assert isinstance(keywords['bootstrap_process'].func, ast.Name)
-  assert keywords['bootstrap_process'].func.id == 'ProductionBootstrapProcess'
+  assert not calls[0].args
+  assert set(keywords) == {'probe_process', 'source_tracking'}
+  assert isinstance(keywords['source_tracking'], ast.Constant)
+  assert keywords['source_tracking'].value is True
+  from openpilot.starpilot.flm.live_tracking_actor import LiveTrackingActor
+  with pytest.raises(ValueError, match='source tracking has no plant bootstrap process'):
+    LiveTrackingActor(bootstrap_process=object(), source_tracking=True)
   assert isinstance(keywords['probe_process'], ast.Call)
   assert isinstance(keywords['probe_process'].func, ast.Name)
   assert keywords['probe_process'].func.id == 'ProbeProcess'
@@ -131,10 +136,16 @@ def test_real_pending_child_survives_capture_rollover_but_not_changed_physical_b
   owner = RetainedResponseRequalifier(old, basis(old), new_drive(old))
   control, output, _pose = synthetic_pair(owner, 0)
   binding = owner._binding
-  source = SimpleNamespace(cp_sha256=binding.cp_sha256, source_epoch=binding.source_epoch,
-    reset=binding.reset_generation, calibration_generation=binding.calibration_generation,
-    persistent_source_epoch=binding.persistent_source_epoch)
-  collector = SimpleNamespace(ready=[(control, output)], original_source_capture=SimpleNamespace(epoch=0), live_tracking=None)
+  from openpilot.starpilot.flm.runtime_adapter_registry import SourceState
+  from openpilot.starpilot.flm.torque_emission_replay import EmissionHistory
+  def source_at(now):
+    return SourceState(True, False, binding.reset_generation, binding.source_epoch, now, now+500_000_000,
+      binding.cp_sha256, (), binding.calibration_generation, binding.persistent_source_epoch)
+  source = source_at(99_000_000_000)
+  # Empty original inventory is truthful for this child-lifecycle-only fixture.
+  replay = SimpleNamespace(raw_mode=False, emissions=EmissionHistory(None))
+  collector = SimpleNamespace(ready=[(control, output)], adapter=SimpleNamespace(replay=replay),
+    original_source_capture=SimpleNamespace(epoch=0), live_tracking=None)
   process = ProductionBootstrapProcess()
   actor = LiveTrackingActor(bootstrap_process=process)
   seed = actor.binding_for(collector, source)
@@ -150,12 +161,12 @@ def test_real_pending_child_survives_capture_rollover_but_not_changed_physical_b
     assert actor.tick(collector, source, now_ns=99_000_000_000, current_native=True) is None
     assert process.child is child and child.poll() is None and not process.reaping
     collector.original_source_capture.epoch = 1
-    assert actor.tick(collector, source, now_ns=101_000_000_000, current_native=True) is None
+    assert actor.tick(collector, source_at(101_000_000_000), now_ns=101_000_000_000, current_native=True) is None
     assert actor.seed == seed and process.token == token
     assert process.child is child and child.poll() is None and not process.reaping
     assert actor.attempted_epoch == 0  # No duplicate child at capture rotation.
     collector.ready = [(replace(control, vehicle_model_anchor=(16., 100000., 110000.)), output)]
-    assert actor.tick(collector, source, now_ns=102_000_000_000, current_native=True) is None
+    assert actor.tick(collector, source_at(102_000_000_000), now_ns=102_000_000_000, current_native=True) is None
     assert process.reaping or process.child is None
     assert actor.reason == 'actual_response_source_unavailable'
   finally:

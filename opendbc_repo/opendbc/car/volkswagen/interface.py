@@ -124,6 +124,7 @@ class CarInterface(CarInterfaceBase):
 
     if ret.flags & VolkswagenFlags.MEB:
       ret.openpilotLongitudinalControl = True
+      ret.alphaLongitudinalAvailable = ret.networkLocation == NetworkLocation.gateway or docs
       ret.longitudinalActuatorDelay = 0.3
     else:
       ret.alphaLongitudinalAvailable = ret.networkLocation == NetworkLocation.gateway or docs

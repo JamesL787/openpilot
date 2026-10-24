@@ -62,7 +62,7 @@ class TestFordThreePorts(unittest.TestCase):
         self.assertTrue(requested.openpilotLongitudinalControl)
         self.assertTrue(requested.safetyConfigs[-1].safetyParam & FordSafetyFlags.LONG_CONTROL)
         if candidate == CAR.FORD_MONDEO_MK5:
-          self.assertFalse(params(candidate, alpha=True, release=True).openpilotLongitudinalControl)
+          self.assertTrue(params(candidate, alpha=True, release=True).openpilotLongitudinalControl)
     self.assertAlmostEqual(params(CAR.FORD_MUSTANG_MACH_E_MK1).steerActuatorDelay, 0.22, places=7)
     self.assertFalse(params(CAR.FORD_BRONCO_SPORT_MK1).openpilotLongitudinalControl)
     self.assertTrue(params(CAR.FORD_BRONCO_SPORT_MK1, alpha=True).openpilotLongitudinalControl)

@@ -80,6 +80,8 @@ public:
   const std::vector<SeekRange> &seekRanges() const { return seek_ranges_; }
   int64_t wallMinusMonoNanos() const { return wall_minus_mono_ns_; }
   bool legacyClock() const { return legacy_clock_; }
+  const std::string &timelineState() const { return timeline_state_; }
+  bool timelineIncomplete() const { return timeline_incomplete_; }
   void setLoadAbort(std::atomic<bool> *abort) { load_abort_ = abort; }
   const BenchmarkStats &getBenchmarkStats() const { return benchmark_stats_; }
 
@@ -132,6 +134,8 @@ private:
   std::vector<SeekRange> seek_ranges_;
   int64_t boot_offset_ns_ = -1;
   bool legacy_clock_ = false;
+  std::string timeline_state_ = "loading";
+  bool timeline_incomplete_ = false;
   std::atomic<int64_t> wall_minus_mono_ns_ = 0;
   bool events_ready_ = false;
   std::time_t route_date_time_ = 0;

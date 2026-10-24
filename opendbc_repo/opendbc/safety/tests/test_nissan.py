@@ -99,5 +99,40 @@ class TestNissanLeafSafety(TestNissanSafety):
     pass
 
 
+class TestNissanUnsupportedAolProfile(unittest.TestCase):
+  def test_unsupported_words_deny_every_nissan_transmit(self):
+    safety = common.libsafety_py.libsafety
+    packer = common.CANPackerSafety("nissan_x_trail_2017_generated")
+    cancel = packer.make_can_msg_safety("CRUISE_THROTTLE", 2, {"CANCEL_BUTTON": 1})
+    hud = common.make_msg(0, 0x2B1)
+    try:
+      safety.set_alternative_experience(0)
+      self.assertEqual(safety.set_safety_hooks(CarParams.SafetyModel.nissan, 0), 0)
+      self.assertTrue(safety.safety_tx_hook(cancel))
+      self.assertTrue(safety.safety_tx_hook(hud))
+      for param in (2, 3, 5, 0xFFFF):
+        with self.subTest(param=param):
+          safety.set_alternative_experience(32)
+          self.assertEqual(safety.set_safety_hooks(CarParams.SafetyModel.nissan, param), 0)
+          safety.init_tests()
+          safety.set_controls_allowed(True)
+          safety.set_aol_test_heartbeat(True)
+          safety.aol_set_host_request(3)
+          self.assertEqual(safety.aol_get_permission_mask(), 0)
+          self.assertFalse(safety.safety_tx_hook(cancel))
+          self.assertFalse(safety.safety_tx_hook(hud))
+          for addr, bus, length in ((0x169, 0, 8), (0x2B1, 0, 8), (0x4CC, 0, 8),
+                                    (0x20B, 2, 6), (0x20B, 1, 6), (0x280, 2, 8)):
+            self.assertFalse(safety.safety_tx_hook(common.make_msg(bus, addr, length)))
+      # Leaving the unsupported profile restores the ordinary TX catalog.
+      safety.set_alternative_experience(0)
+      self.assertEqual(safety.set_safety_hooks(CarParams.SafetyModel.nissan, 0), 0)
+      self.assertTrue(safety.safety_tx_hook(cancel))
+      self.assertTrue(safety.safety_tx_hook(hud))
+    finally:
+      safety.set_alternative_experience(0)
+      safety.set_safety_hooks(CarParams.SafetyModel.noOutput, 0)
+
+
 if __name__ == "__main__":
   unittest.main()

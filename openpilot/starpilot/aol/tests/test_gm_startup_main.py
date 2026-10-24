@@ -133,7 +133,8 @@ def test_cold_parser_main_readiness_then_actual_commands_without_main_edge(index
         selected.aol_card_intent.update(cs, fault_active=disarm, now_ns=now)
         selected.observe_aol_calibration(cs, now, False)
         allowed, pause_lat, pause_long = selected.aol_card_intent.output(cs)
-        assert allowed == (main and not incomplete)
+        assert allowed == main  # Readiness pauses output, not the driver's MAIN intent.
+        assert (pause_lat, pause_long) == (incomplete, incomplete)
         assert not selected.aol_card_intent._main_cycle_required
         intent = IntentState(selected.slc_producer_session, tick + 1, now, now, now + 30_000_000,
                              allowed, pause_lat, pause_long, True, allowed)
@@ -224,20 +225,20 @@ def test_all_actual_gm_configuration_policies_cold_main_then_critical_recovery()
       events.add(EventName.calibrationIncomplete)
       owner.update(cs, fault_active=False)
       owner.observe_calibration(cs, events=events.to_msg())
-      assert not owner.output(cs)[0] and not owner._calibration_rearm_required
+      assert owner.output(cs) == (True, True, True) and not owner._calibration_rearm_required
       for _ in range(10):
         owner.update(cs, fault_active=None)
         owner.observe_calibration(cs, events=None)  # onroadEvents publishes sparsely.
-        assert not owner.output(cs)[0] and not owner._calibration_rearm_required
+        assert owner.output(cs) == (True, True, True) and not owner._calibration_rearm_required
       owner.update(cs, fault_active=False)
       owner.observe_calibration(cs, events=[])
       assert owner.output(cs)[0] and not owner.startup_calibration_pending
-      # Same event after actual ready observation retains existing rearm law.
+      # A resolved fault restores the persistent GM MAIN request without a new edge.
       owner.update(cs, fault_active=True)
       owner.observe_calibration(cs, events=events.to_msg())
       owner.update(cs, fault_active=False)
       owner.observe_calibration(cs, events=[])
-      assert not owner.output(cs)[0] and owner._main_cycle_required
+      assert owner.output(cs)[0] and not owner._main_cycle_required
       cs.cruiseState.available = False
       owner.update(cs, fault_active=False)
       owner.observe_calibration(cs, events=[])
@@ -253,7 +254,8 @@ def test_all_actual_gm_configuration_policies_cold_main_then_critical_recovery()
 
 
 @pytest.mark.parametrize('fault', ['calibrationInvalid', 'calibrationRecalibrating', 'controlsMismatch', 'processNotRunning'])
-def test_cold_mixed_or_critical_fault_never_uses_readiness_exception(fault):
+@pytest.mark.parametrize('immediate', [False, True])
+def test_cold_soft_warning_retains_intent_but_immediate_fault_never_does(fault, immediate):
   from openpilot.starpilot.car.gm.aol import intent_disarming_fault
   cp = factory_params(alpha=False)
   cs = structs.CarState(canValid=True, gearShifter='drive')
@@ -261,7 +263,19 @@ def test_cold_mixed_or_critical_fault_never_uses_readiness_exception(fault):
   events = Events()
   events.add(EventName.calibrationIncomplete)
   events.add(getattr(EventName, fault))
-  assert intent_disarming_fault(cp, events.to_msg(), cs, startup_calibration_pending=True)
+  messages = events.to_msg()
+  if immediate:
+    messages[-1].immediateDisable = True
+  expected_disarm = immediate or fault == 'controlsMismatch'
+  assert intent_disarming_fault(cp, messages, cs, startup_calibration_pending=True) == expected_disarm
+  with OpenpilotPrefix():
+    params = Params()
+    params.put_bool('AlwaysOnLateral', True, block=True)
+    owner = create_intent(cp, read_settings(params), policy_for(cp))
+    owner.update(cs, fault_active=expected_disarm)
+    owner.observe_calibration(cs, events=messages)
+    assert owner.output(cs) == (not expected_disarm, True, True)
+    assert owner._main_cycle_required == expected_disarm
 
 
 def test_explicit_off_stays_off_and_gm_main_mapping_follows_physical_level():
@@ -333,7 +347,7 @@ def test_cached_main_without_current_required_can_cannot_arm(index):
     assert not cs.canValid and not owner.output(cs)[0]
 
 
-def test_cold_native_transport_reset_is_not_a_readiness_recovery():
+def test_cold_native_reset_requires_explicit_healthy_observation_before_main_recovers():
   with OpenpilotPrefix():
     params = Params()
     params.put_bool('AlwaysOnLateral', True, block=True)
@@ -345,10 +359,13 @@ def test_cold_native_transport_reset_is_not_a_readiness_recovery():
     events.add(EventName.calibrationIncomplete)
     owner.update(cs, fault_active=False)
     owner.observe_calibration(cs, events=events.to_msg())
+    assert owner.output(cs) == (True, True, True)
+    owner.update(cs, fault_active=True)  # Current reset still inhibits optional intent.
     assert not owner.output(cs)[0]
-    owner.update(cs, fault_active=True)  # Existing Card transport-reset result.
+    owner.update(cs, fault_active=None)
+    assert not owner.output(cs)[0]
     owner.observe_calibration(cs, events=events.to_msg())
     owner.update(cs, fault_active=False)
     owner.observe_calibration(cs, events=[])
-    assert not owner.output(cs)[0] and owner._main_cycle_required
+    assert owner.output(cs)[0] and not owner._main_cycle_required
     assert not owner.startup_calibration_pending

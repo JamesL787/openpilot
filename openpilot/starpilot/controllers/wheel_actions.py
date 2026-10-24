@@ -2,6 +2,7 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
+from functools import lru_cache
 
 from opendbc.car import structs
 from openpilot.starpilot.conditional_mode.manual import Button, ButtonTracker, Press, ioniq6_media_eligible
@@ -47,14 +48,18 @@ def button_reported(cp, key):
   if brand in ('body', 'byd', 'mg', 'mock', 'psa', 'rivian', 'subaru'):
     return False
   if brand == 'toyota':
+    from opendbc.car.toyota import legacy_advert_filter, camera_2aa_filter
     from opendbc.car.toyota.values import CAR, ToyotaFlags
+    legacy_advert = bool(cp.flags & ToyotaFlags.RADAR_CAN_FILTER) and legacy_advert_filter.configured(cp)
     if key == 'MainCruiseButtonControl' or key in KEYS[5:8]:
       return False
+    if key in KEYS[2:5] and bool(cp.flags & ToyotaFlags.RADAR_CAN_FILTER) and camera_2aa_filter.configured(cp):
+      return False  # No verified FD_BUTTON receiver is implied by a 2AA discriminator.
     if key == 'LKASButtonControl':
       return bool(cp.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or
-                  cp.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT)
+                  cp.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or legacy_advert)
     return bool(cp.flags & ToyotaFlags.TSS2 and not cp.flags & (ToyotaFlags.RADAR_ACC | ToyotaFlags.SECOC) or
-                cp.flags & ToyotaFlags.LONG_FILTER or cp.carFingerprint in
+                cp.flags & ToyotaFlags.LONG_FILTER or legacy_advert or cp.carFingerprint in
                 (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT, CAR.TOYOTA_SIENNA_4TH_GEN))
   if brand == 'tesla':
     from opendbc.car.tesla.values import CAR, TeslaFlags
@@ -90,9 +95,18 @@ def paddle_bookmark_available(params, cp):
   return bool(readable and raw in (None, b"0"))
 
 
+@lru_cache(maxsize=64)
+def _cp_fingerprint(serialized):
+  # Default substructures can materialize without changing any CarParams values.
+  # Rebuild every field so allocation layout cannot invalidate a wheel command.
+  with structs.CarParams.from_bytes(serialized) as reader:
+    canonical = structs.CarParams.new_message(**reader.to_dict())
+    return hashlib.sha256(canonical.to_bytes()).hexdigest()
+
+
 def cp_fingerprint(cp):
   reader = cp.as_reader() if hasattr(cp, "as_reader") else cp
-  return hashlib.sha256(reader.as_builder().to_bytes()).hexdigest()
+  return _cp_fingerprint(reader.as_builder().to_bytes())
 
 
 def capture(params):

@@ -1,6 +1,7 @@
 # EV9 calibration extracted from the reached Dom controller; isolated from Ioniq6 policy.
 # Preserve source calibration, 20Hz update and 50Hz stop latch separately.
 from dataclasses import dataclass
+from capnp.lib.capnp import _DynamicStructBuilder, _DynamicStructReader
 import numpy as np
 from opendbc.car import DT_CTRL, structs
 from opendbc.car.hyundai.values import CAR
@@ -278,6 +279,11 @@ LONG_PARAM = 0x5c95
 
 
 def copy_cp(cp):
+  # Copy the message directly; dictionary reconstruction traverses every field.
+  if type(cp) is _DynamicStructBuilder and cp.schema == structs.CarParams.schema:
+    return cp.copy()
+  if type(cp) is _DynamicStructReader and cp.schema == structs.CarParams.schema:
+    return cp.as_builder()
   with structs.CarParams.from_bytes(structs.CarParams.new_message(**cp.to_dict()).to_bytes()) as reader:
     return reader.as_builder()
 

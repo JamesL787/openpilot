@@ -131,3 +131,34 @@ def test_normal_scheduling_pins_without_sched_idle(monkeypatch, events):
   assert kernel.policy is None and kernel.niced == 0
   assert all(mask == {6} for mask in kernel.masks.values())
   assert events[0]["policy"] == "normal"
+
+
+def test_background_renderer_is_idle_and_excludes_all_driving_cores(monkeypatch, events):
+  kernel = FakeKernel(monkeypatch, threads=(100, 101, 102))
+  p = kernel.make(events, core=placement.BACKGROUND_RENDER_CORES)
+  p.start()
+  assert kernel.policy == SCHED_IDLE and kernel.niced == 0
+  assert placement.BACKGROUND_RENDER_CORES == (0, 1, 2)
+  assert all(mask == {0, 1, 2} for mask in kernel.masks.values())
+  assert all(mask.isdisjoint({3, 4, 5, 6, 7}) for mask in kernel.masks.values())
+  assert events[0]['policy'] == 'idle' and events[0]['cores'] == [0, 1, 2]
+  kernel.masks[200] = set(range(8))
+  p.maintain(PLACEMENT_CHECK_INTERVAL)
+  assert kernel.masks[200] == {0, 1, 2}
+
+
+def test_background_pool_tracks_online_cores_without_using_driving_cores(monkeypatch, events):
+  kernel = FakeKernel(monkeypatch)
+  kernel.online.update({0: True, 1: False, 2: True})
+  p = kernel.make(events, core=placement.BACKGROUND_RENDER_CORES)
+  p.start()
+  assert kernel.masks[100] == {0, 2}
+  kernel.online.update({1: True, 2: False})
+  p.maintain(PLACEMENT_CHECK_INTERVAL)
+  assert kernel.masks[100] == {0, 1}
+
+
+@pytest.mark.parametrize('cores', [(), (-1,), (0, -1)])
+def test_rejects_invalid_core_pools(cores):
+  with pytest.raises(ValueError):
+    RendererPlacement(core=cores)

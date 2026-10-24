@@ -16,9 +16,9 @@ from openpilot.starpilot.car.toyota.prius_preferences import PriusFilterPreferen
 
 def make_ci(identity, params, *, standstill=False):
   rack = structs.CarParams.CarFw.new_message(ecu=structs.CarParams.Ecu.eps,
-                                            fwVersion=b'8965B47070' + bytes(6))
+                                            fwVersion=b'8965B47070' + bytes(6), brand='toyota', address=0x7A1)
   cp = CarInterface.get_params(identity, {0: {0x2FF: 4}, 1: {}, 2: {}}, [rack], False, False, False)
-  assert cp.safetyConfigs[0].safetyParam == 4169
+  assert cp.safetyConfigs[0].safetyParam == 0xD049
   ci = CarInterface(cp)
   ci.CC.prius_filter_input = PriusFilterPreference(cp, params)
   state = structs.CarState(canValid=True, canTimeout=False, standstill=standstill,

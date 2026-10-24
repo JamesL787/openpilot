@@ -197,7 +197,7 @@ def card_capture_for(owner, now_ns):
     # ignores it there. Observational capture must check its REAL bits directly.
     service = 'autoSteeringLearning'
     stamp = int(sm.logMonoTime[service])
-    receipt = int(sm.recv_time[service]*1e9)
+    receipt = int(round(sm.recv_time[service]*1e9))
     if (type(now_ns) is not int or not now_ns > 0 or
         not all((sm.seen[service],sm.valid[service],sm.alive[service],sm.freq_ok[service])) or
         not 0 < stamp <= now_ns <= stamp+500_000_000 or
@@ -234,7 +234,7 @@ def capture_controls(owner, cc, *, control_ns, input_limited):
   sm = owner.sm
   header = int(sm.logMonoTime['carOutput'])
   output = sm['carOutput'].actuatorsOutput
-  row = CoConsumption(1,control_ns,header,int(sm.recv_frame['carOutput']),int(sm.recv_time['carOutput']*1e9),
+  row = CoConsumption(1,control_ns,header,int(sm.recv_frame['carOutput']),int(round(sm.recv_time['carOutput']*1e9)),
     bool(sm.seen['carOutput']),bool(sm.valid['carOutput']),co_body(header,bool(sm.valid['carOutput']),output.to_dict()),
     f32(float(output.torque)),f32(float(cc.actuators.torque)),bool(cc.latActive),bool(input_limited),
     bool(owner.steer_limited_by_safety),int(getattr(owner,'learning_feedback_prior_publish_ns',0)),

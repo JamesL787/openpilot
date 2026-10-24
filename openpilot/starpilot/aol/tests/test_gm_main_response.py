@@ -115,9 +115,10 @@ def test_actual_card_main_rearm_waits_only_for_older_idle_response(variation, sd
       cycle(0)
       cycle(1, fault=True)
       assert card.aol_card_intent._main_cycle_required and not card.aol_card_intent.allowed_latch
-      cycle(2)  # A healthy idle baseline clears transport failure, not the MAIN requirement.
-      assert not card.aol_transport_feedback.failed and card.aol_card_intent._main_cycle_required
-      off_source = cycle(3, main=False, ack=False)
+      cycle(2)  # Healthy idle restores the existing GM MAIN request, without a button edge.
+      assert not card.aol_transport_feedback.failed
+      assert not card.aol_card_intent._main_cycle_required and card.aol_card_intent.allowed_latch
+      off_source = cycle(3, main=False, ack=True)  # Acknowledge the newly restored request before MAIN OFF.
       cycle(4, ack=False, source=off_source)
       assert card.aol_card_intent.allowed_latch
       edge = card.aol_card_intent.main_arm_ns
@@ -145,3 +146,32 @@ def test_actual_card_main_rearm_waits_only_for_older_idle_response(variation, sd
       assert card.aol_card_intent.allowed_latch and not card.aol_transport_feedback.failed
     finally:
       card.vehicle_startup.close()
+
+
+@pytest.mark.parametrize('cp', list(gm_fixtures.configurations()))
+def test_gm_persistent_main_matches_dom_after_explicit_healthy_observation(cp):
+  from opendbc.car import structs
+  from openpilot.starpilot.aol.intent import read_settings
+  from openpilot.starpilot.aol.vehicle import create_intent, policy_for
+  with OpenpilotPrefix():
+    saved = Params()
+    saved.put_bool('AlwaysOnLateral', True, block=True)
+    owner = create_intent(cp, read_settings(saved), policy_for(cp))
+    cs = structs.CarState(canValid=True, gearShifter='drive', vEgo=0.)
+    cs.cruiseState.available = True
+    # Dom starpilot_card.py follows cruiseState.available every update; steering
+    # enablement is independently gated by speed, health and native authority.
+    owner.update(cs, fault_active=False, now_ns=NOW)
+    assert owner.allowed_latch and not cs.cruiseState.enabled and not cs.buttonEvents
+    owner.update(cs, fault_active=True, now_ns=NOW + 10_000_000)
+    assert not owner.output(cs)[0]
+    owner.update(cs, fault_active=None, now_ns=NOW + 20_000_000)
+    assert not owner.output(cs)[0]  # No new health observation cannot clear a fault.
+    owner.update(cs, fault_active=False, now_ns=NOW + 30_000_000)
+    assert owner.allowed_latch and owner.output(cs)[0]
+    assert owner.main_arm_ns == NOW + 30_000_000
+    owner.update(cs, fault_active=False, now_ns=NOW + 40_000_000)
+    assert owner.main_arm_ns == NOW + 30_000_000  # Never renew the new-request timestamp.
+    cs.cruiseState.available = False
+    owner.update(cs, fault_active=False, now_ns=NOW + 50_000_000)
+    assert not owner.output(cs)[0]

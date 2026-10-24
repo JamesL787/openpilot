@@ -22,6 +22,7 @@ KEY = ('event', 'center')
 @pytest.mark.parametrize('blocked', (None, 'native', 'physical_context', 'settings', 'prior_target'))
 def test_actual_event_cached_child_reports_reason_only_for_exact_current_prior(status, reason, blocked):
   adapter = mock.Mock(event_collection=True, raw_storage=True,
+    source_plant_protocol=None, original_feedback_archive=None,
     envelope=SimpleNamespace(prior_full_profile_sha256='e' * 64))
   adapter.prepare_control.side_effect = lambda evidence: evidence
   adapter.install_fit.return_value = False
@@ -35,9 +36,11 @@ def test_actual_event_cached_child_reports_reason_only_for_exact_current_prior(s
                              baseline_revision='baseline', controller_revision='controller', turn_assist=False)
   report = {'status': status, 'reason': reason, 'profile': None, 'validation': None}
   tick = [-1]
-  sm = mock.Mock()
+  sm = mock.Mock(updated={'deviceMotion': False}, logMonoTime={'deviceMotion': 0})
 
-  def update():
+  def update(timeout=None):
+    if timeout == 0:
+      return
     tick[0] += 1
     if tick[0] == 3:
       raise StopIteration

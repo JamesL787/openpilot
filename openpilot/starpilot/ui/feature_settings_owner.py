@@ -135,6 +135,7 @@ class FeatureSettingsOwner:
                galaxy: Callable[[], bool] = lambda: False,
                maps_available: Callable[[], bool] | None = None):
     self.params = params
+    self._galaxy = galaxy
     self._snapshot_reads: ContextVar[dict[tuple[str, int], tuple[bytes | None, bool]] | None] = ContextVar(
       "feature_snapshot_reads", default=None)
     self.authority = authority
@@ -161,6 +162,8 @@ class FeatureSettingsOwner:
     self.gm_cancel_remap = GmCancelRemapFeature(self)
 
     self.preap_radar = PreAPRadarFeature(self)
+    from openpilot.starpilot.ui.subaru_smoothing_feature import SubaruSmoothingFeature
+    self.subaru_smoothing = SubaruSmoothingFeature(self)
     self.gm_tune = GmTuneFeature(self)
     self.gm_truck = GmTruckFeature(self)
     self.gm_ev_preset = GmEvPresetFeature(self)
@@ -190,6 +193,57 @@ class FeatureSettingsOwner:
       if configured is not None:
         return configured
     return aol_policy_for(cp)
+
+  def _alpha_long_capability(self):
+    cp = self.vehicle_params()
+    release, readable = read_saved(self.params, 'IsReleaseBranch', 8)
+    try:
+      from opendbc.car.values import PLATFORMS
+      from openpilot.starpilot.car.hyundai.aol import ioniq6_settings_capable
+      from openpilot.starpilot.car.ford.longitudinal_preferences import release_long_available as ford_release_long_available
+      platform = PLATFORMS.get(str(cp.carFingerprint))
+      if (not self._galaxy() or platform is None or platform.__class__.__module__.split('.')[-2] != str(cp.brand) or
+          not readable or release not in (None, b'0', b'1') or cp.notCar or cp.passive or cp.dashcamOnly or
+          not (cp.alphaLongitudinalAvailable or ioniq6_settings_capable(cp)) or
+          (release == b'1' and not ford_release_long_available(cp))):
+        return None
+      return (str(cp.carFingerprint), str(cp.brand), int(cp.flags), int(cp.alternativeExperience),
+              bool(cp.alphaLongitudinalAvailable), bool(cp.openpilotLongitudinalControl), bool(cp.pcmCruise),
+              tuple((int(item.safetyModel.raw), int(item.safetyParam)) for item in cp.safetyConfigs), release)
+    except (AttributeError, TypeError, ValueError, OverflowError):
+      return None
+
+  def _alpha_long_rows(self, parked):
+    capability = self._alpha_long_capability()
+    if capability is None:
+      return ()
+    raw, readable = read_saved(self.params, 'AlphaLongitudinalEnabled', 8)
+    valid = readable and raw in (None, b'0', b'1')
+    return (FeatureRow('AlphaLongitudinalEnabled', 'Alpha Longitudinal',
+      ('On' if raw == b'1' else 'Off') if valid else 'Invalid saved choice', raw,
+      ('Off', 'On') if valid else (), default_value='Off', capability=capability, vehicle_fingerprint=self.vehicle_fingerprint(),
+      available=valid and parked and self.authority('parked_preferences') and self.authority('preferences'),
+      reason='Request StarPilot speed control instead of factory ACC. May disable Automatic Emergency Braking. ' +
+             'Applies after the next startup; exact vehicle takeover checks remain required.'),)
+
+  def _apply_alpha_long(self, request):
+    from openpilot.starpilot.saved_document import commit_exact
+    if (request.key != 'AlphaLongitudinalEnabled' or request.value not in ('Off', 'On') or
+        request.expected not in (None, b'0', b'1') or not request.confirmation or request.dependencies or
+        request.related_source is not None or request.display_unit or request.direction):
+      return False
+    def authorized():
+      return (self.authority('parked_preferences') and self.authority('preferences') and
+              request.capability is not None and request.capability == self._alpha_long_capability() and
+              request.vehicle_fingerprint == self.vehicle_fingerprint())
+    result = commit_exact(self.params, key=request.key, max_bytes=8, expected=request.expected,
+                          raw=b'1' if request.value == 'On' else b'0', authorized=authorized,
+                          temp_prefix='.alpha-long-')
+    if not result.committed or not result.verified:
+      return False
+    if authorized():
+      self.params.put_bool('OnroadCycleRequested', True, block=True)
+    return True
 
   def _capability(self, group: str) -> tuple | None:
     cp = self.vehicle_params()
@@ -247,7 +301,8 @@ class FeatureSettingsOwner:
     from opendbc.car.gm.startup_preferences import disable_long_supported
     cp = self.vehicle_params()
     try:
-      if cp is None or not (bolt_disable_supported(cp) or disable_long_supported(cp)):
+      from opendbc.car.volkswagen.meb_modes import supported as meb_stock_supported
+      if cp is None or not (bolt_disable_supported(cp) or disable_long_supported(cp) or meb_stock_supported(cp)):
         return None
       return (str(cp.carFingerprint), str(cp.brand), bool(cp.openpilotLongitudinalControl),
               bool(cp.pcmCruise), int(cp.flags),
@@ -255,12 +310,18 @@ class FeatureSettingsOwner:
     except (AttributeError, TypeError, ValueError, OverflowError):
       return None
 
+  def _vw_alpha_off(self) -> bool:
+    from opendbc.car.volkswagen.meb_modes import supported as meb_stock_supported
+    from openpilot.starpilot.car.volkswagen.preferences import stock_long_requested
+    return meb_stock_supported(self.vehicle_params()) and stock_long_requested(self.params)
+
   def _apply_bolt_disable(self, request: FeatureSettingsRequest) -> bool:
     if not request.confirmation or request.value not in ("Off", "On") or request.dependencies:
       return False
     def authorized() -> bool:
       return (bool(request.vehicle_fingerprint) and self.vehicle_fingerprint() == request.vehicle_fingerprint and
               request.capability is not None and request.capability == self._bolt_disable_capability() and
+              not (request.value == "Off" and self._vw_alpha_off()) and
               self.authority("parked_preferences") and request.expected in (None, b"0", b"1"))
     return commit_exact(self.params, key="DisableOpenpilotLongitudinal", max_bytes=8,
                         raw=b"1" if request.value == "On" else b"0", expected=request.expected,
@@ -760,6 +821,7 @@ class FeatureSettingsOwner:
       if (self._long_pitch_capability() is not None or self._bolt_disable_capability() is not None or
           self._auto_hold_capability() is not None or self._jeep_hold_capability() is not None or
           self._toyota_radar_capability() is not None or self._pedal_setup_capability() is not None or
+          self.subaru_smoothing.capability() is not None or
           self._subaru_avh_capability() is not None or self._subaru_startup_capability() is not None or self._subaru_sng_capability() is not None or
           self._subaru_software_capability() is not None or self._gm_stop_capability("VoltSNG") is not None or
           self._gm_stop_capability("GMAutoHold") is not None or self.tesla_screen.capability() is not None or
@@ -771,12 +833,13 @@ class FeatureSettingsOwner:
                   for name in (*PROFILE_NAMES, "traffic"))
     elif page == FeaturePage.VEHICLE:
       title = "Vehicle Settings"
+      rows = list(self._alpha_long_rows(parked))
       capability = self._auto_hold_capability()
       allowed = configurable and capability is not None and self.authority("vehicle")
       row = self._bool_row("ToyotaAutoHold", "Automatic Brake Hold", allowed,
                            "Hold the brake for over one second at a complete stop with cruise main on and cruise disengaged. " +
                            "Holds until you press the gas; normal cruise stop-and-go is unchanged. Applies after the next startup.")
-      rows = [replace(row, available=row.available and self._readable("ToyotaAutoHold"), capability=capability)] if capability is not None else []
+      rows.extend([replace(row, available=row.available and self._readable("ToyotaAutoHold"), capability=capability)] if capability is not None else [])
       radar_capability = self._toyota_radar_capability()
       if radar_capability is not None:
         from openpilot.starpilot.car.toyota.radar_preferences import CHOICES, KEY
@@ -797,6 +860,7 @@ class FeatureSettingsOwner:
       rows.extend(self.gm_cancel_remap.rows(parked))
 
       rows.extend(self.preap_radar.rows())
+      rows.extend(self.subaru_smoothing.rows(parked))
       rows.extend(self.gm_tune.rows(parked))
       rows.extend(self.gm_truck.rows(parked))
       rows.extend(self.gm_ev_preset.rows(parked))
@@ -818,6 +882,9 @@ class FeatureSettingsOwner:
         row = self._bool_row("DisableOpenpilotLongitudinal", "Disable StarPilot Speed Control",
                              parked and self.authority("parked_preferences"),
                              "StarPilot does not control speed in this mode. Steering remains available after the next startup")
+        if self._vw_alpha_off():
+          row = replace(row, value="On", available=False,
+                        reason="Speed control is off in driving settings. Enable Alpha Longitudinal there to restore it")
         if bolt_capability[-1] == (("noOutput", 0),):
           row = replace(row, reason="Factory camera not detected. Turn this setting off and restart to restore StarPilot speed control.")
         rows.append(replace(row, available=row.available and self._readable("DisableOpenpilotLongitudinal"),
@@ -1279,6 +1346,8 @@ class FeatureSettingsOwner:
       return self.gm_truck.apply(request)
     if key == "DisableOpenpilotLongitudinal":
       return self._apply_bolt_disable(request)
+    if key in ("DeveloperUI", "LatSmoothSeconds"):
+      return self.subaru_smoothing.apply(request)
     if key == "SubaruAvhStartup":
       from openpilot.starpilot.car.subaru.avh_settings import apply
       return apply(self, request)
@@ -1297,6 +1366,8 @@ class FeatureSettingsOwner:
       return self._apply_long_pitch(request)
     if key == "JeepBrakeHold":
       return self._apply_jeep_hold(request)
+    if key == "AlphaLongitudinalEnabled":
+      return self._apply_alpha_long(request)
     if key == "ToyotaAutoHold":
       return self._apply_auto_hold(request)
     if key == "ToyotaRadarMode":

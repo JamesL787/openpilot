@@ -57,7 +57,7 @@ def native_source(sm, cp, now_ns):
     name = 'lateralTorqueParameters'
     if type(now_ns) is not int or now_ns <= 0 or not sm.all_checks([name]):
       return None
-    stamp, received = int(sm.logMonoTime[name]), int(sm.recv_time[name] * 1e9)
+    stamp, received = int(sm.logMonoTime[name]), int(round(sm.recv_time[name] * 1e9))
     row = sm[name]
     values = (float(row.latAccelFactorFiltered), float(row.latAccelOffsetFiltered), float(row.frictionCoefficientFiltered))
     base = cp.lateralTuning.torque

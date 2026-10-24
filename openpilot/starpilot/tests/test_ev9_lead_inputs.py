@@ -12,6 +12,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.tests.test_gv70_camera_lead import packet as camera_packet
 from opendbc.car.hyundai.tests.test_ioniq5pe_stock import params
+from opendbc.car.hyundai.tests.test_ev9_pending_startup import EV9StartupFixture
 from opendbc.car.hyundai.values import CAR, DBC
 from openpilot.starpilot.controller_extensions import configure_controller
 from openpilot.starpilot.longitudinal.canfd_lead import CANFDLeadInputs
@@ -78,7 +79,24 @@ class TestEV9LeadInputs(unittest.TestCase):
     self.assertEqual(sample(), ABSENT)  # Camera data from the old drive cannot reappear.
 
   def test_real_50hz_scc_receives_optional_lead_without_changing_required_health(self):
-    ci = CarInterface(long_params())
+    startup = EV9StartupFixture()
+    startup.setUp()
+    self.addCleanup(startup.doCleanups)
+    owner, ci, packer = startup.instance()
+    def close_owner():
+      startup.admitted = True
+      owner.close()
+    self.addCleanup(close_owner)
+    early = structs.CarControl(enabled=True, latActive=True, longActive=True)
+    self.assertEqual(ci.apply(early.as_reader(), startup.boot)[1], [])
+    startup.warm(owner, ci, packer)
+    startup.commit(owner, ci)
+    self.assertEqual(ci.apply(early.as_reader(), startup.boot)[1], [])
+    startup.warm(owner, ci, packer)
+    self.assertFalse(owner.can_emit(ci.CC))
+    startup.acknowledge(owner, ci)
+    self.assertTrue(owner.can_emit(ci.CC))
+    self.assertFalse(owner.handed_off)
     messages = RadarMessages()
     messages.valid['radarState'] = False
     with patch.object(radar_lead_context.messaging, 'SubMaster', return_value=messages):
@@ -101,10 +119,16 @@ class TestEV9LeadInputs(unittest.TestCase):
           frames.append(packer.make_can_msg(name, parser.bus, fields))
       frames.append(camera_packet(packer, 1, tick+1, 30., -1.))
       stamp = messages.now+OFFSET-1000
+      startup.boot = messages.now + OFFSET
+      startup.seconds += .01
       with patch.object(time, 'clock_gettime_ns', return_value=messages.now+OFFSET):
         state = ci.update([(stamp, frames)])
+      startup.acknowledge(owner, ci)
+      self.assertTrue(owner.can_emit(ci.CC))
       with patch.object(radar_lead_context, 'clock_pair_ns', side_effect=lambda: (messages.now, messages.now+OFFSET)):
         _, packets = ci.apply(control.as_reader(), messages.now)
+      owner.sent(packets, valid=True)
+      self.assertTrue(owner.handed_off)
       scc = [packet for packet in packets if packet[0] == 0x1a0]
       self.assertEqual(len(scc), int(tick % 2 == 0))
       if scc:

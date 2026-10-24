@@ -5,6 +5,7 @@ GV70 configuration is inferred source coverage, not the unknown reported CP.
 """
 import os
 from unittest.mock import patch
+from dataclasses import asdict, replace
 
 import pytest
 from opendbc.can import CANPacker
@@ -25,7 +26,7 @@ except ModuleNotFoundError as error:
   if error.name != '_hkg24_callers':
     raise
   from openpilot.starpilot.aol.tests import test_ioniq_availability as caller_fixture
-from openpilot.starpilot.aol.wire import PandaSlot, SafetyState, encode_safety
+from openpilot.starpilot.aol.wire import PandaSlot, SafetyState, encode_safety, decode_safety
 from opendbc.safety.tests.libsafety import libsafety_py
 
 
@@ -77,7 +78,11 @@ def _invalid_controls_emits_no_commands(received):
   return envelope.which() == 'sendcan' and not envelope.valid and len(envelope.sendcan) == 0
 
 
-def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, shared_long=False):
+def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, shared_long=False, two_panda=False):
+  assert not two_panda or (shared_long and not alternate and identity == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN)
+  offset = 4 if two_panda else 0
+  bootstrap_refusals = []
+  cancel_diagnostics, cancel_probe_hits = [], []
   native = libsafety_py.libsafety
   case = caller_fixture.IoniqAvailabilityTests(methodName='runTest')
   card = None
@@ -99,13 +104,34 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
         from opendbc.car.hyundai import ecu_startup
         from opendbc.car.hyundai.ecu_startup import Outcome
         from opendbc.car.hyundai.torque_ev_startup import TorqueEVStartup
+        from opendbc.car.hyundai.gv70_startup import GV70Startup
+        from opendbc.car.hyundai.hyundaicanfd import hkg_can_fd_checksum
+        from opendbc.car.hyundai.ioniq6_handoff import TimestampedCanPacket
+        from opendbc.car import CanData
         from openpilot.starpilot.vehicle_startup import VehicleStartupOwner
         saved.put_bool('AlphaLongitudinalEnabled', True, block=True)
         saved.put_bool('IsReleaseBranch', False, block=True)
         holder = VehicleStartupOwner()
         sent = []
+        captured_counter = 0
+        def capture():
+          nonlocal captured_counter
+          captured_counter += 1
+          now[0] += 1_000_000
+          data = bytearray(32)
+          data[2], data[4] = captured_counter % 256, 7
+          data[:2] = hkg_can_fd_checksum(0x51, None, data).to_bytes(2, 'little')
+          return [TimestampedCanPacket([CanData(0x51, bytes(data), offset)], now[0])]
+        captured = identity == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN
+        if captured:
+          from opendbc.car.hyundai.tests.test_gv70_longitudinal import params as gv70_params
+          if two_panda:
+            from openpilot.starpilot.tests.test_captured_adrv_diagnostic_startup import factory
+            cp, _, _ = factory(identity, offset=offset)
+          else:
+            cp = gv70_params()
         def query(sender, receiver, bus, addresses, requests, responses):
-          assert bus == 1 and addresses == [(0x730, None)]
+          assert bus == 1 + offset and addresses == [(0x730, None)]
           request = requests[0]
           assert request in (b'\x10\x03', b'\x28\x83\x01', b'\x28\x00\x01')
           def receive(timeout):
@@ -116,8 +142,8 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
         with patch.object(ecu_startup, 'IsoTpParallelQuery', side_effect=query), \
              patch.object(card_module.time, 'clock_gettime_ns', side_effect=lambda clock: now[0]), \
              patch('opendbc.car.hyundai.torque_ev_startup.time.sleep'):
-          selected = holder.prepare(cp, CarInterface, (list, sent.extend), requested=True, admission=lambda: True)
-          assert isinstance(holder.owner, TorqueEVStartup)
+          selected = holder.prepare(cp, CarInterface, (capture if captured else list, sent.extend), requested=True, admission=lambda: True)
+          assert isinstance(holder.owner, GV70Startup if captured else TorqueEVStartup)
           assert holder.owner.outcome is Outcome.SENT_UNCONFIRMED
           ci = CarInterface(selected)
           card = card_module.Car(CI=ci, RI=RadarInterface(ci.CP), startup_owner=holder.owner)
@@ -133,9 +159,23 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
       sd.aol_settings = read_settings(saved)
       assert sd.aol_settings.lkas_action == AOL_TOGGLE and sd.aol_settings.main_action == 0
       assert sd.CP.to_dict() == card.CP.to_dict() == controls.CP.to_dict()
-      assert len(card.CP.safetyConfigs) == 1 and bool(card.CP.openpilotLongitudinalControl) == shared_long
-      config = card.CP.safetyConfigs[0]
+      assert len(card.CP.safetyConfigs) == (2 if two_panda else 1)
+      assert bool(card.CP.openpilotLongitudinalControl) == shared_long
+      config = card.CP.safetyConfigs[-1]
+      if two_panda:
+        assert card.aol_qualified and config.safetyParam == 0x815, 'GV70_TWO_PANDA_AOL_OWNER_NOT_MARKED'
+        assert card.CP.safetyConfigs[0].safetyParam == 0
+        assert str(card.CP.safetyConfigs[0].safetyModel) == 'noOutput'
+        assert card.CP.alternativeExperience == 32
       model, word = int(config.safetyModel.raw), int(config.safetyParam)
+      auxiliary_rx_invalid = False
+      if two_panda:
+        # Observe the auxiliary noOutput policy before loading the owner DLL state.
+        native.set_alternative_experience(card.CP.alternativeExperience)
+        assert native.set_safety_hooks(structs.CarParams.SafetyModel.noOutput, 0) == 0
+        native.init_tests()
+        assert not native.get_controls_allowed() and native.aol_get_permission_mask() == 0
+        auxiliary_rx_invalid = bool(native.safety_test_toyota_rx_summary_invalid())
       native.set_alternative_experience(card.CP.alternativeExperience)  # Admission readsAE during hook selection.
       assert native.set_safety_hooks(model, word) == 0
       native.init_tests()
@@ -162,6 +202,51 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
           received[service] = messaging.log_from_bytes(raw).as_builder()
           return send(service, raw)  # Serialize once; retain builder for drive().
         local.setattr(card.pm, 'send', capture)
+        if two_panda:
+          real_retention = card_module.hkg_cancel_intent_retained
+
+          class SafetyView:
+            def __init__(self, parent, report):
+              self.parent, self.report = parent, report
+            def __getattr__(self, name):
+              return getattr(self.parent, name)
+            def __getitem__(self, name):
+              return self.report if name == 'aolSafetyWire' else self.parent[name]
+
+          def observe_retention(cp, cs, sm, feedback, intent, **kwargs):
+            result = real_retention(cp, cs, sm, feedback, intent, **kwargs)
+            if kwargs['cancel_source_ns']:
+              report = decode_safety(sm['aolSafetyWire'])
+              cancel_diagnostics.append({'result':result, 'source':kwargs,
+                'latch':intent.allowed_latch, 'signature':feedback.signature,
+                'axis':sm['aolAxisState'].to_dict(), 'native':asdict(report) if report is not None else None,
+                'feedback':{name:getattr(feedback, name) for name in (
+                  'failed','paused','pending_event','qualified','awaiting','retention_started_ns',
+                  'retention_pending','retention_qualified','source_retention_started_ns',
+                  'temporary_host_qualified','session','sequence','availability_producer','availability_epoch',
+                  'lateral_baseline_ns','lateral_source_ns','lateral_native_ns','lateral_only_baseline',
+                  'healthy_feedback_ns','healthy_native_ns','lateral_inventory','healthy_inventory')}})
+              if result:
+                assert report is not None and len(report.pandaInventory) == 2
+                auxiliary, actual_owner = report.pandaInventory
+                probes = (
+                  replace(report, pandaInventory=(replace(auxiliary, controlsAllowed=True), actual_owner)),
+                  replace(report, pandaInventory=(replace(auxiliary, faults=1), actual_owner)),
+                  replace(report, pandaInventory=(replace(auxiliary, safetyRxChecksInvalid=True), actual_owner)),
+                  replace(report, pandaInventory=(replace(auxiliary, heartbeatLost=True), actual_owner)),
+                  replace(report, pandaInventory=(auxiliary, replace(actual_owner, controlsAllowed=True))),
+                  replace(report, lateralAllowed=False), replace(report, longitudinalAllowed=True),
+                  replace(report, requestedLateral=False), replace(report, requestedLongitudinal=False),
+                  replace(report, axisSessionId='other-session'),
+                  replace(report, validUntilMonoTime=kwargs['now_ns']-1),
+                  replace(report, observedMonoTime=kwargs['now_ns']+1),
+                )
+                for refused in probes:
+                  assert not real_retention(cp, cs, SafetyView(sm, encode_safety(refused)), feedback, intent, **kwargs)
+                cancel_probe_hits.append(kwargs['cancel_source_ns'])
+            return result
+
+          local.setattr(card_module, 'hkg_cancel_intent_retained', observe_retention)
 
         def step(*, main=0, lkas=0, button=0, engaged=False, withdraw_request=False):
           nonlocal tick
@@ -179,7 +264,7 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
           native.aol_set_host_request(request)
           frames = parser_frames(card.CI, tick, main=main, lkas=lkas, button=button, engaged=engaged)
           for address, data, bus in frames:
-            native.safety_rx_hook(libsafety_py.make_CANPacket(address, bus, data))
+            native.safety_rx_hook(libsafety_py.make_CANPacket(address, bus - offset, data))
           if tick % 100 == 0:
             native.safety_tick()  # Actual native maintenance cadence is1Hz.
           actual_request = native.aol_get_request_mask()
@@ -195,19 +280,28 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
           queued[:] = [batch.to_bytes()]
           device = messaging.new_message('deviceState', valid=True, logMonoTime=source_ns)
           device.deviceState.started, device.deviceState.startedMonoTime = True, 9_000_000_000
-          pandas = messaging.new_message('pandaStates', 1, valid=True, logMonoTime=source_ns)
-          panda = pandas.pandaStates[0]
+          pandas = messaging.new_message('pandaStates', 2 if two_panda else 1, valid=True, logMonoTime=source_ns)
+          if two_panda:
+            auxiliary = pandas.pandaStates[0]
+            auxiliary.safetyModel, auxiliary.safetyParam = 'noOutput', 0
+            auxiliary.alternativeExperience = card.CP.alternativeExperience
+            auxiliary.controlsAllowed = False
+            auxiliary.safetyRxChecksInvalid = auxiliary_rx_invalid
+          panda = pandas.pandaStates[-1]
           panda.safetyModel, panda.safetyParam = config.safetyModel, word
           panda.alternativeExperience = card.CP.alternativeExperience
           panda.controlsAllowed = native.get_controls_allowed()
           panda.safetyRxChecksInvalid = rx_invalid
           panda.ignitionLine = True
-          slot = PandaSlot(0, 'authority-panda', model, word, card.CP.alternativeExperience,
+          slot = PandaSlot(int(two_panda), 'authority-panda', model, word, card.CP.alternativeExperience,
                            native.get_controls_allowed(), safetyRxChecksInvalid=rx_invalid)
+          inventory = ((PandaSlot(0, 'authority-auxiliary', int(structs.CarParams.SafetyModel.noOutput), 0,
+                                  card.CP.alternativeExperience, False, safetyRxChecksInvalid=auxiliary_rx_invalid), slot)
+                       if two_panda else (slot,))
           wire = messaging.new_message('aolSafetyWire', 0, valid=True, logMonoTime=source_ns)
           wire.aolSafetyWire = encode_safety(SafetyState(1, True, source_ns, source_ns + 30_000_000,
             model, word, bool(mask & 1), bool(mask & 2), bool(actual_request & 1), bool(actual_request & 2),
-            'authority-panda', card.aol_axis_session(), source_ns, (slot,)))
+            'authority-panda', card.aol_axis_session(), source_ns, inventory))
           messages = [device.as_reader(), pandas.as_reader(), wire.as_reader()]
           messages += [previous_sd[name] for name in ('selfdriveState', 'aolAxisState', 'onroadEvents') if name in previous_sd]
           if 'onroadEvents' not in previous_sd:
@@ -229,7 +323,8 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
             companion=False, authority_message=received.get('starpilotCarState'),
             allowed=bool(mask & 1), long_allowed=bool(mask & 2), native_request_lat=bool(actual_request & 1),
             native_request_long=bool(actual_request & 2), panda_controls_allowed=native.get_controls_allowed(),
-            panda_fault=rx_invalid, relay_fault=relay_fault)
+            panda_fault=rx_invalid, relay_fault=relay_fault,
+            panda_state_message=pandas if two_panda else None, safety_message=wire if two_panda else None)
           if sd.conditional_car_state_valid:
             assert sd.aol_car_state_log_ns == state_envelope.logMonoTime
           assert controls.sm.logMonoTime['carState'] == state_envelope.logMonoTime
@@ -240,7 +335,19 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
           assert controls.sm['carOutput'].to_dict() == output_envelope.carOutput.to_dict()
           previous_sd.update(sd.pm.messages)
           validated = current_native(sd.sm, sd.CP, now_ns=source_ns, axis_session_id=sd.aol_session_id)
-          if not rx_invalid:
+          bootstrap_mismatch = False
+          if two_panda:
+            source_report = decode_safety(wire.aolSafetyWire)
+            assert source_report is not None
+            bootstrap_mismatch = source_report.axisSessionId != sd.aol_session_id
+          if bootstrap_mismatch:
+            # Preserve the actual bootstrap producer session until Card receives
+            # the previous SD axis publication; never manufacture a match.
+            bootstrap_refusals.append(source_ns)
+            assert validated is None
+            assert not axis.lateralActive and not axis.longitudinalActive
+            assert not command.latActive and not command.longActive
+          elif not rx_invalid:
             assert validated is not None and validated.lateralAllowed == bool(mask & 1)
             assert validated.requestedLateral == bool(actual_request & 1)
           else:
@@ -258,11 +365,13 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
                         if frame.address == (0x110 if alternate else 0x50) and frame.src == card.CI.CC.CAN.ACAN]
             assert steering
             for frame in received['sendcan'].sendcan:
-              assert native.safety_tx_hook(libsafety_py.make_CANPacket(frame.address, frame.src, frame.dat))
+              assert native.safety_tx_hook(libsafety_py.make_CANPacket(frame.address, frame.src - offset, frame.dat))
           return state, axis, host, command, steering
 
         for _ in range(120):
           step()
+        if two_panda:
+          assert bootstrap_refusals, 'Actual startup session mismatch was not exercised'
         assert not card.aol_card_intent.allowed_latch
         assert native.safety_config_valid()  # All selected physical RX sources are actually primed.
         for _ in range(2):
@@ -277,21 +386,35 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
           state, axis, host, command, _ = step(engaged=True)
         assert state.cruiseState.enabled and host.enabled and native.get_controls_allowed()
         assert axis.lateralActive and command.latActive
+        if two_panda:
+          from openpilot.starpilot.aol.runtime import native_inventory_matches_cp
+          # The shared helper's scalar default marks every slot controlsAllowed
+          # during full engagement. Preserve the actual auxiliary noOutput report
+          # instead, and prove the original rejection still catches that forgery.
+          observed = current_native(sd.sm, sd.CP, now_ns=now[0], axis_session_id=sd.aol_session_id)
+          assert observed is not None and len(observed.pandaInventory) == 2
+          auxiliary, actual_owner = observed.pandaInventory
+          assert auxiliary.safetyParam == 0 and not auxiliary.controlsAllowed
+          forged = replace(observed, pandaInventory=(replace(auxiliary, controlsAllowed=True), actual_owner))
+          assert not native_inventory_matches_cp(forged, sd.CP)
         if shared_long:
           assert axis.longitudinalActive and command.longActive
         # Full engagement is a legitimate driver-owned intent epoch. Anchor
         # after its real publication, immediately before incidental buttons.
         edge = card.aol_card_intent._last_latch_edge_ns
         for _ in range(2):
-          state, axis, host, command, _ = step(main=int(incidental == 'main'), button=4 if incidental == 'cancel' else 0)
-          assert card.aol_card_intent.allowed_latch, 'HKG_INDEPENDENT_LATCH_DROPPED'
+          gesture = 'cancel' if two_panda else incidental
+          state, axis, host, command, _ = step(main=int(gesture == 'main'), button=4 if gesture == 'cancel' else 0)
+          assert card.aol_card_intent.allowed_latch, (
+            ('HKG_INDEPENDENT_LATCH_DROPPED', cancel_diagnostics[-1:]) if two_panda else 'HKG_INDEPENDENT_LATCH_DROPPED')
           assert native.aol_get_permission_mask() & 1, 'HKG_NATIVE_LATERAL_DROPPED'
           assert axis.lateralActive and command.latActive, 'HKG_JOINED_LATERAL_DROPPED'
           assert not axis.longitudinalActive and not command.longActive and not host.enabled
         nonzero = False
         for _ in range(20):
           state, axis, host, command, steering = step()
-          assert card.aol_card_intent.allowed_latch, 'HKG_INDEPENDENT_LATCH_DROPPED'
+          assert card.aol_card_intent.allowed_latch, (
+            ('HKG_INDEPENDENT_LATCH_DROPPED', cancel_diagnostics[-1:]) if two_panda else 'HKG_INDEPENDENT_LATCH_DROPPED')
           assert card.aol_card_intent._last_latch_edge_ns == edge, 'HKG_INCIDENTAL_EDGE_RENEWED'
           assert native.aol_get_permission_mask() & 1, 'HKG_NATIVE_LATERAL_DROPPED'
           assert axis.lateralActive and command.latActive, 'HKG_JOINED_LATERAL_DROPPED'
@@ -299,7 +422,9 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
           assert not axis.longitudinalActive and not command.longActive
           nonzero |= abs(command.actuators.torque) > 0
           assert steering
-        if shared_long:
+        if two_panda:
+          assert cancel_probe_hits, ('Actual retained CANCEL negatives were not exercised', cancel_diagnostics)
+        if shared_long and (not two_panda or incidental == 'main'):
           # MAIN has no ordinary LONG-cancel meaning in this owner. Exercise it
           # after real CANCEL; never fabricate a MAIN-driven LONG transition.
           for _ in range(2):
@@ -474,3 +599,18 @@ def test_dedicated_ev6_long_uses_its_own_host_namespace():
       assert not card.ci_initialized and not saved.get_bool('ControlsReady')
     finally:
       holder.close()
+
+
+@pytest.mark.parametrize('incidental', ['cancel', 'main'])
+@pytest.mark.parametrize('withdrawal', ['toggle-off', 'native-request-off'])
+def test_gv70_two_panda_long_actual_join(incidental, withdrawal, monkeypatch):
+  assert _native_variant() == 'debug', 'Alpha LONG qualification requires the development native variant'
+  _exercise_join(CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN, False, incidental, withdrawal,
+                 monkeypatch, shared_long=True, two_panda=True)
+
+
+@pytest.mark.parametrize('withdrawal', ['toggle-off', 'native-request-off'])
+def test_gv70_single_panda_long_cancel_neighbor(withdrawal, monkeypatch):
+  assert _native_variant() == 'debug'
+  _exercise_join(CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN, False, 'cancel', withdrawal,
+                 monkeypatch, shared_long=True)

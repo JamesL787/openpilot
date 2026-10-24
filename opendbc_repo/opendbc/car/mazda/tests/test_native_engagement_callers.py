@@ -90,7 +90,7 @@ def test_eps_recovery_actual_callers(identity, lateral_only, monkeypatch, armed_
 
 
 def _exercise_actual_family_callers(identity, monkeypatch, *, scenario='brake', cancel_action=3, armed_intent=None,
-                                    lateral_only=False):
+                                    lateral_only=False, warning=None, unbelted=False):
   from openpilot.cereal import messaging
   from openpilot.selfdrive.car import card as card_module
   from openpilot.starpilot.aol.wire import PandaSlot, SafetyState, encode_safety
@@ -107,6 +107,7 @@ def _exercise_actual_family_callers(identity, monkeypatch, *, scenario='brake', 
     now, tick, queued = [10_000_000_000], 0, []
     received, previous_sd = {}, {}
     first_engagement_ns = None
+    belt_off = [False]
     try:
       sd, controls, drive = case._authority_callers(False, cp=card.CP.as_reader().as_builder(), genuine_events=True)
       if scenario in ('cancel', 'long_cancel', 'mapped_cancel', 'temporary', 'startup', 'startup_stopped'):
@@ -114,6 +115,14 @@ def _exercise_actual_family_callers(identity, monkeypatch, *, scenario='brake', 
         sd.aol_settings = read_settings(saved)
         assert sd.aol_settings.cancel_actions == (cancel_action, 0, 0)
         assert card.aol_card_intent.settings == sd.aol_settings
+      soft_warning = [False]
+      original_events = sd.update_events
+      def warning_events(*args, **kwargs):
+        original_events(*args, **kwargs)
+        if soft_warning[0]:
+          from openpilot.selfdrive.selfdrived.events import EventName
+          sd.events.add(getattr(EventName, warning))
+      local_patch.setattr(sd, 'update_events', warning_events)
       assert sd.CP.to_dict() == card.CP.to_dict() == ci.CP.to_dict() == controls.CP.to_dict()
       safety.init_tests()
       safety.set_alternative_experience(int(card.CP.alternativeExperience))
@@ -146,6 +155,9 @@ def _exercise_actual_family_callers(identity, monkeypatch, *, scenario='brake', 
         frames = complete_frames(packer, card.CP, tick, main=main, engaged=engaged, brake=brake, cancel=cancel, reverse=reverse,
                                  speed_kph=speed_kph, permanent=permanent, temporary=temporary)
         frames.append(packer.make_can_msg('STEER', 0, {'STEER_ANGLE': 1.0}))
+        if belt_off[0]:
+          belt = packer.make_can_msg('SEATBELT', 0, {'DRIVER_SEATBELT': 0})
+          frames = [row for row in frames if not (row[0] == belt[0] and row[2] == 0)] + [belt]
         safety.set_timer(now[0] // 1000)
         prior_state = previous_sd.get('selfdriveState')
         prior_axis = previous_sd.get('aolAxisState')
@@ -242,6 +254,10 @@ def _exercise_actual_family_callers(identity, monkeypatch, *, scenario='brake', 
           assert any(frame.address == 0x243 for frame in outgoing.sendcan)
           for frame in outgoing.sendcan:
             assert safety.safety_tx_hook(make_msg(frame.src, frame.address, dat=frame.dat))
+        if unbelted and belt_off[0]:
+          assert state.seatbeltUnlatched
+          assert not axis.desiredLongitudinal and not axis.longitudinalActive and not command.longActive
+          assert not safety.aol_get_permission_mask() & 2
         return state, axis, host_state, command
 
       for _ in range(120):
@@ -285,6 +301,16 @@ def _exercise_actual_family_callers(identity, monkeypatch, *, scenario='brake', 
         state, axis, host_state, command = step(engaged=True)
       assert state.canValid and host_state.enabled and command.latActive
       assert card.aol_card_intent.allowed_latch
+      if unbelted:
+        for _ in range(30):
+          state, axis, host_state, command = step(brake=True)
+        assert card.aol_card_intent.allowed_latch and axis.lateralActive and not axis.longitudinalActive
+        belt_off[0] = True
+        for _ in range(5):
+          state, axis, host_state, command = step()
+          assert state.seatbeltUnlatched and card.aol_card_intent.allowed_latch
+          assert axis.lateralActive and command.latActive and not command.longActive
+          assert safety.aol_get_permission_mask() == 1
       if lateral_only:
         for _ in range(30):
           state, axis, host_state, command = step(brake=True)
@@ -292,6 +318,56 @@ def _exercise_actual_family_callers(identity, monkeypatch, *, scenario='brake', 
         for _ in range(30):
           state, axis, host_state, command = step()
         assert card.aol_card_intent.allowed_latch and axis.lateralActive and not axis.longitudinalActive
+      if scenario == 'warning':
+        from openpilot.selfdrive.selfdrived.events import EventName
+        for _ in range(30):
+          state, axis, host_state, command = step(brake=True)
+        for _ in range(30):
+          state, axis, host_state, command = step()
+        assert card.aol_card_intent.allowed_latch and axis.lateralActive and not command.longActive
+        soft_warning[0] = True
+        for paused_tick in range(350):
+          state, axis, host_state, command = step()
+          if any(event.softDisable for event in card.sm['onroadEvents']):
+            assert card.aol_transport_feedback.ordinary_warning_qualified
+          if paused_tick > 20:
+            assert safety.aol_get_request_mask() == safety.aol_get_permission_mask() == 0
+          assert card.aol_card_intent.allowed_latch, 'Ordinary warning erased armed Mazda lateral intent'
+          assert not command.latActive and not command.longActive
+          assert not axis.lateralActive and not axis.longitudinalActive
+          assert getattr(EventName, warning) in sd.events.names
+        soft_warning[0] = False
+        for _ in range(40):
+          state, axis, host_state, command = step()
+          assert card.aol_card_intent.allowed_latch
+          assert not command.longActive and not axis.longitudinalActive
+          if not any(event.softDisable for event in card.sm['onroadEvents']):
+            assert not card.aol_transport_feedback.ordinary_warning_qualified
+        assert axis.lateralActive and command.latActive, 'Healthy warning recovery failed to restore retained lateral'
+        return
+      if scenario == 'warning_active':
+        from openpilot.selfdrive.selfdrived.events import EventName
+        assert card.aol_card_intent.allowed_latch and host_state.enabled and command.latActive
+        soft_warning[0] = True
+        for paused_tick in range(350):
+          state, axis, host_state, command = step(engaged=True)
+          if any(event.softDisable for event in card.sm['onroadEvents']):
+            assert card.aol_transport_feedback.ordinary_warning_qualified
+          if paused_tick > 20:
+            assert safety.aol_get_request_mask() == safety.aol_get_permission_mask() == 0
+          assert card.aol_card_intent.allowed_latch, 'Ordinary warning erased armed Mazda lateral intent'
+          assert not command.latActive and not command.longActive
+          assert not axis.lateralActive and not axis.longitudinalActive
+          assert getattr(EventName, warning) in sd.events.names
+        soft_warning[0] = False
+        for _ in range(40):
+          state, axis, host_state, command = step()
+          assert card.aol_card_intent.allowed_latch
+          assert not command.longActive and not axis.longitudinalActive
+          if not any(event.softDisable for event in card.sm['onroadEvents']):
+            assert not card.aol_transport_feedback.ordinary_warning_qualified
+        assert axis.lateralActive and command.latActive, 'Healthy warning recovery failed to restore retained lateral'
+        return
       if scenario == 'mapped_cancel':
         for _ in range(5):
           state, axis, host_state, command = step(cancel=True)
@@ -483,3 +559,21 @@ def test_main_on_startup_disabled_aol_actual_card_controls_native(identity, monk
       safety.set_safety_hooks(structs.CarParams.SafetyModel.noOutput, 0)
 
   exercise_startup(identity, False, False, False, monkeypatch, probe=probe)
+
+
+@pytest.mark.parametrize('identity', (CAR.MAZDA_CX5_2022, CAR.MAZDA_CX9_2021))
+@pytest.mark.parametrize('warning', ('calibrationInvalid', 'lowMemory', 'processNotRunning', 'radarTempUnavailable'))
+def test_ordinary_warning_retains_intent_actual_callers(identity, warning, monkeypatch, armed_intent_decoder):
+  _exercise_actual_family_callers(identity, monkeypatch, scenario='warning', warning=warning, armed_intent=armed_intent_decoder)
+
+
+@pytest.mark.parametrize('identity', (CAR.MAZDA_CX5_2022, CAR.MAZDA_CX9_2021))
+@pytest.mark.parametrize('scenario', ('mapped_cancel', 'temporary'))
+def test_unbelted_lateral_pause_recovery_actual_callers(identity, scenario, monkeypatch, armed_intent_decoder):
+  _exercise_actual_family_callers(identity, monkeypatch, scenario=scenario, cancel_action=3,
+                                 armed_intent=armed_intent_decoder, unbelted=True)
+
+@pytest.mark.parametrize('identity', (CAR.MAZDA_CX5_2022, CAR.MAZDA_CX9_2021))
+@pytest.mark.parametrize('warning', ('calibrationInvalid', 'lowMemory', 'processNotRunning', 'radarTempUnavailable'))
+def test_active_ordinary_warning_retains_intent_actual_callers(identity, warning, monkeypatch, armed_intent_decoder):
+  _exercise_actual_family_callers(identity, monkeypatch, scenario='warning_active', warning=warning, armed_intent=armed_intent_decoder)

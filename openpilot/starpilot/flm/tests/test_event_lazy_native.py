@@ -67,6 +67,7 @@ def replay_fixture(domain):
       # As in registered codec units, native flags grant NO current authority.
       # We exercise original decode/EncoderBranch with actual captured bytes.
       original.emissions.events[event.apply_ns] = event
+      original.emissions.decode_queue.append(event.apply_ns)
       original.emissions.by_control[event.control_ns] = event
   original.records.extend(rows)
   cast(ReplayWindowFixture, original).replay_windows = ((rows[0].control_ns, rows[-1].control_ns),)
@@ -78,6 +79,9 @@ def replay_fixture(domain):
 def run_observed(engine, eager=False, coordinates=(0.,)):
   trace = []
   engine.emissions.decoder = None  # Both paths independently decode real bytes.
+  engine.emissions.decode_queue.clear()
+  engine.emissions.decode_queue.extend(engine.emissions.events)
+  engine.emissions.decode_errors.clear()
   def update(*args, **kwargs):
     result = _run(*args, **kwargs)
     trace.append((args[2], result[0], result[1].to_dict(), capture_snapshot(args[0], args[1])))
@@ -185,3 +189,24 @@ def test_unknown_legacy_receiver_keeps_plain_dictionary_and_eager_order():
   with mock.patch('openpilot.starpilot.flm.event_controller_replay._run', side_effect=update), \
        mock.patch('openpilot.starpilot.flm.event_controller_replay.restore_snapshot'):
     engine._rollout_uncached(coordinates, restore_target=True)
+
+
+@pytest.mark.parametrize('domain', ('torque', 'starpilot', 'pid'))
+def test_eager_and_lazy_reset_reparse_every_original_can_emission(domain):
+  from openpilot.starpilot.flm.torque_emission_replay import EmissionDecoder
+  engine = replay_fixture(domain)
+  expected = list(engine.emissions.events)
+  parsed = []
+  original_check = EmissionDecoder.check
+
+  def check(decoder, event):
+    parsed.append(event.apply_ns)
+    return original_check(decoder, event)
+
+  with mock.patch.object(EmissionDecoder, 'check', check):
+    eager, _ = run_observed(engine, eager=True)
+    first = len(parsed)
+    lazy, _ = run_observed(engine)
+  assert eager[0] == lazy[0] == 'success'
+  assert parsed[:first] == expected
+  assert parsed[first:] == expected

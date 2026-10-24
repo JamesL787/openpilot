@@ -1,6 +1,7 @@
 """Ford physical cancel/resume switch context; no new cruise authority."""
 
 from opendbc.car import structs
+from opendbc.car.ford.aol import base_safety_param
 from opendbc.car.ford.values import CAR, FordFlags, FordSafetyFlags
 from opendbc.car.ford.classic_lateral import CLASSIC_EXTENDED_CARS
 from opendbc.car.ford.generic_canfd_lateral import qualified as generic_canfd_qualified
@@ -30,8 +31,6 @@ def qualified(CP) -> bool:
   from opendbc.bluepilot_lateral.hosts.starpilot import qualified as angle_qualified
   if angle_qualified(CP):
     return not CP.openpilotLongitudinalControl
-  if CP.alternativeExperience == 32 and len(CP.safetyConfigs) != 1:
-    return False
   """Existing stock profiles with the paired physical-driver button contract."""
   if (CP.brand != "ford" or CP.carFingerprint not in tuple(CAR) or CP.openpilotLongitudinalControl or CP.alternativeExperience not in (0, 32) or
       CP.passive or CP.dashcamOnly or CP.notCar or len(CP.safetyConfigs) not in (1, 2) or
@@ -41,17 +40,17 @@ def qualified(CP) -> bool:
                                   CP.safetyConfigs[0].safetyParam != 0):
     return False
   safety = CP.safetyConfigs[-1]
-  if safety.safetyModel != structs.CarParams.SafetyModel.ford or safety.safetyParam not in (2, 8, 10, 12, 18, 32, 66):
+  if safety.safetyModel != structs.CarParams.SafetyModel.ford or base_safety_param(CP) not in (2, 8, 10, 12, 18, 32, 66):
     return False
-  if safety.safetyModel == structs.CarParams.SafetyModel.ford and safety.safetyParam == 32:
+  if safety.safetyModel == structs.CarParams.SafetyModel.ford and base_safety_param(CP) == 32:
     return CP.carFingerprint in CLASSIC_EXTENDED_CARS and not CP.flags & ~int(FordFlags.HAS_BSM)
-  if safety.safetyParam == 66:
+  if base_safety_param(CP) == 66:
     return generic_canfd_qualified(CP)
   expected = (int(FordSafetyFlags.CANFD) if CP.flags & FordFlags.CANFD else 0)
   expected |= int(FordSafetyFlags.NEW_PORT) if CP.flags & FordFlags.NEW_PORT else 0
   expected |= int(FordSafetyFlags.LKA_STEERING) if CP.flags & FordFlags.LKA_STEERING else 0
-  if safety.safetyParam == 18:
+  if base_safety_param(CP) == 18:
     if CP.carFingerprint != CAR.FORD_MUSTANG_MACH_E_MK1 or expected != int(FordSafetyFlags.CANFD):
       return False
     expected |= int(FordSafetyFlags.MACH_E_EXTENDED)
-  return safety.safetyParam == expected
+  return base_safety_param(CP) == expected

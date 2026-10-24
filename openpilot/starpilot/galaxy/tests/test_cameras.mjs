@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { CamerasPage, CameraSnapshotFeed } from "../web/js/cameras.js"
 import { SettingsFeed, SettingsPage } from "../web/js/settings.js"
+const cameraTools = JSON.parse(readFileSync(new URL("../web/data/catalog.json", import.meta.url), "utf8"))
+  .tools.find(tool => tool.path === "/cameras").children
 
 const requests = []
 const states = []
@@ -26,13 +28,12 @@ SettingsPage.methods.back.call(page)
 assert.equal(returned, 1)
 assert.equal(page.state.query, "")
 
-assert.match(CamerasPage.template, /Adjust the camera crop with a live cabin preview/)
+assert.match(CamerasPage.template, /MenuTile v-for="tool in tools"/)
+assert.equal(cameraTools.find(tool => tool.path === "/cameras/pip").description, "Adjust the camera crop with a live cabin preview.")
 assert.doesNotMatch(CamerasPage.template, /live camera preview is unavailable/)
-assert.match(CamerasPage.template, /Sentry[\s\S]*View motion events/)
-assert.match(CamerasPage.template, /saved motion settings/)
+assert.match(cameraTools.find(tool => tool.path === "/cameras/events").description, /View motion events.*saved motion settings/)
 assert.doesNotMatch(CamerasPage.template, /go\('\/cameras\/sentry-settings'\)/)
-assert.match(CamerasPage.template, /MenuTile[^>]*title="V-ASM"/)
-assert.match(CamerasPage.template, /Preview the cabin camera/)
+assert.match(cameraTools.find(tool => tool.path === "/cameras/vasm").description, /Preview the cabin camera/)
 assert.match(CamerasPage.template, /snapshots.capture\(camera\)/)
 assert.match(SettingsPage.template, /\{\{ title \}\}/)
 const app = readFileSync(new URL("../web/js/app.js", import.meta.url), "utf8")

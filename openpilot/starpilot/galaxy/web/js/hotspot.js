@@ -2,6 +2,7 @@ import { requestJson } from "./startup.js"
 import { GxNotice } from "./notice.js"
 import { GxState } from "./state.js"
 import { GalaxySettingRow, switchRow } from "./galaxy-setting-row.js"
+import { beginSave, finishSave } from "./save-feedback.js"
 
 const validPassword = password => typeof password === 'string' && (password === '' || /^[\x21-\x7e]{12,63}$/.test(password))
 
@@ -59,9 +60,10 @@ export const GalaxyHotspot = {
     },
     async save() {
       if (!this.active || this.busy || !this.snapshot?.editable || !this.passwordValid) return
+      const feedback = beginSave()
       clearTimeout(this.timer); this.controller?.abort()
       const generation = ++this.generation
-      this.controller = new AbortController(); this.busy = true; this.saveError = ''; this.notice = ''
+      this.controller = new AbortController(); this.busy = true; this.error = ''; this.saveError = ''; this.notice = ''
       try {
         const value = await requestJson('./api/galaxy/hotspot', { request: { signal: this.controller.signal,
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -70,7 +72,9 @@ export const GalaxyHotspot = {
         if (!this.active || generation !== this.generation) return
         this.adopt(value, true)
         this.notice = value.config.enabled ? 'Settings saved. Join the network once its status is active.' : 'Hotspot disabled.'
+        finishSave(feedback, true)
       } catch (error) {
+        finishSave(feedback, false)
         if (!this.active || generation !== this.generation) return
         if (error.status === 401) { this.stop(); this.unauthorized(); return }
         this.saveError = `${error.message} If Wi-Fi disconnected, reconnect and reload to check whether settings saved.`
@@ -85,12 +89,12 @@ export const GalaxyHotspot = {
     <GxState v-else-if="!snapshot && !error" loading>Loading hotspot settings…</GxState>
     <template v-if="snapshot && draft">
       <GxNotice :busy="snapshot.state === 'starting'" :tone="['error', 'unavailable'].includes(snapshot.state) ? 'warn' : 'info'">Status: {{ snapshot.state }} {{ snapshot.reason }}</GxNotice>
-      <GalaxySettingRow :row="switchRow('Broadcast hotspot automatically', draft.enabled)" :index="0"
+      <GalaxySettingRow feedback="draft" :row="switchRow('Broadcast hotspot automatically', draft.enabled)" :index="0"
         :busy="busy" :disabled="!snapshot.editable" :save-value="(index, value) => { draft.enabled = value === 'On' }" />
       <div class="gx-stack">
         <p>Network name: <strong>{{ snapshot.config.ssid }}</strong></p>
         <p class="gx-note">Fixed to TheGalaxy- plus the last four characters of your comma dongle ID. Once saved, the switch and password survive restarts.</p>
-        <label class="gx-field-group">Password <input class="gx-field" :type="showPassword ? 'text' : 'password'" v-model="draft.password" :disabled="busy || !snapshot.editable" maxlength="63" autocomplete="new-password" placeholder="Blank generates a password" /></label>
+        <label class="gx-field-group">Password <input class="gx-field" :type="showPassword ? 'text' : 'password'" v-model="draft.password" :disabled="busy || !snapshot.editable" maxlength="63" autocomplete="new-password" placeholder="Blank generates a password" @input="saveError = ''" /></label>
         <div class="gx-row gx-row--borderless"><div class="gx-row__info"><span class="gx-row__label">Show password</span></div>
           <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Show password" v-model="showPassword" :disabled="busy || !snapshot.editable"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
         <p v-if="!passwordValid" class="gx-note">Use a 12–63 character password without spaces, or leave it blank to generate one.</p>
@@ -107,6 +111,6 @@ export const GalaxyHotspot = {
       <li><i class="bi bi-arrow-repeat" aria-hidden="true"></i><span>Network or channel changes may interrupt access. Changing the password or disabling the hotspot disconnects phones.</span></li>
       <li><i class="bi bi-globe" aria-hidden="true"></i><span>The public galaxy.firestar.link address still needs Internet and its tunnel.</span></li>
     </ul>
-    <GxNotice v-if="error" tone="danger">{{ error }}</GxNotice><GxNotice v-if="saveError" tone="danger">{{ saveError }}</GxNotice><GxNotice v-if="notice" tone="success">{{ notice }}</GxNotice>
+    <GxNotice v-if="error || saveError" tone="danger">{{ saveError || error }}</GxNotice><GxNotice v-if="notice" tone="success">{{ notice }}</GxNotice>
   </section>`,
 }

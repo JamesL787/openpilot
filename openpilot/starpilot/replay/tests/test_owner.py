@@ -620,3 +620,28 @@ def test_complete_segment_mapping_fits_worker_protocol(owner, tmp_path):
   assert value.status['segmentRanges'][-1][0] == 1022
   with pytest.raises(Rejected):
     value._observe({**status, 'segmentRanges': [[0, 0, 1]]}, tmp_path)
+
+
+def test_timeline_pages_are_owned_and_optional_failures_keep_controls(owner):
+  value, _, _, _ = owner
+  start(value)
+  wait_for(lambda: value.status['state'] == 'paused')
+  path = value.session_dir / 'cache/timeline.jsonl'
+  path.write_text(json.dumps({'schemaVersion': 1, 'rowOffset': 0, 'totalRows': 1, 'source': 'qlog',
+                             'rows': [[0, 1, 'chill']]}) + '\n')
+  path.chmod(0o600)
+  value._observe({**value.status, 'event': 'status', 'timelineState': 'ready',
+                  'seekRanges': [[0, 120]], 'segmentRanges': [[0, 0, 120]], 'error': None}, value.session_dir)
+  request = {'op': 'timeline', 'sessionId': value.status['sessionId'], 'clientId': CLIENT, 'cursor': 0}
+  page = value.dispatch(request)
+  assert page['rows'] == [[0, 1, 'chill']] and page['nextCursor'] is None
+  assert not any('Path' in key for key in page)
+  with pytest.raises(Rejected):
+    value.dispatch({**request, 'clientId': OTHER})
+  path.write_text('broken\n')
+  with pytest.raises(Rejected, match='timeline unavailable'):
+    value.dispatch(request)
+  assert value.status['timelineState'] == 'unavailable'
+  value.dispatch(control(value, 'pause', 'paused', False))
+  wait_for(lambda: value.status['state'] == 'playing')
+  assert value.status['errorCode'] is None

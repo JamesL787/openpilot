@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { GalaxySettingRow, settingControl, numericBounds, snapNumeric, FINE_SCRUB_HOLD_MS, FINE_SCRUB_FACTOR } from "../web/js/galaxy-setting-row.js"
 import { SettingsPage, SETTINGS_SECTIONS } from "../web/js/settings.js"
+import { saveFeedback } from "../web/js/save-feedback.js"
 import { reactive, computed, watch, nextTick } from "../web/vendor/vue/vue.esm-browser.js"
 
 const numeric = { label: "Following time", value: "1.5", minimum: .5, maximum: 3, step: .05, unit: "s", available: true, action: true }
@@ -79,6 +80,13 @@ assert.equal(locked.commits.length, 0)
 const switched = control({ ...numeric, choices: ["Off", "On"], value: "Off", step: 0 })
 await switched.vm.onSwitch({ target: { checked: true } })
 assert.deepEqual(switched.commits, [[7, "On"]])
+
+const unconfirmed = control({ label: "Switch", choices: ["Off", "On"], value: "Off", available: true, action: true })
+unconfirmed.vm.feedback = "saved"
+unconfirmed.vm.$nextTick = async () => {}
+unconfirmed.vm.saveValue = async () => undefined
+await unconfirmed.vm.onSwitch({ target: { checked: true } })
+assert.equal(saveFeedback.message, "Could not save", "an unchanged value cannot claim a saved preference")
 
 // Exercise Vue's actual watcher scheduling: plain method mocks cannot catch a
 // save locking its own control and erasing the pending value on the next tick.

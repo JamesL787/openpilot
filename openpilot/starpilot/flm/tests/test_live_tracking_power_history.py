@@ -58,11 +58,34 @@ def test_larger_future_variance_cannot_admit_an_underpowered_trial_by_raising_we
   assert naive_noisier < original_best
   expected = (original_best+naive_noisier)/2
   assert naive_noisier < expected < original_best
-  assert owner._trial_plan(rows, expected, target) is None
+  original = owner._trial_plan(rows, expected, target)
+  assert original is not None and original[0] == 3  # Fixed minimum pilot, not a powered quota9 claim.
   owner.planning_history.extend(reference)
   # Without the original-critical envelope, quota9 becomes admissible solely
   # because its larger forecast variance raises Welch df and lowers t.
-  assert owner._trial_plan(rows, expected, target) is None
+  forecast = owner._trial_plan(rows, expected, target)
+  assert forecast is not None and forecast[0] == original[0] == 3
+  assert forecast[1] >= original[1] and forecast[2] == original[2] == .025
+  assert owner.before == () and owner.future == []
+  # Nominal planning did not become easier. The bounded pilot is still not
+  # acceptance: equal independently observed tracking must actually roll back.
+  now = rows[-1].end_ns+8*NS
+  _refresh(owner, now)
+  baseline = owner.accepted.copy()
+  assert owner._launch('ff.left', HOOK, target, rows, forecast, now)
+  offer = owner.offer(now)
+  assert offer is not None and offer.phase == 'trial'
+  _ack(owner, offer, now+NS)
+  assert owner.offer_state is not None
+  maximum = max(owner.offer_state['look_quotas'])
+  for index in range(maximum):
+    now += 8*NS
+    _refresh(owner, now)
+    future = _episode(owner, 1000+index, now, dict(offer.target), .6, .35, 22.)
+    assert owner.observe_episode(future, now_ns=now)
+  rollback = owner.offer(now)
+  assert rollback is not None and rollback.phase == 'rollback' and rollback.target == rollback.baseline
+  assert owner.reason == 'independent_future_tracking_not_improved' and owner.accepted == baseline
 
 
 @pytest.mark.parametrize('mismatch', ('binding', 'profile', 'shape', 'age'))

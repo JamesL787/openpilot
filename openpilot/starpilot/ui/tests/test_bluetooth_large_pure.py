@@ -6,6 +6,7 @@ import re
 import time
 import unittest
 import uuid
+from unittest.mock import Mock, patch
 
 
 class Widget:
@@ -110,7 +111,8 @@ class TestBluetoothLarge(unittest.TestCase):
                  'text_item': lambda *a, **kw: Row((a, kw)), 'ConfirmDialog': Dialog, 'alert_dialog': Dialog,
                  'DialogResult': type('Result', (), {'CONFIRM': 1}), 'Keyboard': Dialog,
                  'setup_status': lambda: 'Ready to pair', 'large_phone_rows': lambda allowed: [],
-                 'forget_phone_keys': lambda allowed, address: self.forgotten.append(address)}
+                 'forget_phone_keys': lambda allowed, address: self.forgotten.append(address),
+                 'is_app_link': lambda device: bool(device.get('connected')) and not device.get('paired') and not device.get('trusted')}
     tree.body.insert(0, ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0))
     exec(compile(ast.fix_missing_locations(tree), str(path), 'exec'), scope)
     self.panel_type = scope['BluetoothLarge']
@@ -129,17 +131,48 @@ class TestBluetoothLarge(unittest.TestCase):
     self.assertEqual(self.panel.executor.jobs[0][2], ())
     self.assertTrue(self.panel.owner.session_valid(self.panel.session))
 
+  def test_large_device_buttons_reach_galaxy_when_projection_owns_bluetooth(self):
+    from openpilot.starpilot.bluetooth.native_owner import NativeBluetoothOwner
+    from openpilot.starpilot.bluetooth.owner import AdapterBusyElsewhere, BluetoothOwner
+    self.panel.owner = NativeBluetoothOwner(lambda: True)
+    self.panel.active = True
+    self.panel.session = ('large', 'test')
+    self.panel.executor = Executor()
+    call = Mock(return_value=(200, {'devices': [], 'available': True, 'powered': True}))
+    with patch.object(BluetoothOwner, 'request', side_effect=AdapterBusyElsewhere('AA holds adapter')), \
+         patch('openpilot.starpilot.galaxy_bluetooth.phone_ui.galaxy_call', return_value=call):
+      for operation in ('scan', 'pair', 'connect', 'disconnect', 'forget'):
+        address = None if operation == 'scan' else 'AA:BB:CC:DD:EE:FF'
+        self.panel._submit_request(operation, address, None, False, self.panel.session, None, None, '')
+        future, callback, args, kwargs = self.panel.executor.jobs[-1]
+        future.set_result(callback(*args, **kwargs))
+        payload = {'operation': operation, **({'address': address} if address else {})}
+        call.assert_called_with('POST', '/api/bluetooth/action', payload)
+
   def test_open_powered_panel_scans_once_and_stops_on_hide(self):
     self.panel.show_event()
     self.panel.pending.set_result({'available': True, 'powered': True, 'parked': True, 'discovering': False})
     self.panel._tick()
-    self.assertEqual(self.panel.operation, 'scan')
+    self.assertEqual(self.panel.operation, 'auto_scan')
+    self.assertEqual(self.panel.executor.jobs[-1][3], {'delegate': False})
     self.panel.pending.set_result({'available': True, 'powered': True, 'parked': True, 'discovering': False})
     self.panel._tick()
     self.assertEqual(sum(job[2] == ('scan',) for job in self.panel.executor.jobs), 1)
     executor = self.panel.executor
     self.panel.hide_event()
     self.assertEqual(executor.jobs[-1][1], self.panel.owner.close)
+
+  def test_opening_the_page_never_scans_through_android_auto(self):
+    from openpilot.starpilot.bluetooth.native_owner import NativeBluetoothOwner
+    from openpilot.starpilot.bluetooth.owner import AdapterBusyElsewhere, BluetoothOwner
+    owner = NativeBluetoothOwner(lambda: True)
+    local = {'available': True, 'powered': True, 'parked': True, 'discovering': False, 'devices': []}
+    with patch.object(BluetoothOwner, 'request', side_effect=AdapterBusyElsewhere('AA holds adapter')), \
+         patch.object(BluetoothOwner, 'snapshot', return_value=local), \
+         patch('openpilot.starpilot.galaxy_bluetooth.phone_ui.galaxy_call') as factory:
+      self.assertEqual(owner.request('scan', delegate=False), local)
+    factory.assert_not_called()
+    self.assertIsNone(owner.galaxy)
 
   def test_pairing_prompt_opens_once_and_expired_prompt_is_retired(self):
     prompt = {'id': 'a' * 32, 'kind': 'confirmation', 'value': '123456', 'displayOnly': False}
@@ -181,6 +214,19 @@ class TestBluetoothLarge(unittest.TestCase):
     rows = self.panel._scroller.rows
     self.assertIn(('Headphones', 'Disconnect'), [row[0] for row in rows])
     self.assertIn(('Forget Headphones', 'Forget'), [row[0] for row in rows])
+
+  def test_app_connections_are_grouped_apart_from_bluetooth_devices(self):
+    self.panel.status = {'available': True, 'powered': True, 'parked': True, 'devices': [
+      {'address': 'AA:BB', 'name': 'Headphones', 'paired': True, 'connected': True},
+      {'address': 'CC:DD', 'name': 'iPhone', 'paired': False, 'trusted': False, 'connected': True}]}
+    self.panel._scroller = None
+    self.panel._rebuild()
+    names = [row[0] for row in self.panel._scroller.rows]
+    self.assertIn(('Headphones', 'Disconnect'), names)
+    self.assertNotIn(('iPhone', 'Pair'), names)
+    self.assertNotIn(('iPhone', 'Disconnect'), names)
+    self.assertIn('App pairings', [name[0] for name in names])
+    self.assertIn(('iPhone', 'Forget'), names)
 
   def test_forgetting_a_device_also_forgets_its_app_key(self):
     self.panel.show_event()

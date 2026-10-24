@@ -1,4 +1,5 @@
 from opendbc.car.gm.one_pedal import VoltOnePedal
+from opendbc.car.gm.steering_authority import EPS_STATUS_TIMEOUT_NS
 from opendbc.car.gm.values import gm_control_word, is_volt_one_pedal, camera_acc_pedal_profile, volt_cc_pedal_profile
 from opendbc.car.gm.longitudinal import volt_sng_release
 from opendbc.car.gm.auto_hold import AutoHold, config_for as auto_hold_config_for, hold_brake as estimate_hold_brake
@@ -575,7 +576,15 @@ class CarController(CarControllerBase):
       if self.CP.openpilotLongitudinalControl:
         stock_steer_ready = (stock_steer_ready and CS.pedal_sensor_healthy and
                             0 < CS.pedal_sensor_ts_nanos <= now_nanos <= CS.pedal_sensor_ts_nanos + PEDAL_SENSOR_TIMEOUT_NS)
-    lat_active = CC.latActive and stock_steer_ready and not CS.steering_authority.latched
+    # An SDGM EPS can report inactive while the driver holds the brake. Emit
+    # neutral for that measured pause so releasing the brake starts a new request.
+    # Keep the existing acquisition deadline and genuine refusal latch intact.
+    sdgm_brake_pause = False
+    if self.volt_sdgm_long and CS.out.brakePressed:
+      steering = CS.steering_authority
+      sdgm_brake_pause = (steering.enabled and steering.status == 0 and
+                          0 < steering.status_ns <= now_nanos <= steering.status_ns + EPS_STATUS_TIMEOUT_NS)
+    lat_active = CC.latActive and stock_steer_ready and not CS.steering_authority.latched and not sdgm_brake_pause
 
     # Steering (Active: 50Hz, inactive: 10Hz)
     steer_step = self.params.STEER_STEP if lat_active else self.params.INACTIVE_STEER_STEP

@@ -117,6 +117,21 @@ class TestGmVoltCameraRemoved(unittest.TestCase):
       self.mode(0xC150)
       self.assertFalse(self.safety.safety_tx_hook(self.packet(gmcan.create_buttons(self.packer, 0, 0, 6))))
 
+  def test_removed_camera_blocks_all_forwarding_and_stock_mode_recovers(self):
+    for word in (0xC150, 0xC151):
+      if word == 0xC151 and self.release:
+        continue
+      self.mode(word)
+      # The harness has no bus-2 camera receiver. All traffic is withdrawn by
+      # the global forwarding gate, including identifiers unknown to GM's list.
+      for bus in (0, 1, 2):
+        for address in (*range(0x800), 0x18DA10F1, 0x1FFFFFFF):
+          self.assertEqual(self.safety.safety_fwd_hook(bus, address), -1, (word, bus, address))
+      # A later connected-camera owner must restore its ordinary forwarding.
+      self.mode(5)
+      self.assertEqual(self.safety.safety_fwd_hook(0, 0x123), 2)
+      self.assertEqual(self.safety.safety_fwd_hook(2, 0x123), 0)
+
   def test_neutral_checksum_cadence_and_timer_wrap(self):
     self.mode(0xC150)
     self.rx('ECMEngineStatus', {'CruiseMainOn': 1})

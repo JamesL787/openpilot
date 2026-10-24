@@ -1,4 +1,5 @@
 """Exact development-only manual Volt CC native admission and arbitration."""
+
 import unittest
 
 from opendbc.can import CANPacker
@@ -15,7 +16,7 @@ class TestGmVoltCc(unittest.TestCase):
     self.safety = libsafety_py.libsafety
     self.release = self.safety.set_safety_hooks(structs.CarParams.SafetyModel.allOutput, 0) != 0
     fp = gen_empty_fingerprint()
-    fp[0].update({0xbe: 6, 0x3d1: 8, 0xc9: 8, 0x1e1: 7, 0x1f5: 8, 0x34a: 5, 0x1c4: 8, 0xbd: 7})
+    fp[0].update({0xBE: 6, 0x3D1: 8, 0xC9: 8, 0x1E1: 7, 0x1F5: 8, 0x34A: 5, 0x1C4: 8, 0xBD: 7})
     self.cp = CarInterface.get_params(CAR.CHEVROLET_VOLT_CC, fp, [], False, False, False)
     self.packer = CANPacker(DBC[self.cp.carFingerprint][Bus.pt])
 
@@ -28,12 +29,13 @@ class TestGmVoltCc(unittest.TestCase):
     self.safety.init_tests()
     self.safety.set_timer(1_000_000)
 
-  def frames(self, counter=0, speed=20., gas=False, brake=False):
+  def frames(self, counter=0, speed=20.0, gas=False, brake=False):
     frames = pt_frames(self.packer, counter=counter, gas=gas, brake=brake)
-    replacements = [self.packer.make_can_msg('EBCMWheelSpdRear', 0,
-                    {'RLWheelSpd': speed * 3.6, 'RRWheelSpd': speed * 3.6, 'RLWheelDir': 1, 'RRWheelDir': 1}),
-                    gmcan.create_buttons(self.packer, 0, counter, 1),
-                    self.packer.make_can_msg('EBCMRegenPaddle', 0, {})]
+    replacements = [
+      self.packer.make_can_msg('EBCMWheelSpdRear', 0, {'RLWheelSpd': speed * 3.6, 'RRWheelSpd': speed * 3.6, 'RLWheelDir': 1, 'RRWheelDir': 1}),
+      gmcan.create_buttons(self.packer, 0, counter, 1),
+      self.packer.make_can_msg('EBCMRegenPaddle', 0, {}),
+    ]
     addresses = {frame[0] for frame in replacements}
     return [frame for frame in frames if frame[0] not in addresses] + replacements
 
@@ -102,7 +104,7 @@ class TestGmVoltCc(unittest.TestCase):
           self.assertFalse(self.tx(counter=2, button=6))
 
   def test_actual_controller_direction_to_disable_native_acceptance(self):
-    for accel in (-2., 2.):
+    for accel in (-2.0, 2.0):
       for offset_frames in range(1, 5):
         for override in ('none', 'gas', 'brake'):
           self.reset()
@@ -118,7 +120,7 @@ class TestGmVoltCc(unittest.TestCase):
           command.actuators.accel = accel
           command.hudControl.leadVisible = True
           _, frames = ci.apply(command.as_reader(), 1_000_000_000)
-          buttons = [frame for frame in frames if frame[0] == 0x1e1]
+          buttons = [frame for frame in frames if frame[0] == 0x1E1]
           self.assertEqual(len(buttons), 1)
           self.assertEqual(self.safety.safety_tx_hook(self.packet(buttons[0])), not self.release)
           elapsed = offset_frames * 10_000
@@ -132,13 +134,13 @@ class TestGmVoltCc(unittest.TestCase):
           command.longActive = False
           self.safety.set_controls_allowed(False)
           _, frames = ci.apply(command.as_reader(), 1_000_000_000 + elapsed * 1000)
-          buttons = [frame for frame in frames if frame[0] == 0x1e1]
+          buttons = [frame for frame in frames if frame[0] == 0x1E1]
           self.assertEqual(len(buttons), 1)
           self.assertEqual((buttons[0][1][5] >> 4) & 7, 6)
           self.assertEqual(self.safety.safety_tx_hook(self.packet(buttons[0])), not self.release)
 
   def test_low_speed_and_gas_are_not_lateral_propulsion_gates(self):
-    for speed, gas in ((4., False), (20., True)):
+    for speed, gas in ((4.0, False), (20.0, True)):
       self.reset()
       self.feed(speed=speed)
       self.assertEqual(self.safety.get_controls_allowed(), not self.release)
@@ -152,7 +154,7 @@ class TestGmVoltCc(unittest.TestCase):
       self.assertFalse(self.tx(counter=2 if gas else 1))
 
   def test_individual_source_staleness_and_forbidden_authority(self):
-    required = {0x3d1, 0x1e1, 0xc9, 0xbe, 0x1f5, 0x1c4, 0xbd, 0x34a}
+    required = {0x3D1, 0x1E1, 0xC9, 0xBE, 0x1F5, 0x1C4, 0xBD, 0x34A}
     for missing in required:
       self.reset()
       self.feed()
@@ -166,9 +168,35 @@ class TestGmVoltCc(unittest.TestCase):
     self.reset()
     self.feed()
     self.safety.set_controls_allowed(True)
-    for addr, size in ((0x200, 6), (0x2cb, 8), (0x315, 5), (0x3d1, 8)):
+    for addr, size in ((0x200, 6), (0x2CB, 8), (0x315, 5), (0x3D1, 8)):
       self.assertFalse(self.safety.safety_tx_hook(self.packet((addr, bytes(size), 0))))
 
 
 if __name__ == '__main__':
   unittest.main()
+
+
+def test_volt_f1_uses_six_count_threshold_and_independent_c9_without_malibu_bit():
+  safety = libsafety_py.libsafety
+  release = safety.set_safety_hooks(structs.CarParams.SafetyModel.allOutput, 0) != 0
+  safety.init_tests()
+  safety.set_alternative_experience(32)
+  assert safety.set_safety_hooks(structs.CarParams.SafetyModel.gm, 0xC163) == 0
+  if release:
+    # RELEASE never acquires this development-only no-ACC actuator owner.
+    assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(0x180, 0, bytes(4)))
+    assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(0x1E1, 0, bytes(7)))
+    return
+  for raw in range(256):
+    for malibu_bit in (False, True):
+      for c9 in (False, True):
+        safety.init_tests()
+        safety.set_alternative_experience(32)
+        assert safety.set_safety_hooks(structs.CarParams.SafetyModel.gm, 0xC163) == 0
+        safety.set_timer(1_000_000)
+        # The same physical bit means Malibu brake, but is not Volt's source.
+        f1 = bytes([int(malibu_bit) << 1, raw, 0, 0, 0, 0])
+        status = bytes([0, 0, 0, 0, 0, int(c9), 0, 0])
+        assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0xF1, 0, f1))
+        assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0xC9, 0, status))
+        assert bool(safety.get_brake_pressed_prev()) == bool(raw >= 6 or c9), (raw, malibu_bit, c9)

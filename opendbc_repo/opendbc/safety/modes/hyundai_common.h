@@ -135,21 +135,21 @@ void hyundai_common_cruise_buttons_check(const int cruise_button, const bool mai
       controls_allowed = false;
       cruise_button_prev = HYUNDAI_BTN_NONE;
       hyundai_long_rearm_blocked = any_main || (cruise_button != HYUNDAI_BTN_NONE);
-      return;
-    }
-    // enter controls on falling edge of resume or set
-    bool set = (cruise_button != HYUNDAI_BTN_SET) && (cruise_button_prev == HYUNDAI_BTN_SET);
-    bool res = (cruise_button != HYUNDAI_BTN_RESUME) && (cruise_button_prev == HYUNDAI_BTN_RESUME);
-    if (set || res) {
-      controls_allowed = true;
-    }
+    } else {
+      // enter controls on falling edge of resume or set
+      bool set = (cruise_button != HYUNDAI_BTN_SET) && (cruise_button_prev == HYUNDAI_BTN_SET);
+      bool res = (cruise_button != HYUNDAI_BTN_RESUME) && (cruise_button_prev == HYUNDAI_BTN_RESUME);
+      if (set || res) {
+        controls_allowed = true;
+      }
 
-    // exit controls on cancel press
-    if (cruise_button == HYUNDAI_BTN_CANCEL) {
-      controls_allowed = false;
-    }
+      // exit controls on cancel press
+      if (cruise_button == HYUNDAI_BTN_CANCEL) {
+        controls_allowed = false;
+      }
 
-    cruise_button_prev = cruise_button;
+      cruise_button_prev = cruise_button;
+    }
   }
 }
 

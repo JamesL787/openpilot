@@ -41,14 +41,14 @@ class TestFordGenericCanfdExtended(unittest.TestCase):
     self._set_prev_desired_angle(0.)
     self.safety.set_controls_allowed(True)
 
-  def test_exact_namespace_and_release_long_denial(self):
+  def test_exact_namespace_and_release_long_support(self):
     for word in (66,67):
       self.select(word)
-      admitted = word == 66 or self.debug
+      admitted = True
       self.assertEqual(admitted, self.announce())
       self.prepare()
       self.assertEqual(admitted, self._tx(self._lat_ctl_msg(True,0,0,0,.0002)))
-      self.assertEqual(word == 67 and self.debug,
+      self.assertEqual(word == 67,
         self._tx(self._acc_command_msg(self.INACTIVE_GAS,self.INACTIVE_ACCEL,False)))
     for word, ae in ((64,0),(65,0),(68,0),(70,0),(74,0),(82,0),(98,0),(194,0),(66,33),(67,33)):
       self.select(word,ae)
@@ -56,7 +56,7 @@ class TestFordGenericCanfdExtended(unittest.TestCase):
       self.assertFalse(self._tx(self._lat_ctl_msg(False,0,0,0,0)))
     for word in (66, 67):
       self.select(word, 32)
-      self.assertEqual(word == 66 or self.debug, self.announce())
+      self.assertTrue(self.announce())
       self.assertFalse(self._tx(self._lat_ctl_msg(True, 0, 0, .0002, 0)))
 
   def test_announcement_path_and_inactive_contract(self):

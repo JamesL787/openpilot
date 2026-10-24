@@ -507,8 +507,15 @@ class TestHyundaiLongitudinalSafetyCameraSCCRefreshHybrid(HyundaiRefreshHybridGa
     self.packer = CANPackerSafety("hyundai_can_refresh_generated")
     self.safety = libsafety_py.libsafety
     flags = HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.CAN_REFRESH_MSGS | HyundaiSafetyFlags.HYBRID_GAS | HyundaiSafetyFlags.LONG
+    self.safety.set_alternative_experience(0)
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, flags)
     self.safety.init_tests()
+
+  def test_set_resume_buttons(self):
+    self.assertFalse(self.safety.get_controls_allowed())
+    self.assertTrue(self._rx(self._button_msg(0, main_button=1)))
+    self.assertTrue(self._rx(self._button_msg(0, main_button=0)))
+    super().test_set_resume_buttons()
 
   def test_hybrid_long_refresh_length_and_acc_allowlist(self):
     self.assertTrue(self._tx(common.make_msg(0, 0x485, 8)))

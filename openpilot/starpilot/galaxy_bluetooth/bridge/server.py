@@ -53,6 +53,7 @@ class Session:
     self.closed = False
     self.phone = None  # (id, key) of the phone whose key opened this session
     self.introduced = False
+    self.claiming = False
 
   def close(self):
     self.closed = True
@@ -86,6 +87,8 @@ class Gateway:
     if keys != self.keys:
       # Only sessions of forgotten (or re-keyed) phones are revoked; other phones stay connected.
       for path, state in list(self.sessions.items()):
+        if state.phone is None and state.claiming:
+          continue
         if state.phone is None or keys.get(state.phone[0]) != state.phone[1]:
           state.close()
           del self.sessions[path]
@@ -104,7 +107,12 @@ class Gateway:
       window = claim.window(self.claim_path)
       if window is None:
         raise ValueError("Pairing window closed")
-      phone_id, key = await asyncio.to_thread(add_phone, name, self.key_path)
+      state.claiming = True
+      try:
+        phone_id, key = await asyncio.to_thread(add_phone, name, self.key_path)
+        state.phone = (phone_id, key)
+      finally:
+        state.claiming = False
       try:
         body = claim.reply(public, state.challenge, {"key": key.hex(), "id": phone_id, "adapterAddress": window["adapterAddress"],
                                                       "adapterName": window["adapterName"]})
@@ -116,8 +124,10 @@ class Gateway:
     linked = await asyncio.to_thread(claim.take_link, self.claim_path)
     if linked:
       await asyncio.to_thread(link_address, linked[0], linked[1], self.key_path)
-    # The session now belongs to the new phone, so the key change does not close it before the reply is read.
-    state.phone = (phone_id, key)
+    if state.closed or load_keys(self.key_path).get(phone_id) != key:
+      state.closed = True
+      state.phone = None
+      raise ValueError("Pairing key was removed before delivery")
     frame = struct.pack(">I", len(body)) + body
     state.notification_stream = False
     state.notification_tag = b""

@@ -1,4 +1,5 @@
 import unittest
+from functools import cache
 
 from opendbc.can import CANPacker
 from opendbc.car.structs import CarParams
@@ -8,7 +9,16 @@ from opendbc.safety.tests.libsafety import libsafety_py
 from opendbc.safety.tests.test_hyundai_ev9_long import Ev9LongFixture
 
 
+@cache
+def release_safety():
+  default = libsafety_py.libsafety
+  library = libsafety_py.ffi.dlopen(libsafety_py._build_libsafety(release=True))
+  assert libsafety_py.libsafety is default
+  return library
+
+
 class PEFixture:
+  RELEASE_NATIVE = False
 
   packet = Ev9LongFixture.packet
   feed = Ev9LongFixture.feed
@@ -16,7 +26,7 @@ class PEFixture:
   ready = Ev9LongFixture.ready
 
   def setUp(self):
-    self.safety = libsafety_py.libsafety
+    self.safety = release_safety() if self.RELEASE_NATIVE else libsafety_py.libsafety
     self.packer = CANPacker('hyundai_canfd_generated')
     self.safety.init_tests()
     self.safety.set_alternative_experience(0)
@@ -177,6 +187,8 @@ class TestPELongDebug(PEFixture, unittest.TestCase):
 
 
 class TestPELongReleaseDenied(PEFixture, unittest.TestCase):
+  RELEASE_NATIVE = True
+
   def test_release_never_admits_proposed_pe_long_profile(self):
 
     for _ in range(6):

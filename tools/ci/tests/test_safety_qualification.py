@@ -10,7 +10,7 @@ import threading
 import time
 import tempfile
 from unittest import TestCase, skipUnless
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from tools.ci import run_safety_qualification as qualification
 
@@ -91,6 +91,183 @@ class TestSafetyQualificationRunner(TestCase):
         self.assertFalse(sidecar.exists())
         with self.assertRaises(FileNotFoundError):
           qualification.imported_module_hashes(log)
+
+  def test_coverage_catalog_includes_native_pytest_and_external_callers(self):
+    from tools.ci import safety_pytest_coverage as coverage
+    selected = coverage.targets_for_coverage(qualification.ROOT)
+    for name in ('opendbc_repo/opendbc/safety/tests/test_tesla_preap_pedal.py::test_actual_registered_priming_rate_absolute_bus_and_counter_bounds',
+                 'openpilot/starpilot/car/nissan/tests/test_aol.py',
+                 'openpilot/starpilot/car/rivian/tests/test_aol_native.py'):
+      self.assertIn(name, selected)
+    import ast
+    plan = ast.parse((qualification.ROOT / 'tools/ci/run_vehicle_tests.py').read_text())
+    release = next(ast.literal_eval(node.value) for node in plan.body if isinstance(node, ast.Assign) and
+                   any(isinstance(target, ast.Name) and target.id == 'RELEASE_TARGETS' for target in node.targets))
+    self.assertEqual(len(coverage.RELEASE_ONLY), 2)
+    for nodeid in coverage.RELEASE_ONLY:
+      self.assertIn(nodeid, release)
+      self.assertNotIn(nodeid, selected)
+    with tempfile.TemporaryDirectory() as td:
+      root = Path(td)
+      native = root / 'opendbc_repo/opendbc/safety/tests'
+      external = root / 'openpilot/starpilot/car/nissan/tests'
+      native.mkdir(parents=True)
+      external.mkdir(parents=True)
+      (native / 'test_function.py').write_text('def test_native(): pass\n')
+      (native / 'test_ordinary.py').write_text('class TestOrdinary(unittest.TestCase): pass\n')
+      (external / 'test_aol.py').write_text('from opendbc.safety.tests.libsafety import libsafety_py\nclass TestCaller(unittest.TestCase): pass\n')
+      (external / 'test_unrelated.py').write_text('def test_settings(): pass\n')
+      self.assertEqual(coverage.targets_for_coverage(root),
+                       ['opendbc_repo/opendbc/safety/tests/test_function.py::test_native',
+                        'openpilot/starpilot/car/nissan/tests/test_aol.py'])
+
+  def test_native_pytest_coverage_requires_complete_accounting_and_same_library(self):
+    from tools.ci import safety_pytest_coverage as coverage
+    targets = ['native.py']
+    report = {'schema_version': 1, 'full_catalog': True, 'targets': targets, 'native_builds': [], 'native_source_sha256': 'b' * 64, 'native_sha256': 'pinned',
+              'native_bound_before': True, 'native_bound_after': True, 'collection_errors': [], 'execution_errors': [],
+              'nodeids': ['native.py::test_one'], 'records': [{'id': 'native.test_one', 'status': 'passed'}]}
+    self.assertTrue(coverage.report_complete(report, targets, 'pinned'))
+    changes = ({'schema_version': True}, {'full_catalog': False}, {'targets': []}, {'native_sha256': 'other'},
+               {'native_bound_before': False}, {'native_bound_after': False}, {'collection_errors': ['bad']},
+               {'execution_errors': ['bad']}, {'nodeids': []}, {'nodeids': ['native.py::test_one'] * 2},
+               {'records': []}, {'records': [{'id': 'other', 'status': 'passed'}]},
+               {'records': [{'id': 'native.test_one', 'status': 'skipped'}]},
+               {'records': [{'id': 'native.test_one', 'status': 'xfailed'}]},
+               {'records': [{'id': 'native.test_one', 'status': 'failed'}]})
+    for changed in changes:
+      with self.subTest(changed=changed):
+        self.assertFalse(coverage.report_complete(dict(report, **changed), targets, 'pinned'))
+    build = {'path': '/actual-built.so', 'sha256': 'a' * 64, 'source_sha256': 'b' * 64, 'variant': 'release', 'instrumented': True}
+    built = dict(report, native_builds=[build], native_source_sha256='b' * 64)
+    self.assertTrue(coverage.report_complete(built, targets, 'pinned'))
+    for changed in ({'instrumented': False}, {'variant': 'unknown'}, {'path': 'relative.so'},
+                    {'sha256': 'unknown'}, {'source_sha256': 'c' * 64}):
+      self.assertFalse(coverage.report_complete(dict(built, native_builds=[dict(build, **changed)]), targets, 'pinned'))
+    self.assertFalse(coverage.report_complete(dict(built, native_builds=[build, build]), targets, 'pinned'))
+    self.assertFalse(coverage.report_complete(dict(built, native_builds={}), targets, 'pinned'))
+    for key in ('native_builds', 'native_source_sha256'):
+      stripped = dict(built)
+      stripped.pop(key)
+      self.assertFalse(coverage.report_complete(stripped, targets, 'pinned'))
+    self.assertFalse(coverage.report_complete(dict(built, native_source_sha256='invalid'), targets, 'pinned'))
+
+
+  def test_coverage_runs_pytest_before_unchanged_full_coverage_requirement(self):
+    from tools.ci import safety_pytest_coverage as coverage
+    for pytest_code, report_present, expected in ((0, True, True), (1, True, False), (0, False, False)):
+      with self.subTest(code=pytest_code, report=report_present), tempfile.TemporaryDirectory() as td:
+        directory = Path(td)
+        original = directory / 'built.so'
+        original.write_bytes(b'instrumented fixture')
+        gate = qualification.Gate('coverage', directory, sys.executable)
+        targets = ['native.py']
+        labels = []
+        def execute(label, argv, labels=labels, original=original, directory=directory,
+                    report_present=report_present, targets=targets, pytest_code=pytest_code, **kwargs):
+          labels.append(label)
+          if label == 'build-libsafety':
+            return 0, str(original) + '\n'
+          if label == 'unittest':
+            return 0, 'Safety qualification collected 1 tests\nRan 1 test in 0.01s\n\nOK\nSafety qualification suppressed 0 methods\n'
+          if label == 'pytest-coverage':
+            self.assertEqual(Path(argv[1]), qualification.ROOT / 'tools/ci/safety_pytest_coverage.py')
+            self.assertIn(str(directory / 'libsafety-debug.so'), argv)
+            if report_present:
+              (directory / 'pytest-coverage-results.json').write_text(json.dumps(
+                {'schema_version': 1, 'full_catalog': True, 'targets': targets, 'native_builds': [], 'native_source_sha256': 'b' * 64,
+                 'native_sha256': qualification.hashlib.sha256(original.read_bytes()).hexdigest(),
+                 'native_bound_before': True, 'native_bound_after': True, 'collection_errors': [], 'execution_errors': [],
+                 'nodeids': ['native.py::test_one'], 'records': [{'id': 'native.test_one', 'status': 'passed'}]}))
+            return pytest_code, ''
+          if label == 'coverage':
+            self.assertIn('--fail-under-line=100', argv)
+          return 0, ''
+        with patch.object(gate, 'run', side_effect=execute), patch.object(coverage, 'targets_for_coverage', return_value=targets):
+          self.assertEqual(gate.execute(), expected)
+        self.assertLess(labels.index('unittest'), labels.index('pytest-coverage'))
+        self.assertLess(labels.index('pytest-coverage'), labels.index('coverage'))
+        self.assertEqual(gate.summary['ran'], 1)
+        pytest_summary = gate.summary['pytest_coverage']
+        assert isinstance(pytest_summary, dict)
+        self.assertEqual(pytest_summary['complete'], report_present)
+
+  def test_coverage_admits_only_authentic_unchanged_instrumented_variant_builds(self):
+    from types import SimpleNamespace
+    from tools.ci import safety_pytest_coverage as coverage
+    with tempfile.TemporaryDirectory() as td:
+      root = Path(td)
+      source = root / 'opendbc_repo/opendbc/safety/declarations.h'
+      source.parent.mkdir(parents=True)
+      source.write_text('actual native source fixture')
+      native, variant = root / 'supplied.so', root / 'variant.so'
+      native.write_bytes(b'supplied instrumented fixture')
+      variant.write_bytes(b'authentic variant fixture')
+      module = SimpleNamespace(_build_libsafety=Mock(return_value=str(variant)), load=Mock())
+      libraries = coverage.InstrumentedLibraries(native, module, root)
+      libraries.load(native)
+      with self.assertRaisesRegex(RuntimeError, 'registered unchanged'):
+        libraries.load(variant)
+      with patch.dict(os.environ, {'SAFETY_COVERAGE': '0'}), self.assertRaisesRegex(RuntimeError, 'instrumentation'):
+        libraries.build()
+      module._build_libsafety.assert_not_called()
+      with patch.dict(os.environ, {'SAFETY_COVERAGE': '1'}):
+        self.assertEqual(libraries.build(release=True), str(variant.resolve()))
+      module._build_libsafety.assert_called_once_with(release=True)
+      self.assertEqual(libraries.builds[0]['variant'], 'release')
+      self.assertTrue(libraries.builds[0]['instrumented'])
+      self.assertEqual(len(libraries.builds[0]['source_sha256']), 64)
+      libraries.load(variant)
+      module.load.assert_called_with(variant.resolve())
+      params = root / 'opendbc_repo/opendbc/bluepilot_lateral/params/limits.h'
+      params.parent.mkdir(parents=True)
+      params.write_text('changed native include')
+      with self.assertRaisesRegex(RuntimeError, 'sources changed before loading'):
+        libraries.load(variant)
+      params.unlink()
+      variant.write_bytes(b'modified variant')
+      with self.assertRaisesRegex(RuntimeError, 'registered unchanged'):
+        libraries.load(variant)
+      native.write_bytes(b'modified supplied')
+      with self.assertRaisesRegex(RuntimeError, 'registered unchanged'):
+        libraries.load(native)
+      def changing_build(release=False):
+        source.write_text('changed during actual compiler call')
+        return str(root / 'other.so')
+      module._build_libsafety = changing_build
+      changing = coverage.InstrumentedLibraries(native, module, root)
+      with patch.dict(os.environ, {'SAFETY_COVERAGE': '1'}), self.assertRaisesRegex(RuntimeError, 'sources changed'):
+        changing.build()
+
+  def test_actual_native_builder_instruments_debug_and_release_without_changing_variant(self):
+    import ast
+    from types import SimpleNamespace
+    source = qualification.ROOT / 'opendbc_repo/opendbc/safety/tests/libsafety/libsafety_py.py'
+    function = next(node for node in ast.parse(source.read_text()).body if isinstance(node, ast.FunctionDef) and node.name == '_build_libsafety')
+    code = compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec')
+    with tempfile.TemporaryDirectory() as td:
+      directory = Path(td)
+      library_dir = directory / 'one/two/three/libsafety'
+      library_dir.mkdir(parents=True)
+      def allocate(suffix, **kwargs):
+        return tempfile.mkstemp(suffix=suffix, dir=directory)
+      compiler = Mock()
+      namespace: dict[str, object] = {'os': os, 'Path': Path, 'libsafety_dir': str(library_dir),
+                   'tempfile': SimpleNamespace(mkstemp=allocate), 'subprocess': SimpleNamespace(check_call=compiler)}
+      exec(code, namespace)
+      builder = namespace['_build_libsafety']
+      assert callable(builder)
+      for instrumented in (False, True):
+        for release in (False, True):
+          with self.subTest(instrumented=instrumented, release=release), patch.dict(os.environ, {'SAFETY_COVERAGE': str(int(instrumented))}):
+            compiler.reset_mock()
+            builder(release=release)
+            compile_args, link_args = [call.args[0] for call in compiler.call_args_list]
+            self.assertEqual('-DALLOW_DEBUG' in compile_args, not release)
+            for flags in (compile_args, link_args):
+              self.assertEqual('-fprofile-arcs' in flags, instrumented)
+              self.assertEqual('-ftest-coverage' in flags, instrumented)
+              self.assertEqual('-fsanitize=undefined' in flags, not instrumented)
 
   def test_source_identity_includes_gate_and_workflow_inputs(self):
     identity = qualification.source_identity()

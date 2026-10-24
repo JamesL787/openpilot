@@ -275,14 +275,17 @@ class TestChryslerAol(unittest.TestCase):
     intent.observe_calibration(cs, events=ready.to_msg())
     self.assertFalse(intent.startup_calibration_pending)
     self.assertTrue(intent.allowed_latch)
-    self.assertTrue(intent_disarming_fault(cp, cold.to_msg(), cs, startup_calibration_pending=False))
-    # A later calibration revocation is a real withdrawal, not another cold boot.
-    intent.update(cs, now_ns=1_010_000_000, fault_active=True)
+    self.assertFalse(intent_disarming_fault(cp, cold.to_msg(), cs, startup_calibration_pending=False))
+    # A later SOFT calibration warning pauses commands without erasing intent.
+    intent.update(cs, now_ns=1_010_000_000, fault_active=False)
+    self.assertTrue(intent.allowed_latch)
+    # A true immediate fault still requires a new driver gesture.
+    intent.update(cs, now_ns=1_020_000_000, fault_active=True)
     self.assertFalse(intent.allowed_latch)
-    intent.update(cs, now_ns=1_020_000_000, fault_active=False)
+    intent.update(cs, now_ns=1_030_000_000, fault_active=False)
     self.assertFalse(intent.allowed_latch)
 
-  def test_cold_readiness_never_exempts_other_faults_or_immediate_calibration(self):
+  def test_soft_readiness_and_true_immediate_calibration_remain_distinct(self):
     from openpilot.cereal import log
     from openpilot.selfdrive.selfdrived.events import Events
     from openpilot.starpilot.aol.vehicle import intent_disarming_fault
@@ -292,7 +295,8 @@ class TestChryslerAol(unittest.TestCase):
                  log.OnroadEvent.EventName.doorOpen, log.OnroadEvent.EventName.canError):
       events = Events()
       events.add(name)
-      self.assertTrue(intent_disarming_fault(cp, events.to_msg(), cs, startup_calibration_pending=True), name)
+      self.assertEqual(intent_disarming_fault(cp, events.to_msg(), cs, startup_calibration_pending=True),
+                       any(event.immediateDisable for event in events.to_msg()), name)
     event = log.OnroadEvent.new_message(name=log.OnroadEvent.EventName.calibrationIncomplete, immediateDisable=True)
     self.assertTrue(intent_disarming_fault(cp, [event], cs, startup_calibration_pending=True))
     cs.steerFaultPermanent = True
@@ -304,39 +308,40 @@ class TestChryslerAol(unittest.TestCase):
     from openpilot.cereal import log
     from openpilot.selfdrive.selfdrived.events import Events
     from openpilot.starpilot.car.chrysler.aol import cold_calibration_intent_current
-    cp = cp_for(CAR.JEEP_GRAND_CHEROKEE)
-    cs = state()
-    events = Events()
-    events.add(log.OnroadEvent.EventName.calibrationIncomplete)
-    axis = SimpleNamespace(intentProducerSessionId='card-1', intentIntegrityEpoch=0,
-      desiredLongitudinal=False, longitudinalActive=False, lateralActive=False,
-      desiredLateral=False, observedMonoTime=2_000_000_000,
-      faultReason='critical', faultEventMonoTime=1_900_000_000)
-    native = SimpleNamespace(pandaInventory=(object(),), requestedLongitudinal=False,
-      longitudinalAllowed=False, requestedLateral=False, lateralAllowed=False)
-    class Peers:
-      seen = valid = alive = {'onroadEvents': True}
-      logMonoTime = {'onroadEvents': 1_900_000_000}
-      def __getitem__(self, _):
-        return events.to_msg()
-    feedback = SimpleNamespace(failed=False, ever_lateral_active=False, signature=None, cold_main_wait_ns=0)
-    def observe():
-      return cold_calibration_intent_current(feedback, Peers(), cp, cs, axis, native, 2_010_000_000,
-        pending=True, producer='card-1')
-    self.assertTrue(observe())
-    for obj, field, value in ((feedback, 'failed', True), (feedback, 'ever_lateral_active', True),
-        (axis, 'intentProducerSessionId', 'restarted-card'), (axis, 'desiredLongitudinal', True),
-        (native, 'requestedLongitudinal', True), (native, 'lateralAllowed', True),
-        (cs, 'doorOpen', True), (cs, 'steeringDisengage', True)):
-      previous = getattr(obj, field)
-      setattr(obj, field, value)
-      self.assertFalse(observe(), field)
-      setattr(obj, field, previous)
-    for name in (log.OnroadEvent.EventName.canError, log.OnroadEvent.EventName.calibrationInvalid,
-                 log.OnroadEvent.EventName.doorOpen):
-      events.add(name)
-      self.assertFalse(observe(), name)
-      events.clear()
+    for reason in ('critical', 'availabilityPause'):
+      cp = cp_for(CAR.JEEP_GRAND_CHEROKEE)
+      cs = state()
+      events = Events()
       events.add(log.OnroadEvent.EventName.calibrationIncomplete)
-    Peers.logMonoTime['onroadEvents'] = 1
-    self.assertFalse(observe())
+      axis = SimpleNamespace(intentProducerSessionId='card-1', intentIntegrityEpoch=0,
+        desiredLongitudinal=False, longitudinalActive=False, lateralActive=False,
+        desiredLateral=False, observedMonoTime=2_000_000_000,
+        faultReason=reason, faultEventMonoTime=1_900_000_000)
+      native = SimpleNamespace(pandaInventory=(object(),), requestedLongitudinal=False,
+        longitudinalAllowed=False, requestedLateral=False, lateralAllowed=False)
+      class Peers:
+        seen = valid = alive = {'onroadEvents': True}
+        logMonoTime = {'onroadEvents': 1_900_000_000}
+        def __getitem__(self, _, events=events):
+          return events.to_msg()
+      feedback = SimpleNamespace(failed=False, ever_lateral_active=False, signature=None, cold_main_wait_ns=0)
+      def observe(feedback=feedback, cp=cp, cs=cs, axis=axis, native=native, Peers=Peers):
+        return cold_calibration_intent_current(feedback, Peers(), cp, cs, axis, native, 2_010_000_000,
+          pending=True, producer='card-1')
+      self.assertTrue(observe())
+      for obj, field, value in ((feedback, 'failed', True), (feedback, 'ever_lateral_active', True),
+          (axis, 'intentProducerSessionId', 'restarted-card'), (axis, 'desiredLongitudinal', True),
+          (native, 'requestedLongitudinal', True), (native, 'lateralAllowed', True),
+          (cs, 'doorOpen', True), (cs, 'steeringDisengage', True)):
+        previous = getattr(obj, field)
+        setattr(obj, field, value)
+        self.assertFalse(observe(), field)
+        setattr(obj, field, previous)
+      for name in (log.OnroadEvent.EventName.canError, log.OnroadEvent.EventName.calibrationInvalid,
+                   log.OnroadEvent.EventName.doorOpen):
+        events.add(name)
+        self.assertFalse(observe(), name)
+        events.clear()
+        events.add(log.OnroadEvent.EventName.calibrationIncomplete)
+      Peers.logMonoTime['onroadEvents'] = 1
+      self.assertFalse(observe())

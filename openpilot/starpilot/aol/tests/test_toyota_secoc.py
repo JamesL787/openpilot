@@ -219,9 +219,25 @@ def test_other_secoc_and_angle_factories_never_join_sienna_aol(vehicle):
   cp = CarInterface.get_params(vehicle, gen_empty_fingerprint(), [], False, False, False)
   cp.secOcKeyAvailable = True
   cp.alternativeExperience = 32
-  assert not qualified(cp)
-  assert not policy_for(cp).intent_supported
-  assert not native_matches_cp(cp, TOYOTA, cp.safetyConfigs[0].safetyParam)
+  from openpilot.starpilot.car.toyota.aol import angle_qualified, secoc_qualified
+
+  assert not secoc_qualified(cp)
+  if vehicle == CAR.TOYOTA_RAV4_TSS2_2023:
+    assert not cp.secOcRequired and cp.steerControlType == structs.CarParams.SteerControlType.angle
+    assert cp.safetyConfigs[0].safetyParam == 0x649 and not cp.openpilotLongitudinalControl
+    assert angle_qualified(cp) and qualified(cp)
+    assert policy_for(cp).intent_supported
+    assert native_matches_cp(cp, TOYOTA, 0x649)
+    # Angle ownership does not admit the Sienna SecOC word or a SecOC-required clone.
+    cp.secOcRequired = True
+    assert not qualified(cp) and not native_matches_cp(cp, TOYOTA, 0x649)
+    cp.secOcRequired = False
+    cp.safetyConfigs[0].safetyParam = 2121
+    assert not qualified(cp) and not native_matches_cp(cp, TOYOTA, 2121)
+  else:
+    assert not qualified(cp)
+    assert not policy_for(cp).intent_supported
+    assert not native_matches_cp(cp, TOYOTA, cp.safetyConfigs[0].safetyParam)
   assert policy_for(cp).auxiliary_lkas_supported
 
 

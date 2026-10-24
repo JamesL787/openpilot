@@ -1,10 +1,11 @@
 """Evaluate the actual SCons graph with fake nodes; never execute compilers."""
 
 import ctypes.util
+import shlex
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -30,7 +31,10 @@ def graph(monkeypatch, tmp_path):
   helpers = ModuleType("openpilot.selfdrive.modeld.helpers")
   helpers.chestnut_present = Mock(return_value=False)
   monkeypatch.setitem(sys.modules, helpers.__name__, helpers)
-  env = Mock()
+  monkeypatch.delenv("COMMA_LAPTOP_CROSS_BUILD", raising=False)
+  env = MagicMock()
+  build_env = {"ENV": {}}
+  env.__getitem__.side_effect = build_env.__getitem__
   env.Clone.return_value = env
 
   def node(path):
@@ -38,6 +42,10 @@ def graph(monkeypatch, tmp_path):
     return SimpleNamespace(abspath=str(tmp_path / relative), relpath=relative)
 
   env.Dir.side_effect = node
+  for compiler in ("tinygrad_repo", "tinygrad_model_runtime/legacy9d/tinygrad_repo"):
+    marker = tmp_path / compiler / "compiler_dependency.py"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("# compiler dependency witness\n")
 
   def stop():
     raise Returned()
@@ -67,8 +75,8 @@ def test_missing_llvm_pc_skips_graph_before_probe_or_compilation(graph, monkeypa
 
 @pytest.mark.parametrize("arch,llvm,backend", [
   ("aarch64", "libLLVM.so", "DEV=CPU:LLVM"),
-  ("Darwin", None, "DEV=METAL JIT=2"),
-  ("comma_arm64", None, "DEV=QCOM"),
+  ("Darwin", None, "DEV=METAL HCQ_RUNTIME_DEV=CPU:CLANG JIT=2"),
+  ("comma_arm64", None, "DEV=QCOM IMAGE=1 FLOAT16=1 NOLOCALS=1 JIT_BATCH_SIZE=0 OPENPILOT_HACKS=1"),
 ])
 def test_supported_backend_retains_models_and_camera_warp_graph(graph, monkeypatch, arch, llvm, backend):
   evaluate, env, present = graph
@@ -85,7 +93,37 @@ def test_supported_backend_retains_models_and_camera_warp_graph(graph, monkeypat
   assert "driving_tinygrad.pkl" not in targets
   assert sum(name.startswith("driving_warp_") for name in targets) == 2
   assert sum(name.startswith("dm_warp_") for name in targets) == 2
-  assert all(backend in call.args[2] for call in calls)
+  compiler = "tinygrad_model_runtime/legacy9d/tinygrad_repo" if arch == "comma_arm64" else "tinygrad_repo"
+  compiler_root = Path(calls[0].args[0]).parent.parent / compiler
+  # Commands and their dependency Values must describe the same selected compiler.
+  # Token checks retain every required flag without requiring adjacent assignments.
+  for call in calls:
+    target, dependencies, command = call.args
+    tokens = shlex.split(command)
+    assert set(shlex.split(backend)) <= set(tokens)
+    assert str(compiler_root / "examples/openpilot" / ("compile_onnx.py" if target.endswith("dmonitoring_model_tinygrad.pkl")
+                                                     else "compile_warp.py")) in tokens
+    assert "#" + str(Path(compiler) / "compiler_dependency.py") in dependencies
+    assert command in dependencies
+    if "_warp_" in target:
+      warp_dependency = "openpilot/system/camerad/cameras/nv12_info.py"
+      assert any(getattr(source, "relpath", None) == warp_dependency and
+                 getattr(source, "abspath", None) == str(Path(target).parent.parent / warp_dependency)
+                 for source in dependencies)
+      assert "--frame" in tokens and "--warp-to" in tokens
+      dimensions = Path(target).name.split("_warp_", 1)[1].split("_tinygrad.pkl", 1)[0]
+      assert tokens[tokens.index("--frame") + 1].split(",")[:2] == dimensions.split("x")
+      assert tokens[tokens.index("--output") + 1] == target
+      assert tokens[tokens.index("--layout") + 1] == ("luma" if Path(target).name.startswith("dm_") else "yuv420")
+    else:
+      assert str(Path(target).parent / "dmonitoring_model.onnx") in dependencies
+  env.PrependENVPath.assert_called_once_with("PYTHONPATH", str(compiler_root))
+  if arch == "comma_arm64":
+    assert env["ENV"]["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert env["ENV"]["CACHEDB"].endswith("/9d0446a4ba8a532c8b674fb6ad795af015cd9dcf/tinygrad.db")
+    assert env["ENV"]["XDG_CACHE_HOME"].endswith("/9d0446a4ba8a532c8b674fb6ad795af015cd9dcf/xdg")
+  else:
+    assert env["ENV"] == {}
   env.Execute.assert_not_called()
 
 

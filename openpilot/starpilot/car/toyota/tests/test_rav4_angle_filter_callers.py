@@ -37,7 +37,7 @@ def test_rav4_filter_actual_callers(alpha, disable, radar_mode, tmp_path):
 
 
 def run_case(candidate, alpha, disable, radar_mode, tmp_path, *, aol=True, has_filter=True, bridge=None,
-             filter_advertisements=None, recorded_firmware=None):
+             filter_advertisements=None, recorded_firmware=None, has_pedal=False):
   helpers.SYNTHETIC_LAST.clear()
   helpers.NATIVE_LAST.clear()
   safety = libsafety_py.libsafety
@@ -85,6 +85,9 @@ def run_case(candidate, alpha, disable, radar_mode, tmp_path, *, aol=True, has_f
     advertisements = ([(0x2AA, bytes(8), 0)] if has_filter else []) if filter_advertisements is None else filter_advertisements
     for address, data, bus in advertisements:
       fp[bus][address] = len(data)
+    if has_pedal:
+      assert not has_filter
+      fp[0][0x201] = 6
     observed = (candidate, fp, '0' * 17, fw, structs.CarParams.FingerprintSource.fw, True)
     with (patch.object(car_helpers, 'fingerprint', return_value=observed),
           patch.object(card_module, 'can_comm_callbacks', return_value=(diag_recv, diag_send)),
@@ -94,7 +97,7 @@ def run_case(candidate, alpha, disable, radar_mode, tmp_path, *, aol=True, has_f
     angle = candidate == CAR.TOYOTA_RAV4_TSS2_2023
     enrolled = aol
     assert bool(host.CP.flags & ToyotaFlags.DISABLE_RADAR) == (not has_filter and long)
-    word = 0x49 | (0x400 if angle else 0) | (0x1000 if has_filter else 0) | (0 if long else 0x200)
+    word = 0x49 | (0x400 if angle else 0) | (0x2000 if has_pedal and alpha else 0) | (0x1000 if has_filter else 0) | (0 if long else 0x200)
     assert host.CP.safetyConfigs[0].safetyParam == word
     assert host.CP.openpilotLongitudinalControl == long
     assert host.CP.alternativeExperience == 32
@@ -126,7 +129,7 @@ def run_case(candidate, alpha, disable, radar_mode, tmp_path, *, aol=True, has_f
     stack.enter_context(patch.object(time, 'clock_gettime_ns',
       side_effect=lambda c: clock[0] if c in (time.CLOCK_MONOTONIC, time.CLOCK_BOOTTIME) else real_clock(c)))
     cc = structs.CarControl().as_reader()
-    active = steering = acceleration = False
+    active = steering = acceleration = pedal_active = False
     try:
       for tick in range(1, 651):
         clock[0] += 10_000_000
@@ -151,6 +154,14 @@ def run_case(candidate, alpha, disable, radar_mode, tmp_path, *, aol=True, has_f
         # Stock AEB/PCS traffic must not trip the ACC relay check.
         if has_filter and 580 <= tick < 600:
           frames.append(packer.make_can_msg('ACC_CONTROL', 0, {}))
+        if has_pedal:
+          from opendbc.car.toyota import pedal
+          address, data, bus = packer.make_can_msg('GAS_SENSOR', 0, {
+            'INTERCEPTOR_GAS': 806 if gas else 0, 'INTERCEPTOR_GAS2': 806 if gas else 0,
+            'COUNTER_PEDAL': tick & 15, 'STATE': 0})
+          data = bytearray(data)
+          data[-1] = pedal.checksum(data)
+          frames.append((address, bytes(data), bus))
         for address, data, bus in frames:
           assert safety.safety_rx_hook(libsafety_py.make_CANPacket(address, bus, data)), (tick, hex(address))
         safety.safety_tick()
@@ -212,7 +223,25 @@ def run_case(candidate, alpha, disable, radar_mode, tmp_path, *, aol=True, has_f
           if has_filter:
             assert frame.address != 0x750, 'Filter path must not keep radar disabled'
           packet = libsafety_py.make_CANPacket(frame.address, frame.src, bytes(frame.dat))
+          if diagnostic and ctypes.c_uint16.in_dll(native_globals, 'current_safety_mode').value == initial_mode:
+            # Radar initialization still owns ELM327: actual native refusal is
+            # required until Card publishes and pandad consumes ControlsReady.
+            assert not cc.latActive and not cc.longActive
+            if frame.address == 0x750:
+              assert safety.safety_tx_hook(packet)
+            else:
+              assert not safety.safety_tx_hook(packet)
+            continue
           assert safety.safety_tx_hook(packet), (tick, hex(frame.address), bytes(frame.dat).hex())
+          if frame.address == 0x200:
+            from opendbc.car.toyota import pedal
+            data = bytes(frame.dat)
+            assert len(data) == 6 and data[5] == pedal.checksum(data)
+            if data[4] & 0x80:
+              assert long and cc.longActive and not cs.gasPressed and not cs.brakePressed
+              pedal_active = True
+            else:
+              assert data[:4] == bytes(4)
           if frame.address == 0x191:
             value = decode(host.CP, (frame.address, bytes(frame.dat), frame.src), 'STEERING_LTA')
             steering |= bool(value['STEER_REQUEST'] and abs(value['STEER_ANGLE_CMD']) > 0)
@@ -238,6 +267,8 @@ def run_case(candidate, alpha, disable, radar_mode, tmp_path, *, aol=True, has_f
       assert bool(diag_tx) == diagnostic
       assert active and steering
       assert acceleration == long
+      if has_pedal and alpha:
+        assert pedal_active == long
       assert not safety.get_relay_malfunction()
     finally:
       (tmp_path / 'diagnostics.json').write_text(json.dumps(diag_tx))

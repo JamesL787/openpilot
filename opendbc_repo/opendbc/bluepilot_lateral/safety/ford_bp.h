@@ -41,6 +41,9 @@ static bool ford_bp_configure(uint16_t param) {
 #ifdef ALLOW_DEBUG
   ford_bp_enabled |= (param == 131U) && (alternative_experience == 0);
 #endif
+  const bool joint = ((unsigned int)alternative_experience == 32U) &&
+    ((param == 146U) || (param == 147U) || (param == 160U) || (param == 161U) || (param == 194U) || (param == 195U));
+  ford_bp_enabled |= joint;
   ford_bp_canfd = (param & 2U) != 0U;
   ford_bp_lka_counter_seen = false;
   ford_bp_control_counter_seen = false;
@@ -62,6 +65,16 @@ static bool ford_bp_configure(uint16_t param) {
 
 static bool ford_bp_health(uint32_t now);
 
+static bool ford_bp_permission(void) {
+  bool permitted = false;
+  if (ford_aol_enabled) {
+    permitted = (ford_aol_permission_mask() & 1U) != 0U;
+  } else {
+    permitted = lateral_controls_allowed() && controls_allowed && !brake_pressed && !gas_pressed;
+  }
+  return permitted;
+}
+
 static void ford_bp_rx(const CANPacket_t *msg) {
   if (ford_bp_enabled && (msg->bus == 0U) && (GET_LEN(msg) == 8U)) {
     const unsigned int ids[7] = {0x415U, 0x202U, 0x91U, 0x165U, 0x204U, 0x213U, 0x83U};
@@ -77,7 +90,7 @@ static void ford_bp_rx(const CANPacket_t *msg) {
       controls_allowed = false;
     }
     // Permission losses remove the old actuator history before any later arm.
-    if (!controls_allowed || brake_pressed || gas_pressed) {
+    if (!ford_bp_permission() || !ford_bp_health(microsecond_timer_get())) {
       ford_bp_withdraw();
     }
   }
@@ -113,7 +126,7 @@ static bool ford_bp_lka(const CANPacket_t *msg) {
                ((msg->data[7] & FORD_BP_VERSION_MASK) == FORD_BP_VERSION) &&
                ((msg->data[7] >> FORD_BP_CHECKSUM_SHIFT) == checksum);
   const int shadow = to_signed((msg->data[5] << 8) | msg->data[6], 16);
-  const bool resync = (shadow == 0) && !controls_allowed;
+  const bool resync = (shadow == 0) && !ford_bp_permission();
   if (ford_bp_lka_counter_seen && !resync) {
     valid &= counter == ((ford_bp_lka_counter + 1U) % FORD_BP_COUNTER_MODULUS);
     valid &= safety_get_ts_elapsed(now, ford_bp_shadow_us) >= 20000U;
@@ -193,7 +206,7 @@ static bool ford_bp_lateral(const CANPacket_t *msg) {
     const float physical_cap = SAFETY_MIN(FORD_BP_CURVATURE_MAX, FORD_BP_LATERAL_ACCEL / (SAFETY_MAX(speed_max, 1.0F) * SAFETY_MAX(speed_max, 1.0F)));
     const float relation_low = SAFETY_ABS(shadow) * speed_min * FORD_BP_GAIN_MIN * 2000.0F;
     const float relation_high = SAFETY_ABS(shadow) * speed_max * FORD_BP_GAIN_MAX * 2000.0F;
-    valid &= lateral_controls_allowed() && controls_allowed && ford_bp_health(now) && ford_bp_shadow_seen &&
+    valid &= ford_bp_permission() && ford_bp_health(now) && ford_bp_shadow_seen &&
              (safety_get_ts_elapsed(now, ford_bp_shadow_us) <= FORD_BP_SHADOW_AGE_US) &&
              (path >= -1000) && (path <= 1047) && (SAFETY_ABS(path - ford_bp_path_last) <= delta) &&
              ((path == 0) || ((ford_bp_shadow_raw != 0) && ((path > 0) == (ford_bp_shadow_raw > 0)))) &&

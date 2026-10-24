@@ -1,4 +1,5 @@
 #pragma once
+#include "opendbc/safety/modes/tesla_preap_pedal_transport.h"
 
 static bool panda_ignition_line(void) {
   #ifdef PANDA_IGNORE_IGNITION_LINE

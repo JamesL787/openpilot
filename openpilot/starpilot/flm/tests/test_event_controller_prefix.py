@@ -63,6 +63,7 @@ def fixture(domain='torque', nonzero=False, two_windows=False):
       event = Emission(stamp, stamp, stamp + 1_000_000, witness, 'f' * 64, 'e' * 64, 'a' * 64,
         True, True, False, False, clipped, False, False, 0, 0, '')
       original.emissions.events[event.apply_ns] = event
+      original.emissions.decode_queue.append(event.apply_ns)
       original.emissions.by_control[event.control_ns] = event
   original.records.extend(rows)
   cast(ReplayWindowFixture, original).replay_windows = (((rows[0].control_ns, rows[29].control_ns), (rows[30].control_ns, rows[-1].control_ns))

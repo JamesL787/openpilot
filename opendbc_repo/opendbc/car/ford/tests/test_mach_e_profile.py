@@ -14,15 +14,15 @@ def fingerprint(offset=0, secoc=False):
 
 
 class TestMachEProfile(unittest.TestCase):
-  def test_actual_params_stock_debug_long_and_release_stock(self):
-    for alpha, release, word in ((False, False, 18), (True, False, 19), (False, True, 18), (True, True, 18)):
+  def test_actual_params_stock_debug_long_and_release_long(self):
+    for alpha, release, word in ((False, False, 18), (True, False, 19), (False, True, 18), (True, True, 19)):
       with self.subTest(alpha=alpha, release=release):
         cp = CarInterface.get_params(CAR.FORD_MUSTANG_MACH_E_MK1, fingerprint(), [], alpha, release, False)
         self.assertEqual(cp.safetyConfigs[-1].safetyParam, word)
         self.assertEqual(cp.openpilotLongitudinalControl, word == 19)
         self.assertEqual(cp.alternativeExperience, 0)
         if release:
-          self.assertFalse(cp.alphaLongitudinalAvailable)
+          self.assertTrue(cp.alphaLongitudinalAvailable)
 
   def test_secoc_unrelated_flags_and_ae_do_not_select_extension(self):
     cp = CarInterface.get_params(CAR.FORD_MUSTANG_MACH_E_MK1, fingerprint(secoc=True), [], False, False, False)

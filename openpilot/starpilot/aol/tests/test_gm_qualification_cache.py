@@ -85,3 +85,19 @@ def test_other_brands_keep_fast_rejection_without_cp_serialization():
   cp.brand = 'hyundai'
   assert not aol.qualified_gm(cp)
   assert aol._qualified_gm_bytes.cache_info().currsize == 0
+
+
+def test_f1_owner_checks_topology_before_full_gm_qualification():
+  from openpilot.starpilot.car.gm import aol as host
+  from opendbc.car.gm.values import VOLT_CC_F1_WORD, is_volt_cc_profile
+  count = 0
+  for cp in _configurations():
+    expected = bool(aol.qualified_gm(cp) and host.aol_enabled(cp) and is_volt_cc_profile(cp) and
+                    int(cp.safetyConfigs[0].safetyParam) == VOLT_CC_F1_WORD)
+    with patch.object(host, 'qualified_gm', wraps=aol.qualified_gm) as qualify:
+      assert host.f1_conventional_lateral_owner(cp) == expected
+      assert host.f1_conventional_lateral_owner(cp.as_reader()) == expected
+      if not is_volt_cc_profile(cp):
+        assert qualify.call_count == 0
+    count += 1
+  assert count > 100

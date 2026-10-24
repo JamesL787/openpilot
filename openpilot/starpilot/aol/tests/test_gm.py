@@ -424,7 +424,7 @@ class TestGmAol(unittest.TestCase):
       owner.update(cs, fault_active=True)
       self.assertFalse(owner.allowed_latch)
 
-  def test_actual_card_startup_default_off_and_main_cycle_fault_recovery(self):
+  def test_actual_card_startup_default_off_and_main_level_fault_recovery(self):
     with OpenpilotPrefix(), patch.dict(os.environ, {'SIMULATION': '1', 'AOL_REPLAY_RUNTIME': '0'}):
       settings = Params()
       settings.put_bool('AlwaysOnLateral', False, block=True)  # Explicit Off survives new-install On enrollment.
@@ -455,14 +455,14 @@ class TestGmAol(unittest.TestCase):
       self.assertFalse(selected.aol_card_intent.allowed_latch)
       cs.steerFaultPermanent = False
       selected.aol_card_intent.update(cs, fault_active=False)
-      self.assertFalse(selected.aol_card_intent.allowed_latch)
+      self.assertTrue(selected.aol_card_intent.allowed_latch)
       cs.cruiseState.available = False
       cs.canValid = False
       selected.aol_card_intent.update(cs, fault_active=False)
       cs.cruiseState.available = True
       cs.canValid = True
       selected.aol_card_intent.update(cs, fault_active=False)
-      self.assertFalse(selected.aol_card_intent.allowed_latch)
+      self.assertTrue(selected.aol_card_intent.allowed_latch)
       cs.cruiseState.available = False
       selected.aol_card_intent.update(cs, fault_active=False)
       cs.cruiseState.available = True
@@ -490,7 +490,7 @@ class TestGmAol(unittest.TestCase):
       events.add(log.OnroadEvent.EventName.selfdrivedLagging)
       self.assertTrue(events.contains(ET.NO_ENTRY))
       self.assertTrue(events.contains(ET.SOFT_DISABLE))
-      self.assertTrue(disarming_fault(events.to_msg(), cs))  # Other vehicle owners retain their existing law.
+      self.assertFalse(disarming_fault(events.to_msg(), cs))  # SOFT withdraws output while retaining driver intent.
       for standard in (False, True):
         with patch.object(selected, 'sm', {'onroadEvents': events.to_msg()}):
           fault = selected.aol_disarming_fault(cs, 1_000_000_000, 1_000_000_001)
@@ -529,7 +529,7 @@ class TestGmAol(unittest.TestCase):
       with patch.object(selected, 'CP', denied), patch.object(selected, 'sm', {'onroadEvents': events.to_msg()}):
         self.assertTrue(selected.aol_disarming_fault(cs, 1_200_000_000, 1_200_000_001))
 
-  def test_actual_bolt_card_mixed_lagging_faults_still_require_valid_main_cycle(self):
+  def test_actual_bolt_card_mixed_faults_block_until_explicit_healthy_observation(self):
     from opendbc.car.gm.tests.test_bolt_pedal import params as pedal_params
     from openpilot.cereal import log
     from openpilot.selfdrive.selfdrived.events import Events
@@ -537,7 +537,7 @@ class TestGmAol(unittest.TestCase):
     with OpenpilotPrefix(), patch.dict(os.environ, {'SIMULATION': '1', 'AOL_REPLAY_RUNTIME': '0'}):
       settings = Params()
       settings.put_bool('AlwaysOnLateral', True, block=True)
-      for extra in (log.OnroadEvent.EventName.controlsMismatch, log.OnroadEvent.EventName.processNotRunning, None):
+      for extra in (log.OnroadEvent.EventName.controlsMismatch, log.OnroadEvent.EventName.steerUnavailable, None):
         with self.subTest(extra=extra):
           selected = self.card(pedal_params(CAR.CHEVROLET_BOLT_CC_2018_2021, pedal=True, camera=True), settings)
           cs = structs.CarState(canValid=True, gearShifter='drive', vEgo=20.)
@@ -557,14 +557,14 @@ class TestGmAol(unittest.TestCase):
           self.assertFalse(owner.allowed_latch)
           cs.steerFaultPermanent = False
           owner.update(cs, fault_active=False)
-          self.assertFalse(owner.allowed_latch)
+          self.assertTrue(owner.allowed_latch)
           cs.canValid = False
           cs.cruiseState.available = False
           owner.update(cs, fault_active=False)
           cs.canValid = True
           cs.cruiseState.available = True
           owner.update(cs, fault_active=False)
-          self.assertFalse(owner.allowed_latch)
+          self.assertTrue(owner.allowed_latch)
           cs.cruiseState.available = False
           owner.update(cs, fault_active=False)
           cs.cruiseState.available = True
@@ -579,7 +579,7 @@ class TestGmAol(unittest.TestCase):
       controls = Controls()
       cases = ((None, True), ('temporary', False), (None, True), ('reverse', False),
                ('brake_allowed', True), ('brake_paused', False), ('regen', True),
-               ('permanent', False), (None, False), ('off', False), ('on', True))
+               ('permanent', False), (None, True), ('off', False), ('on', True))
       for tick, (fault, expected) in enumerate(cases):
         now = 1_000_000_000 + tick * 10_000_000
         feed(controls, now, tick, active=False, enabled=False)
@@ -840,7 +840,7 @@ class TestGmAol(unittest.TestCase):
           selected.state_update()
       self.assertFalse(selected.aol_card_intent.allowed_latch)
       selected.aol_card_intent.update(cs, fault_active=False)
-      self.assertFalse(selected.aol_card_intent.allowed_latch)
+      self.assertTrue(selected.aol_card_intent.allowed_latch)
 
 
   def test_actual_controller_inactive_cruise_brake_and_regen_lateral_only(self):
@@ -866,7 +866,7 @@ class TestGmAol(unittest.TestCase):
         requested = []
         for tick in range(18):
           now = 1_000_000_000 + tick * 10_000_000
-          out, sources = feed_car(ci, packer, now, counter=tick % 4, active=False, brake=True, regen=True)
+          out, sources = feed_car(ci, packer, now, counter=tick % 4, active=False, brake=True, regen=True, eps_status=1)
           sources = [source for source in sources if source[0] not in (0x1C4, 0xBE, 0xF1)]
           sources.extend([packer.make_can_msg('AcceleratorPedal2', 0, {'CruiseState': 0}),
                           packer.make_can_msg('ECMAcceleratorPos', 0, {'BrakePedalPos': 12}),
@@ -893,7 +893,7 @@ class TestGmAol(unittest.TestCase):
         self.assertEqual(any(requested), supported)
 
 
-  def test_calibration_recovery_requires_new_main_edge_through_actual_callers(self):
+  def test_calibration_pause_retains_intent_and_recovers_without_new_main_edge(self):
     from openpilot.selfdrive.selfdrived.selfdrived import SelfdriveD
     from openpilot.starpilot.aol.tests.test_runtime import sample_car_state
     from openpilot.selfdrive.selfdrived.state import StateMachine
@@ -919,10 +919,10 @@ class TestGmAol(unittest.TestCase):
         sd.sm = messaging.SubMaster(['aolIntentWire', 'aolSafetyWire', 'modelV2',
                                      'extrinsicsCalibration', 'driverMonitoringState', 'pandaStates'])
         cs = structs.CarState(canValid=True, vEgo=20., gearShifter='drive')
-        for tick, (phase, expected) in enumerate((('unbuckled', True), ('unbuckled', True), ('healthy', True), ('invalid', False), ('recovered', False),
-                                                  ('held', False), ('unmapped_lkas', False), ('unmapped_main', False),
-                                                  ('release_lkas', False), ('main_off', False), ('fault_edge', False),
-                                                  ('recovered_again', False), ('main_off', False), ('new_main', True),
+        for tick, (phase, expected) in enumerate((('unbuckled', True), ('unbuckled', True), ('healthy', True), ('invalid', False), ('recovered', True),
+                                                  ('held', True), ('unmapped_lkas', True), ('unmapped_main', True),
+                                                  ('release_lkas', True), ('main_off', False), ('fault_edge', False),
+                                                  ('recovered_again', True), ('main_off', False), ('new_main', True),
                                                   ('temporary', False), ('healthy', True), ('reverse', False),
                                                   ('healthy', True), ('model_stale', False), ('healthy', True))):
           now = 1_000_000_000 + tick * 10_000_000
@@ -947,8 +947,7 @@ class TestGmAol(unittest.TestCase):
           selected.aol_card_intent.update(cs)
           selected.observe_aol_calibration(cs, now, False)
           self.assertEqual(selected.aol_card_intent.allowed_latch,
-                           phase not in ('invalid', 'recovered', 'held', 'unmapped_lkas', 'unmapped_main', 'release_lkas',
-                                         'main_off', 'fault_edge', 'recovered_again'))
+                           phase != 'main_off')
           intent = messaging.new_message('aolIntentWire', 0, valid=True, logMonoTime=now)
           allowed, pause_lat, pause_long = selected.aol_card_intent.output(cs)
           intent.aolIntentWire = encode_intent(IntentState('card', tick + 1, now, now, now + 30_000_000,
@@ -965,7 +964,7 @@ class TestGmAol(unittest.TestCase):
           sd.sm.update_msgs(now / 1e9, [intent.as_reader(), receipt.as_reader(), model.as_reader(),
                                        calibration.as_reader(), monitoring.as_reader()])
           sd.aol_car_state_log_ns, sd.enabled, sd.active = now, False, False
-          sd.events.clear()
+          sd.events = events
           if cs.seatbeltUnlatched:
             sd.events.add(EventName.seatbeltNotLatched)
             self.assertTrue(sd.events.contains(ET.NO_ENTRY))
@@ -1140,7 +1139,7 @@ class TestGmAol(unittest.TestCase):
           self.exercise_bolt_cancel_recovery(identity, removed)
 
   def test_bolt_cancel_fault_rearm(self):
-    for critical in ('controlsMismatch', 'calibrationInvalid', 'permanentEPS'):
+    for critical in ('controlsMismatch', 'steerUnavailable', 'permanentEPS'):
       with self.subTest(critical=critical):
         self.exercise_bolt_cancel_recovery(CAR.CHEVROLET_BOLT_CC_2018_2021, False, critical=critical)
 
@@ -1150,7 +1149,7 @@ class TestGmAol(unittest.TestCase):
         self.exercise_bolt_cancel_recovery(CAR.CHEVROLET_BOLT_CC_2018_2021, False, communications=event)
 
   def test_bolt_communications_preserves_critical_rearm(self):
-    for critical in ('controlsMismatch', 'calibrationInvalid', 'permanentEPS'):
+    for critical in ('controlsMismatch', 'steerUnavailable', 'permanentEPS'):
       with self.subTest(critical=critical):
         self.exercise_bolt_cancel_recovery(CAR.CHEVROLET_BOLT_CC_2018_2021, False,
                                           critical=critical, communications='commIssueAvgFreq')
@@ -1272,9 +1271,9 @@ class TestGmAol(unittest.TestCase):
           disarm = selected.aol_disarming_fault(cs, int(card_onroad.logMonoTime), now)
           self.assertEqual(disarm, tick in (136, 138, 139), msg=ctx)
           selected.aol_card_intent.update(cs, fault_active=disarm, now_ns=now, standard_enabled=False)
-          expected_latch = main and (tick < 136 or tick >= 142)
+          expected_latch = main and not disarm
           self.assertEqual(selected.aol_card_intent.allowed_latch, expected_latch, msg=ctx)
-          self.assertEqual(selected.aol_card_intent._main_cycle_required, 136 <= tick < 140, msg=ctx)
+          self.assertEqual(selected.aol_card_intent._main_cycle_required, disarm, msg=ctx)
           allowed, pause_lat, pause_long = selected.aol_card_intent.output(cs)
           intent_value = IntentState('card', tick + 1, now, now, now + 200_000_000,
                                      allowed, pause_lat, pause_long, selected.aol_qualified,
@@ -1330,9 +1329,12 @@ class TestGmAol(unittest.TestCase):
             self.assertTrue(sd.aol_authority_lost, msg=ctx)
             self.assertIn(EventName.controlsMismatch, sd.events.names, msg=ctx)
             self.assertFalse(sd.aol_axis_decision.native_acknowledged, msg=ctx)
-          if tick in (136, 137):
+          if tick == 136:
             self.assertFalse(sd.aol_axis_decision.lateral_active, msg=ctx)
             self.assertFalse(selected.aol_card_intent.allowed_latch, msg=ctx)
+          if tick == 137:
+            self.assertTrue(selected.aol_card_intent.allowed_latch, msg=ctx)
+            self.assertTrue(sd.aol_axis_decision.lateral_active, msg=ctx)
           if tick == 142:
             self.assertTrue(sd.aol_axis_decision.lateral_active, msg=ctx)
             self.assertFalse(selected.aol_card_intent._main_cycle_required, msg=ctx)
@@ -1384,7 +1386,7 @@ class TestGmAol(unittest.TestCase):
     self.exercise_volt_ascm_acc_intent()
 
   def test_volt_ascm_mixed_critical_acc_fault_requires_main_cycle(self):
-    for critical in ('controlsMismatch', 'calibrationInvalid', 'permanentEPS'):
+    for critical in ('controlsMismatch', 'steerUnavailable', 'permanentEPS'):
       with self.subTest(critical=critical):
         self.exercise_volt_ascm_acc_intent(critical=critical)
 
@@ -1475,7 +1477,7 @@ class TestGmAol(unittest.TestCase):
           safety.safety_tick()
           safety.set_aol_test_heartbeat(True)
           events = car_events.update(cs, previous, structs.CarControl())
-          if fault and critical in ('controlsMismatch', 'calibrationInvalid'):
+          if fault and critical in ('controlsMismatch', 'steerUnavailable'):
             events.add(getattr(EventName, critical))
           self.assertEqual(EventName.accFaulted in events.names, fault)
           if fault:
@@ -1486,7 +1488,7 @@ class TestGmAol(unittest.TestCase):
           disarm = selected.aol_disarming_fault(cs, now, now)
           self.assertEqual(disarm, bool(fault and critical), (tick, critical))
           selected.aol_card_intent.update(cs, fault_active=disarm, now_ns=now, standard_enabled=ordinary)
-          expected_latch = main and (critical is None or tick < 10 or tick >= 28)
+          expected_latch = main and not disarm
           self.assertEqual(selected.aol_card_intent.allowed_latch, expected_latch, (tick, critical))
           allowed, pause_lat, pause_long = selected.aol_card_intent.output(cs)
           intent_state = IntentState('card', tick + 1, now, now, now + 30_000_000,
@@ -1613,7 +1615,7 @@ class TestGmAol(unittest.TestCase):
           selected.aol_card_intent.update(cs, fault_active=True)
           cs.accFaulted = False
           selected.aol_card_intent.update(cs, fault_active=False)
-          self.assertFalse(selected.aol_card_intent.allowed_latch)
+          self.assertTrue(selected.aol_card_intent.allowed_latch)
         finally:
           selected.vehicle_startup.close()
 

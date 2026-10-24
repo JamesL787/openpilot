@@ -12,6 +12,7 @@ uint32_t microsecond_timer_get(void) {
 
 #include "opendbc/safety/can.h"
 #include "opendbc/safety/safety.h"
+#include "opendbc/safety/modes/tesla_preap_pedal_transport.h"
 #include "opendbc/safety/ignition.h"
 
 // Capture checked internally scheduled CAN frames for native safety tests.
@@ -429,4 +430,29 @@ bool tesla_preap_test_config_word(uint16_t index, uint16_t value) {
 }
 unsigned int tesla_preap_test_config_read(uint8_t *out) {
   return tesla_preap_pedal_config_read(out);
+}
+
+// A real foreign catalog must fail closed instead of acquiring the GV60 heartbeat.
+bool safety_test_hyundai_gv60_catalog_rejection(bool alternate) {
+  bool rejected = false;
+#ifdef ALLOW_DEBUG
+  uint16_t base = 0x15U;
+  uint16_t gv60 = 0x9015U;
+  if (alternate) {
+    base = 0x95U;
+    gv60 = 0x9095U;
+  }
+  const safety_config expected = hyundai_canfd_init(base);
+  const safety_config replacement = hyundai_canfd_init(gv60);
+  const safety_config foreign = hyundai_canfd_init(0x1U);
+  if ((expected.tx_msgs_len > 0) && (replacement.tx_msgs_len > expected.tx_msgs_len) &&
+      (foreign.tx_msgs_len > 0) && (foreign.tx_msgs != expected.tx_msgs)) {
+    const safety_config result = hyundai_canfd_gv60_extend_tx(foreign, expected.tx_msgs, expected.tx_msgs_len,
+                                                            replacement.tx_msgs, replacement.tx_msgs_len);
+    rejected = (result.rx_checks_len == 0) && (result.tx_msgs_len == 0) && !hyundai_canfd_gv60_long;
+  }
+#else
+  (void)alternate;
+#endif
+  return rejected;
 }

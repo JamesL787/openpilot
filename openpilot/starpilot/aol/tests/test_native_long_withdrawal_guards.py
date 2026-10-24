@@ -49,6 +49,19 @@ def invoke(value):
     latched=value.latched, producer=value.producer)
 
 
+
+def assert_early_long_retention_never_grants_long(value):
+  before = dict(vars(value.feedback))
+  admitted = invoke(value)
+  assert admitted is not None and admitted.requestedLateral and admitted.lateralAllowed
+  assert admitted.requestedLongitudinal and not admitted.longitudinalAllowed
+  assert vars(value.feedback) == before
+  axis, _, command = value.drive(11, native_request_lat=True, allowed=True,
+    native_request_long=True, long_allowed=False, panda_controls_allowed=False)
+  assert axis.lateralActive and command.latActive
+  assert not axis.longitudinalActive and not command.longActive
+
+
 def wire(value, native):
   msg = messaging.new_message('aolSafetyWire', 0, valid=True, logMonoTime=native.observedMonoTime)
   msg.aolSafetyWire = encode_safety(native)
@@ -101,7 +114,12 @@ def test_established_proof_state_is_mandatory(actual, field, value):
 ))
 def test_received_axis_proof_guards(actual, field, value):
   setattr(actual.axis, field, value)
-  assert invoke(actual) is None
+  if field in ('mode', 'longitudinalActive'):
+    # The qualified early-LONG owner reads native permission independently of
+    # these historical combined-axis metadata fields. It grants no LONG output.
+    assert_early_long_retention_never_grants_long(actual)
+  else:
+    assert invoke(actual) is None
 
 
 @pytest.mark.parametrize('field', ('canTimeout', 'steerFaultTemporary', 'steerFaultPermanent',
@@ -147,7 +165,10 @@ def test_actual_native_receipt_must_prove_exact_independent_lateral_only_health(
     slots[owner] = replace(slots[owner], **fields[change])
     changed = replace(original, pandaInventory=tuple(slots))
   wire(actual, changed)
-  assert invoke(actual) is None
+  if change == 'owner_controls':
+    assert_early_long_retention_never_grants_long(actual)
+  else:
+    assert invoke(actual) is None
 
 
 @pytest.mark.parametrize('change', ('controls', 'rx', 'heartbeat', 'fault', 'param'))
@@ -162,7 +183,10 @@ def test_latest_panda_veto_stays_independent(actual, change):
     'param': ('safetyParam', int(message.pandaStates[owner].safetyParam) ^ 1)}[change]
   setattr(message.pandaStates[owner], field, value)
   actual.sm.update_msgs(actual.now / 1e9, [message.as_reader()])
-  assert invoke(actual) is None
+  if change == 'controls':
+    assert_early_long_retention_never_grants_long(actual)
+  else:
+    assert invoke(actual) is None
 
 
 @pytest.mark.parametrize('kind', ('immediateDisable', 'softDisable', 'userDisable'))

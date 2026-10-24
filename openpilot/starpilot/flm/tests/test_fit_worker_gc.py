@@ -9,7 +9,7 @@ from typing import NoReturn, cast
 
 import pytest
 
-from openpilot.starpilot.flm import fit_worker
+from openpilot.starpilot.flm import fit_worker, native_primitives
 
 
 @pytest.fixture
@@ -18,8 +18,13 @@ def worker_io(monkeypatch):
   incoming, outgoing = io.BytesIO(b'{"test":true}'), io.BytesIO()
   monkeypatch.setattr(fit_worker, 'sys', SimpleNamespace(platform='darwin',
     stdin=SimpleNamespace(buffer=incoming), stdout=SimpleNamespace(buffer=outgoing)))
+  # Both worker modules use the same explicitly simulated macOS context.
+  # Linux native-worker resource guards remain real in their own tests.
+  monkeypatch.setattr(native_primitives, 'sys', fit_worker.sys)
   monkeypatch.setattr(fit_worker.os, 'nice', lambda _: None)
   monkeypatch.setattr(fit_worker.os, 'sched_setscheduler', lambda *args: None, raising=False)
+  monkeypatch.setattr(fit_worker.os, 'SCHED_OTHER', 0, raising=False)
+  monkeypatch.setattr(fit_worker.os, 'sched_param', lambda priority: SimpleNamespace(sched_priority=priority), raising=False)
   limits = []
   monkeypatch.setattr(fit_worker.resource, 'getrlimit', lambda kind: (-1, -1))
   monkeypatch.setattr(fit_worker.resource, 'setrlimit', lambda *args: limits.append(args))

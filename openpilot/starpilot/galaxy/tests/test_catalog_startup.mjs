@@ -22,6 +22,9 @@ for (const invalid of [null, {}, { mode: "offline-preview", tools: [{ path: "/lo
   await assert.rejects(loadCatalog({ fetcher: async path => response(path.includes("catalog") ? invalid :
     { schemaVersion: 1, monitor: "local" }) }), /Invalid Galaxy catalog/)
 }
+await assert.rejects(loadCatalog({ fetcher: async path => response(path.includes("catalog") ?
+  { ...catalog, tools: [{ ...catalog.tools[0], children: [{ name: "Broken", path: "outside", icon: "bi-x", description: "Invalid route" }] }] } :
+  { schemaVersion: 1, monitor: "local" }) }), /Invalid Galaxy catalog/)
 await assert.rejects(loadCatalog({ fetcher: async path => response(path.includes("catalog") ? catalog :
   { schemaVersion: 2, monitor: "local" }) }), /Invalid Galaxy runtime/)
 await assert.rejects(requestJson("/test", { fetcher: async () => ({ ok: false }) }), /could not be reached/)

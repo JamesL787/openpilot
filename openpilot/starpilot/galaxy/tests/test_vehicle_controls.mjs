@@ -172,3 +172,9 @@ assert.equal(settings.data, null)
 assert.equal(settingStates.at(-1).status, "unavailable")
 assert.equal(settingRequests.length, 5)
 settings.stop()
+
+// Alpha speed-control choices share the existing vehicle SettingsPage gateway.
+assert.match(VehicleControlsPage.template, /initial-page="vehicle"/)
+const alpha = { ...toggle, label: "Alpha Longitudinal" }
+assert.equal(settingControl(alpha), "switch")
+assert.equal(settingControl({ ...alpha, value: "On" }), "switch")

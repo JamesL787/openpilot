@@ -16,6 +16,17 @@ class TestFordAolAdmission(unittest.TestCase):
     self.safety.set_alternative_experience(0)
     self.safety.set_safety_hooks(structs.CarParams.SafetyModel.noOutput, 0)
 
+  def test_angle_profiles_reject_malformed_lateral_frames_without_healthy_sources(self):
+    for word in (128, 129, 130, 131):
+      with self.subTest(word=word):
+        self.safety.init_tests()
+        self.safety.set_alternative_experience(0)
+        self.assertEqual(self.safety.set_safety_hooks(structs.CarParams.SafetyModel.ford, word), 0)
+        self.safety.set_controls_allowed(False)
+        for address in (0x3CA, 0x3D3 if word & 2 else 0x3D6):
+          self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(address, 0, bytes(8))))
+        self.assertFalse(self.safety.get_controls_allowed())
+
   def test_no_frames_no_lateral_or_longitudinal_authority(self):
     for word in (8, 9, 10, 11, 12, 13, 18, 19, 32, 33, 66, 67):
       for ae in (0, 32, 33):
@@ -31,7 +42,8 @@ class TestFordAolAdmission(unittest.TestCase):
 
 
 class TestFordAolDriverIntent(unittest.TestCase):
-  PROFILES = (32, 8, 10, 12, 18, 66)
+  BASE_PROFILES = (8, 9, 10, 11, 12, 13, 18, 19, 32, 33, 66, 67)
+  PROFILES = BASE_PROFILES + tuple(word | 256 for word in BASE_PROFILES)
 
   def setUp(self):
     from opendbc.can import CANPacker
@@ -56,8 +68,12 @@ class TestFordAolDriverIntent(unittest.TestCase):
     self.assertTrue(self.safety.safety_rx_hook(libsafety_py.make_CANPacket(address, bus, data)))
 
   def pump(self, count, *, main=3, tja=False, gear=3, eps=0, mask=0, heartbeat=True, speed=10., curvature=0.):
-    gear_name, gear_signal = ('TransGearData', 'GearLvrPos_D_Actl') if self.word == 8 else (
-      ('Gear_Shift_by_Wire_FD1', 'TrnRng_D_RqGsm') if self.word == 10 else ('PowertrainData_10', 'TrnRng_D_Rq'))
+    base = self.word & ~(257 | 128)
+    gear_name, gear_signal = ('TransGearData', 'GearLvrPos_D_Actl') if base == 8 else (
+      ('Gear_Shift_by_Wire_FD1', 'TrnRng_D_RqGsm') if base == 10 else ('PowertrainData_10', 'TrnRng_D_Rq'))
+    if self.word & 256:
+      gear_name, gear_signal = 'BCM_Lamp_Stat_FD1', 'RvrseLghtOn_B_Stat'
+      gear = int(gear == 1)
     for _ in range(count):
       self.tick += 1
       self.safety.set_timer(1_000_000 + self.tick * 10_000)
@@ -76,7 +92,7 @@ class TestFordAolDriverIntent(unittest.TestCase):
       for name, hz, fields in values:
         if self.tick * hz // 100 != (self.tick - 1) * hz // 100:
           self.rx(name, fields)
-      if (self.word & ~1) in (10, 12, 18, 66) and self.tick * 30 // 100 != (self.tick - 1) * 30 // 100:
+      if base in (10, 12, 18, 66) and self.tick * 30 // 100 != (self.tick - 1) * 30 // 100:
         self.rx('Lane_Assist_Data3_FD1', {'LatCtlSte_D_Stat': 1, 'LaActAvail_D_Actl': 3, 'LaActDeny_B_Actl': 0})
       self.safety.aol_set_host_request(mask)
       self.safety.aol_get_permission_mask()

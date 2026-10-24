@@ -107,7 +107,7 @@ export const FlmPage = {
           <p>Steering input checks: {{ readable(tracking.modelStatus) }} · Steering delay: {{ measurementText(tracking.lagMs) }}<template v-if="tracking.lagMs !== null"> ms</template></p>
           <div class="gx-flm__table-wrap"><table class="gx-flm__table" aria-label="Observed tracking before and after the correction trial">
             <thead><tr><th scope="col">Observed measurement</th><th scope="col">Before trial</th><th scope="col">Future trial episodes</th></tr></thead>
-            <tbody><tr v-for="row in tracking.measurements" :key="row.label"><th scope="row">{{ row.label }}</th><td>{{ measurementText(row.before) }}</td><td>{{ measurementText(row.future) }}</td></tr></tbody>
+            <tbody><tr v-for="row in tracking.measurements" :key="row.label"><th scope="row">{{ row.label }}</th><td data-label="Before trial">{{ measurementText(row.before) }}</td><td data-label="Future trial episodes">{{ measurementText(row.future) }}</td></tr></tbody>
           </table></div>
           <div v-if="trackingPlot">
             <h4>Latest completed delay-paired steering episode</h4>
@@ -129,7 +129,7 @@ export const FlmPage = {
         <p class="gx-note">Speed-window coordinates multiply their original baseline by (1 + correction). Deadband and angle-assist coordinates use the controller’s physical normalizer. Raw degrees, torque and manual tune values are not published by this report.</p>
         <div class="gx-flm__table-wrap" tabindex="0" role="region" aria-label="All 30 steering correction parameters"><table class="gx-flm__table">
           <thead><tr><th scope="col">Parameter</th><th scope="col">Baseline</th><th scope="col">{{ trackingValues ? 'Accepted baseline' : 'Learned proposal' }}</th><th v-if="trackingValues" scope="col">Pending trial target</th><th scope="col">Currently applied</th><th scope="col">Support</th></tr></thead>
-          <tbody><tr v-for="row in rows" :key="row.name"><th scope="row">{{ readable(row.name) }}</th><td>{{ coordinateText(row.baseline) }}</td><td>{{ coordinateText(trackingValues ? row.accepted : row.learned) }}</td><td v-if="trackingValues">{{ coordinateText(row.pending) }}</td><td>{{ coordinateText(row.applied) }}</td><td>{{ row.pidSupported ? 'Torque / torque-actuated PID' : 'Torque; PID unsupported (no friction stage)' }}</td></tr></tbody>
+          <tbody><tr v-for="row in rows" :key="row.name"><th scope="row">{{ readable(row.name) }}</th><td data-label="Baseline">{{ coordinateText(row.baseline) }}</td><td :data-label="trackingValues ? 'Accepted baseline' : 'Learned proposal'">{{ coordinateText(trackingValues ? row.accepted : row.learned) }}</td><td v-if="trackingValues" data-label="Pending trial target">{{ coordinateText(row.pending) }}</td><td data-label="Currently applied">{{ coordinateText(row.applied) }}</td><td data-label="Support">{{ row.pidSupported ? 'Torque / torque-actuated PID' : 'Torque; PID unsupported (no friction stage)' }}</td></tr></tbody>
         </table></div>
         <p class="gx-note">All 30 parameters have torque stages; 26 have torque-actuated PID stages. The four friction thresholds have no PID friction measurement stage. Support describes controller capability; it does not establish a validated fit. Missing values remain “Not reported”.</p>
       </section>

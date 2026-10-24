@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { SentryEventsFeed, SentryEventsPage, validSentryEvents } from '../web/js/sentry.js'
 import { CamerasPage } from '../web/js/cameras.js'
+const cameraTools = JSON.parse(readFileSync(new URL('../web/data/catalog.json', import.meta.url), 'utf8'))
+  .tools.find(tool => tool.path === '/cameras').children
 
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve() }
 const eventId = 'a'.repeat(32)
@@ -17,7 +19,8 @@ assert.equal(validSentryEvents({ ...inventory, source: 'remote' }), false)
 assert.match(SentryEventsPage.template, /device clock and may be inaccurate/)
 assert.match(SentryEventsPage.template, /<img[^>]*event.images[^>]*api\/sentry\/image\//)
 assert.doesNotMatch(SentryEventsPage.template, /v-html|deleteEvent|Download/)
-assert.match(CamerasPage.template, /View motion events/)
+assert.match(CamerasPage.template, /MenuTile v-for="tool in tools"/)
+assert.match(cameraTools.find(tool => tool.path === "/cameras/events").description, /View motion events/)
 const app = readFileSync(new URL('../web/js/app.js', import.meta.url), 'utf8')
 assert.match(app, /SentryEventsPage[^>]*\/cameras\/events[^>]*\/cameras\/sentry-settings/)
 

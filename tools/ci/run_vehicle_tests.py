@@ -19,11 +19,62 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tools import test_runner
-from tools.ci import vehicle_pytest
+from tools.ci import lifecycle_shards, vehicle_pytest
 
 # Representative production callers plus their source/native refusal cases.
 # The emitted selected_test_ids record exact parametrized configurations.
 AOL_LIFECYCLE_TARGETS = (
+  'openpilot/starpilot/tests/test_ford_bluepilot_aol.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_bluepilot_aol.py',
+  'openpilot/starpilot/aol/tests/test_hkg_early_long_withdrawal.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_stock.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_stock_callers.py',
+  'opendbc_repo/opendbc/car/toyota/tests/test_matrix_filter.py',
+  'openpilot/starpilot/car/toyota/tests/test_matrix_filter_callers.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_factory.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_callers.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_fw.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_fw_callers.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_refusals.py',
+  'openpilot/starpilot/car/toyota/tests/test_radar_lta_pedal.py',
+  'openpilot/starpilot/car/toyota/tests/test_radar_lta_pedal_callers.py',
+  'openpilot/starpilot/car/toyota/tests/test_rav4h_pedal_composite.py',
+  'openpilot/starpilot/car/toyota/tests/test_rav4h_pedal_composite_callers.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_rav4h_pedal_composite.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_rav4h_pedal_order.py',
+  'openpilot/starpilot/car/toyota/tests/test_dsu_bypass.py',
+  'openpilot/starpilot/car/toyota/tests/test_dsu_bypass_callers.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_dsu_bypass.py',
+  'openpilot/starpilot/car/toyota/tests/test_pedal_parent_configurations.py',
+  'openpilot/starpilot/car/toyota/tests/test_pedal_parent_callers.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_pedal_parent.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_radar_lta_pedal.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_prius_retrofit_advert.py',
+  'openpilot/starpilot/aol/tests/test_crossmake_native_admission.py',
+  'openpilot/starpilot/aol/tests/test_hkg_source_policy_cache.py',
+  'openpilot/starpilot/flm/tests/test_controls_capture_startup.py',
+  'openpilot/starpilot/aol/tests/test_hkg_deadline_admission_cache.py',
+  'openpilot/starpilot/aol/tests/test_hkg_native_admission.py',
+  'openpilot/starpilot/aol/tests/test_native_observation_admission.py',
+  'openpilot/starpilot/aol/tests/test_forte_physical_arm_join.py',
+  'opendbc_repo/opendbc/car/ford/tests/test_mache_display_handoff.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_mache_display.py',
+  'openpilot/starpilot/aol/tests/test_hkg_cancel_joined.py',
+  'openpilot/starpilot/aol/tests/test_gv70_two_panda_long.py',
+  'openpilot/starpilot/longitudinal/tests/test_gv70_stopping_parity.py',
+
+  'opendbc_repo/opendbc/safety/tests/test_hyundai_angle_tx_recovery.py',
+  'openpilot/starpilot/aol/tests/test_stock_angle_physical_recovery.py',
+  'openpilot/starpilot/tests/test_ford_configuration_parity.py',
+  'openpilot/starpilot/tests/test_ford_configuration_admission.py',
+  'openpilot/starpilot/tests/test_ford_release_long_preferences.py',
+  'openpilot/selfdrive/car/tests/test_registered_ford_discovery.py',
+  'openpilot/starpilot/tests/test_ford_ci_registration.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_configuration_parity.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_alpha_aol.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_full_engagement.py',
+  'opendbc_repo/opendbc/safety/tests/test_hkg_mode_parity.py',
+  'opendbc_repo/opendbc/safety/tests/test_pe_stopped_callers.py',
   'opendbc_repo/opendbc/safety/tests/test_pe_combined_callers.py',
   'opendbc_repo/opendbc/safety/tests/test_pe_set_release_callers.py',
   'openpilot/starpilot/aol/tests/test_pe_combined_profile_contract.py',
@@ -38,8 +89,17 @@ AOL_LIFECYCLE_TARGETS = (
   "openpilot/starpilot/aol/tests/test_native_inventory_control_cadence.py",
   "openpilot/starpilot/aol/tests/test_gm.py",
   "openpilot/starpilot/aol/tests/test_gm_steering_receive_order.py",
+  "openpilot/starpilot/aol/tests/test_gm_card_source_gap.py",
+  "openpilot/starpilot/aol/tests/test_gm_sdgm_cold_main.py",
+  "openpilot/starpilot/aol/tests/test_gm_main_level_contract.py",
+  "openpilot/starpilot/aol/tests/test_gm_sdgm_source_wait.py",
+  "openpilot/starpilot/aol/tests/test_gm_ascm_receive_order.py",
   "openpilot/starpilot/aol/tests/test_gm_main_response.py",
   "openpilot/starpilot/aol/tests/test_gm_held_native.py",
+  'openpilot/starpilot/longitudinal/tests/test_volt_mode_transition.py',
+  'openpilot/starpilot/aol/tests/test_gm_route1c_receive_order.py',
+
+  "openpilot/starpilot/aol/tests/test_gm_ordinary_warning.py",
   "openpilot/starpilot/aol/tests/test_gm_startup_main.py",
   "openpilot/starpilot/aol/tests/test_gm_pedal_order.py",
   "openpilot/starpilot/aol/tests/test_gm_cancel_remap.py",
@@ -70,10 +130,32 @@ AOL_LIFECYCLE_TARGETS = (
   "openpilot/starpilot/aol/tests/test_chrysler.py",
   "openpilot/starpilot/aol/tests/test_toyota.py",
   "openpilot/starpilot/car/toyota/tests/test_lexus_is_caller_native.py",
+  "openpilot/starpilot/car/toyota/tests/test_legacy_stop_timer.py",
+  "openpilot/starpilot/car/toyota/tests/test_legacy_stop_timer_callers.py",
+  "openpilot/starpilot/car/toyota/tests/test_camera_2aa_filter.py",
+  "openpilot/starpilot/car/toyota/tests/test_camera_2aa_callers.py",
+  "openpilot/starpilot/car/toyota/tests/test_camera_2aa_native.py",
+  "openpilot/starpilot/car/toyota/tests/test_prius_sdsu_filter.py",
+  "openpilot/starpilot/car/toyota/tests/test_prius_sdsu_callers.py",
+  "opendbc_repo/opendbc/safety/tests/test_toyota_prius_sdsu.py",
+  "openpilot/starpilot/car/toyota/tests/test_prius_advert_filter.py",
+  "openpilot/starpilot/car/toyota/tests/test_prius_advert_callers.py",
+  "opendbc_repo/opendbc/safety/tests/test_toyota_prius_advert.py",
+  "openpilot/starpilot/car/toyota/tests/test_prius_advert_ci.py",
+  "openpilot/starpilot/car/toyota/tests/test_legacy_advert_filter.py",
+  "openpilot/starpilot/car/toyota/tests/test_legacy_advert_callers.py",
+  "openpilot/starpilot/car/toyota/tests/test_legacy_advert_native.py",
+  "openpilot/starpilot/car/toyota/tests/test_legacy_advert_lateral.py",
   "openpilot/starpilot/car/nissan/tests/test_aol.py",
   "openpilot/starpilot/aol/tests/test_volkswagen.py",
   "openpilot/starpilot/aol/tests/test_volkswagen_saved_intent.py",
   "openpilot/starpilot/aol/tests/test_mqb_actual_callers.py",
+  "openpilot/starpilot/aol/tests/test_meb_actual_callers.py",
+  "opendbc_repo/opendbc/car/volkswagen/tests/test_meb_preferences.py",
+  "opendbc_repo/opendbc/car/volkswagen/tests/test_meb_discovery.py",
+  "opendbc_repo/opendbc/car/volkswagen/tests/test_meb_stock_modes.py",
+  "openpilot/starpilot/ui/tests/test_meb_preferences.py",
+  "openpilot/starpilot/aol/tests/test_mqb_direct_callers.py",
   "openpilot/starpilot/aol/tests/test_mqb_topology_callers.py",
   "openpilot/starpilot/aol/tests/test_mqb_topology_contract.py",
   "opendbc_repo/opendbc/car/volkswagen/tests/test_mqb_topology_discovery.py",
@@ -81,6 +163,8 @@ AOL_LIFECYCLE_TARGETS = (
   "opendbc_repo/opendbc/safety/tests/test_volkswagen_stock_aol.py",
   "opendbc_repo/opendbc/safety/tests/test_volkswagen_engagement_arm.py",
   "opendbc_repo/opendbc/safety/tests/test_volkswagen_long_aol.py",
+  "opendbc_repo/opendbc/safety/tests/test_meb_aol.py",
+  "opendbc_repo/opendbc/safety/tests/test_volkswagen_direct_aol.py",
   "openpilot/starpilot/aol/tests/test_volkswagen_main_boot.py",
   "openpilot/starpilot/car/subaru/tests/test_aol.py",
   "openpilot/starpilot/car/subaru/tests/test_reverse_join.py",
@@ -99,14 +183,27 @@ AOL_LIFECYCLE_TARGETS = (
   "openpilot/starpilot/car/subaru/tests/test_avh_callers.py",
   "opendbc_repo/opendbc/safety/tests/test_subaru_avh_startup.py",
   "openpilot/starpilot/car/subaru/tests/test_angle_tune.py",
+  "openpilot/starpilot/car/subaru/tests/test_forester_angle_callers.py",
+  "opendbc_repo/opendbc/safety/tests/test_subaru_forester_angle.py",
+  "openpilot/starpilot/car/subaru/tests/test_outback_angle_callers.py",
+  "openpilot/starpilot/car/subaru/tests/test_outback_startup_callers.py",
+  "openpilot/starpilot/car/subaru/tests/test_smoothing.py",
+  "openpilot/starpilot/car/subaru/tests/test_smoothing_factory.py",
+  "openpilot/starpilot/car/subaru/tests/test_smoothing_settings.py",
+  "openpilot/starpilot/car/subaru/tests/test_smoothing_model_join.py",
+  "opendbc_repo/opendbc/safety/tests/test_subaru_outback_angle.py",
+  'openpilot/starpilot/car/toyota/tests/test_matrix_stock_caller_native.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_matrix_stock_aol.py',
 )
 
 AOL_LIFECYCLE_SCOPE = {
+  "ford": "14 stock/Alpha identities, RELEASE CAN-FD Alpha, auto/manual, one/two Pandas; actual acquisition and caller/native lifecycle guards",
   "rivian": ("GEN1 base stock/DEBUG Alpha: actual factory/Card/SD/Controls/native engagement, brake LAT-only, gas, standstill zero output, " +
              "Reverse/Drive, temporary ToI recovery and physical UP_1 cancel; GEN2/unknown profiles refused"),
   "mazda": ("CX5 2022/CX9 2021 GEN1 stock AE32: engagement/brake/Cancel pause/toggle/Reverse/standstill/EPS recovery; " +
             "native permanent-fault rearm vetoes"),
-  "subaru": "nine stock global identities; five actual factory-to-native lifecycles, brake, Reverse/Drive, EPS recovery, MAIN-off and refusal guards",
+  "subaru": ("eleven stock global identities; automatic/manual and AOL on/off factory-to-native lifecycles, " +
+               "startup requests, frozen smoothing, brake, Reverse/Drive, EPS recovery, MAIN-off and refusal guards"),
   "volkswagen": "stock MQB auto/manual, gateway/camera factory acquisition, MAIN/engagement/brake/Reverse joins, permanent EPS native rearm",
   "gm": "Volt/Bolt factory profiles, MAIN boot, stock/Alpha, BE/C9, pedal/regen, Cancel mappings, RES, lag withdrawal/recovery",
   "honda": "stock Civic source/native vetoes, native-first Reverse joins, and EPS-recovery/Reverse/Drive native TX lifecycle",
@@ -117,6 +214,7 @@ AOL_LIFECYCLE_SCOPE = {
 }
 
 DEBUG_SAFETY_CLASS_TARGETS = {
+  'opendbc_repo/opendbc/safety/tests/test_hyundai_gv60_long.py': ('opendbc_repo/opendbc/safety/tests/test_hyundai_gv60_long.py::TestGV60LongDebug',),
   'opendbc_repo/opendbc/safety/tests/test_pe_combined_aol.py': ('opendbc_repo/opendbc/safety/tests/test_pe_combined_aol.py::TestPECombinedDebug',),
   "opendbc_repo/opendbc/safety/tests/test_ev9_combined_aol.py": ("opendbc_repo/opendbc/safety/tests/test_ev9_combined_aol.py::TestEV9CombinedDebug",),
   "opendbc_repo/opendbc/safety/tests/test_hyundai_ev9_long.py": (
@@ -137,6 +235,44 @@ DEBUG_SAFETY_CLASS_TARGETS = {
 
 
 RELEASE_TARGETS = (
+  'openpilot/starpilot/tests/test_ford_bluepilot_aol.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_bluepilot_aol.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_stock.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_stock_callers.py',
+  'opendbc_repo/opendbc/car/toyota/tests/test_matrix_filter.py',
+  'openpilot/starpilot/car/toyota/tests/test_matrix_filter_callers.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_factory.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_callers.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_fw.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_fw_callers.py',
+  'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_refusals.py',
+  'openpilot/starpilot/car/toyota/tests/test_radar_lta_pedal.py',
+  'openpilot/starpilot/car/toyota/tests/test_radar_lta_pedal_callers.py',
+  'openpilot/starpilot/car/toyota/tests/test_rav4h_pedal_composite.py',
+  'openpilot/starpilot/car/toyota/tests/test_rav4h_pedal_composite_callers.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_rav4h_pedal_composite.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_rav4h_pedal_order.py',
+  'openpilot/starpilot/car/toyota/tests/test_dsu_bypass.py',
+  'openpilot/starpilot/car/toyota/tests/test_dsu_bypass_callers.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_dsu_bypass.py',
+  'openpilot/starpilot/car/toyota/tests/test_pedal_parent_configurations.py',
+  'openpilot/starpilot/car/toyota/tests/test_pedal_parent_callers.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_pedal_parent.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_radar_lta_pedal.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_prius_retrofit_advert.py',
+  'opendbc_repo/opendbc/car/hyundai/tests/test_long_cp_copy.py',
+  'opendbc_repo/opendbc/car/ford/tests/test_mache_display_handoff.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_mache_display.py',
+  "opendbc_repo/opendbc/safety/tests/test_toyota_prius_advert.py",
+  'opendbc_repo/opendbc/safety/tests/test_hyundai_gv60_long.py::TestGV60LongReleaseDenied',
+  'openpilot/starpilot/tests/test_ford_configuration_parity.py',
+  'openpilot/starpilot/tests/test_ford_configuration_admission.py',
+  'openpilot/starpilot/tests/test_ford_release_long_preferences.py',
+  'openpilot/selfdrive/car/tests/test_registered_ford_discovery.py',
+  'openpilot/starpilot/tests/test_ford_ci_registration.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_configuration_parity.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_alpha_aol.py',
+  'opendbc_repo/opendbc/safety/tests/test_ford_full_engagement.py',
   'opendbc_repo/opendbc/safety/tests/test_pe_combined_aol.py::TestPECombinedReleaseDenied',
   'openpilot/starpilot/aol/tests/test_pe_combined_profile_contract.py',
   'opendbc_repo/opendbc/safety/tests/test_palisade_stock_aol_status.py',
@@ -203,6 +339,7 @@ RELEASE_TARGETS = (
   "openpilot/starpilot/aol/tests/test_sonata_irq_policy.py",
   "opendbc_repo/opendbc/car/hyundai/tests/test_classic_aol_dash.py",
   "opendbc_repo/opendbc/car/hyundai/tests/test_g90_continuity.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_classic_deferred_takeover.py",
   "opendbc_repo/opendbc/car/hyundai/tests/test_disable_response.py",
   "openpilot/starpilot/aol/tests/test_angle_stop_native_feedback.py",
   "openpilot/starpilot/aol/tests/test_angle_stop_fault_guards.py",
@@ -246,7 +383,7 @@ RELEASE_TARGETS = (
   "openpilot/starpilot/tests/test_ford_aol_intent.py",
   "opendbc_repo/opendbc/safety/tests/test_ford_aol.py",
   "opendbc_repo/opendbc/safety/tests/test_ford_mach_e_extended.py::TestFordMachEExtended",
-  "opendbc_repo/opendbc/safety/tests/test_ford_mach_e_extended.py::TestFordMachELongReleaseDenied",
+  "opendbc_repo/opendbc/safety/tests/test_ford_mach_e_extended.py::TestFordMachELongReleaseExtended",
   "opendbc_repo/opendbc/car/ford/tests/test_added_firmware_identity.py",
   "opendbc_repo/opendbc/car/ford/tests/test_required_source_health.py",
   "opendbc_repo/opendbc/car/ford/tests/test_blend_settings.py",
@@ -300,6 +437,8 @@ RELEASE_TARGETS = (
   "opendbc_repo/opendbc/safety/tests/test_volkswagen_stock_aol.py",
   "opendbc_repo/opendbc/safety/tests/test_volkswagen_engagement_arm.py",
   "opendbc_repo/opendbc/safety/tests/test_volkswagen_long_aol.py",
+  "opendbc_repo/opendbc/safety/tests/test_meb_aol.py",
+  "opendbc_repo/opendbc/safety/tests/test_volkswagen_direct_aol.py",
   "openpilot/starpilot/aol/tests/test_volkswagen_main_boot.py",
   "opendbc_repo/opendbc/safety/tests/test_mazda.py::TestMazdaSafety",
   "opendbc_repo/opendbc/safety/tests/test_toyota.py::TestToyotaStockLongitudinalTorque",
@@ -347,6 +486,7 @@ RELEASE_TARGETS = (
   "opendbc_repo/opendbc/car/gm/tests/test_volt_camera_removed.py",
   "opendbc_repo/opendbc/safety/tests/test_gm_volt_sdgm.py",
   "opendbc_repo/opendbc/car/gm/tests/test_volt_sdgm_control.py",
+  "opendbc_repo/opendbc/car/gm/tests/test_sdgm_brake_reacquire.py",
   "opendbc_repo/opendbc/car/gm/tests/test_volt_camera_control.py",
   "opendbc_repo/opendbc/safety/tests/test_hyundai_mrr35_angle_four.py",
   "opendbc_repo/opendbc/safety/tests/test_kia_ev6_2025_angle.py",
@@ -374,6 +514,11 @@ RELEASE_TARGETS = (
   "opendbc_repo/opendbc/safety/tests/test_subaru_sng.py",
   "opendbc_repo/opendbc/safety/tests/test_subaru_stop_start.py",
   "opendbc_repo/opendbc/safety/tests/test_subaru_avh_startup.py",
+  "opendbc_repo/opendbc/safety/tests/test_subaru_forester_angle.py",
+  "opendbc_repo/opendbc/safety/tests/test_subaru_receive_guards.py",
+  "opendbc_repo/opendbc/safety/tests/test_subaru_outback_angle.py",
+  'openpilot/starpilot/car/toyota/tests/test_matrix_stock_caller_native.py',
+  'opendbc_repo/opendbc/safety/tests/test_toyota_matrix_stock_aol.py',
 )
 
 # Vehicle tests import both the vendored car code and these host control owners.
@@ -392,7 +537,7 @@ SOURCE_INPUT_PATHS = (
 
 def source_input_snapshot():
   def git(*args):
-    return subprocess.check_output(["git", *args], cwd=ROOT)
+    return subprocess.check_output(["git", "--no-optional-locks", "-c", "gc.auto=0", "-c", "maintenance.auto=false", *args], cwd=ROOT)
 
   untracked = {}
   for raw_path in git("ls-files", "--others", "--exclude-standard", "-z", "--", *SOURCE_INPUT_PATHS).split(b"\0"):
@@ -401,7 +546,7 @@ def source_input_snapshot():
       path = ROOT / name
       data = os.fsencode(os.readlink(path)) if path.is_symlink() else path.read_bytes()
       untracked[name] = hashlib.sha256(data).hexdigest()
-  patch_bytes = git("diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--", *SOURCE_INPUT_PATHS)
+  patch_bytes = git("diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--", *SOURCE_INPUT_PATHS)
   return {"revision": git("rev-parse", "HEAD").decode().strip(), "paths": list(SOURCE_INPUT_PATHS),
           "tracked_patch_sha256": hashlib.sha256(patch_bytes).hexdigest(), "untracked_sha256": untracked}
 
@@ -507,13 +652,14 @@ def vehicle_inventory():
 
 def source_provenance():
   def git(*args):
-    return subprocess.check_output(["git", *args], cwd=ROOT).decode().strip()
+    return subprocess.check_output(["git", "--no-optional-locks", "-c", "gc.auto=0", "-c", "maintenance.auto=false", *args], cwd=ROOT).decode().strip()
   manifest = ROOT / "upstream-sync.json"
   return {"revision": git("rev-parse", "HEAD"), "status": git("status", "--porcelain"),
           "inputs": source_input_snapshot(),
           "manifest_sha256": sha256(manifest), "dependencies": json.loads(manifest.read_text())["dependencies"],
           "runner_sha256": sha256(ROOT / "tools/test_runner.py"), "suite_runner_sha256": sha256(__file__),
-          "pytest_runner_sha256": sha256(ROOT / "tools/ci/vehicle_pytest.py")}
+          "pytest_runner_sha256": sha256(ROOT / "tools/ci/vehicle_pytest.py"),
+          "shard_runner_sha256": sha256(ROOT / "tools/ci/lifecycle_shards.py")}
 
 
 def native_provenance():
@@ -569,7 +715,9 @@ def build_aol_protocol(output):
   return {"command": command, "path": str(executable), "sha256": sha256(executable)}
 
 
-def run(suite, output, collect_only=False):
+def run(suite, output, collect_only=False, shard_index=None, shard_count=4):
+  if shard_index is not None and (suite not in ("aol-lifecycle", "safety-release") or not 0 <= shard_index < shard_count):
+    raise ValueError("Lifecycle shard index is outside its catalog")
   output = Path(output).resolve()
   output.mkdir(parents=True, exist_ok=True)
   started = time.monotonic()
@@ -583,7 +731,7 @@ def run(suite, output, collect_only=False):
                         "independent lateral/longitudinal feature transitions", "device firmware execution"],
           "targets": [], "selected_test_ids": [], "collection_errors": [],
           "fuzz_seed": os.environ.get("FUZZ_SEED"), "max_examples_override": os.environ.get("MAX_EXAMPLES")}
-  if suite == "aol-lifecycle":
+  if suite in ("aol-lifecycle", "safety-release"):
     plan["scope"] = "selected actual vehicle callers with synthetic receive/readiness timelines; native hooks where exercised by the selected suites"
     plan["lifecycle_rows"] = AOL_LIFECYCLE_SCOPE
     plan["uncovered"] = ["complete recorded routes and real-time device deadlines", "physical firmware/harness acceptance",
@@ -595,12 +743,19 @@ def run(suite, output, collect_only=False):
   try:
     plan["targets"] = targets_for(suite)
     plan["source"] = source_provenance()
+    if suite in ("aol-lifecycle", "safety-release"):
+      plan["source"]["build_identity"] = lifecycle_shards.build_identity(ROOT)
     plan.update(vehicle_inventory())
     plan["native"] = native_provenance()
     if suite != "interfaces" and not collect_only:
       plan["native"]["safety"] = build_safety_library(suite == "safety-release", output)
     if suite == "aol-lifecycle" and not collect_only:
       plan["native"]["aol_protocol"] = build_aol_protocol(output)
+    if suite in ("aol-lifecycle", "safety-release"):
+      build_input_digest = hashlib.sha256(json.dumps(plan["source"]["build_identity"]["inputs"], sort_keys=True).encode()).hexdigest()
+      for name in (('safety',) if suite == 'safety-release' else ('safety', 'aol_protocol')):
+        if name in plan["native"]:
+          plan["native"][name]["build_inputs_sha256"] = build_input_digest
     phase = "collection"
     unittest_targets, pytest_targets = vehicle_pytest.split_targets(ROOT, plan["targets"])
     plan["runners"] = {"unittest": unittest_targets, "pytest": pytest_targets}
@@ -608,6 +763,20 @@ def run(suite, output, collect_only=False):
     pytest_nodeids, pytest_errors = vehicle_pytest.collect(pytest_targets)
     errors.extend(pytest_errors)
     ids = [test.id() for test in tests] + [vehicle_pytest.test_id(nodeid) for nodeid in pytest_nodeids]
+    if shard_index is not None and not errors:
+      full_targets = list(plan["targets"])
+      partitioner = lifecycle_shards.release_partition if suite == 'safety-release' else lifecycle_shards.partition
+      matcher = lifecycle_shards.release_matches if suite == 'safety-release' else lifecycle_shards.matches
+      shards = partitioner(full_targets, ids, shard_count)
+      plan.update(full_catalog_targets=full_targets, full_catalog_test_ids=list(ids),
+                  shard={"index": shard_index, "count": shard_count})
+      assigned_targets = shards[shard_index]
+      plan["targets"] = assigned_targets
+      def assigned(identity):
+        return any(matcher(identity, target) for target in assigned_targets)
+      tests = [test for test in tests if assigned(test.id())]
+      pytest_nodeids = [nodeid for nodeid in pytest_nodeids if assigned(vehicle_pytest.test_id(nodeid))]
+      ids = [test.id() for test in tests] + [vehicle_pytest.test_id(nodeid) for nodeid in pytest_nodeids]
     if len(set(ids)) != len(ids):
       errors.append("Vehicle runners selected duplicate test IDs")
     if suite == "interfaces":
@@ -630,6 +799,10 @@ def run(suite, output, collect_only=False):
       errors.extend(pytest_errors)
       phase = "source verification"
       plan["source_after"] = source_provenance()
+      if suite in ("aol-lifecycle", "safety-release"):
+        plan["source_after"]["build_identity"] = lifecycle_shards.build_identity(ROOT)
+        if plan["source"]["build_identity"] != plan["source_after"]["build_identity"]:
+          gate_errors.append("Lifecycle source/build identity changed during the suite")
       if plan["source"].get("inputs") != plan["source_after"].get("inputs"):
         gate_errors.append("Vehicle/control source inputs changed during the suite; rerun against stable source")
   except Exception:
@@ -639,12 +812,12 @@ def run(suite, output, collect_only=False):
   records = test_runner.account_for_tests(ids, records, tests)
   if not errors and suite == "interfaces":
     gate_errors.extend(interface_execution_errors(platform_tests, records))
-  if not collect_only and suite == "aol-lifecycle":
+  if not collect_only and suite in ("aol-lifecycle", "safety-release"):
     gate_errors.extend(f"Required lifecycle case did not pass: {record['id']} ({record['status']})"
-                       for record in records if record["status"] != "passed")
+                       for record in records
+                       if not (lifecycle_shards.release_result_allowed(record) if suite == "safety-release" else record["status"] == "passed"))
     for target in plan["targets"]:
-      prefix = Path(target).with_suffix("").as_posix().replace("/", ".") + "."
-      if not any(identity.startswith(prefix) for identity in ids):
+      if not any((lifecycle_shards.release_matches if suite == 'safety-release' else lifecycle_shards.matches)(identity, target) for identity in ids):
         gate_errors.append(f"Required lifecycle module collected no cases: {target}")
   elapsed = time.monotonic() - started
   exit_code = test_runner.report(records, errors + gate_errors, 10, elapsed)
@@ -672,11 +845,13 @@ def main():
   parser.add_argument("--suite", choices=("interfaces", "safety-debug", "safety-release", "aol-lifecycle"), required=True)
   parser.add_argument("--output", type=Path, required=True)
   parser.add_argument("--collect-only", action="store_true")
+  parser.add_argument("--shard-index", type=int)
+  parser.add_argument("--shard-count", type=int, default=4)
   args = parser.parse_args()
   os.chdir(ROOT)
   # Keep the same generated examples across collection, execution, and reruns.
   os.environ.setdefault("FUZZ_SEED", "0")
-  return run(args.suite, args.output, args.collect_only)
+  return run(args.suite, args.output, args.collect_only, args.shard_index, args.shard_count)
 
 
 if __name__ == "__main__":

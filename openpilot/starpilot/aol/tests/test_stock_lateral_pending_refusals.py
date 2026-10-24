@@ -7,7 +7,7 @@ from openpilot.cereal import messaging
 from openpilot.starpilot.aol.wire import decode_safety, encode_safety
 from openpilot.starpilot.aol.tests.test_input_deadline_continuity import BASE
 from openpilot.starpilot.aol.tests.test_ordinary_source_availability import settings
-from openpilot.starpilot.aol.tests.stock_lateral_test_helpers import stock_family
+from openpilot.starpilot.aol.tests.legacy_lag_test_helpers import legacy_stock_family as stock_family
 from openpilot.starpilot.aol.tests.test_stock_lateral_pcm import receive_pair
 
 

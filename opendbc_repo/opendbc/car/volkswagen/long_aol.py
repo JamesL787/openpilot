@@ -1,7 +1,7 @@
-"""Only normal gateway MQB auto/manual OP-long; native DEBUG grant is independent of lateral intent."""
+"""Only normal gateway MQB auto/manual/direct OP-long; native DEBUG grant is independent of lateral intent."""
 from opendbc.car.volkswagen.stock_aol import _qualified
 
-WORDS = frozenset((9, 25))
+WORDS = frozenset((9, 25, 41))
 
 
 def qualified(cp, *, marked_only=False):

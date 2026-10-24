@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.hyundai.values import CAR as HYUNDAI
@@ -361,7 +361,6 @@ class LaneChangeFeatureTests(unittest.TestCase):
       self.assertTrue(read_saved(self.params).policy.auto_lane_change)
 
   def test_compact_native_confirmation_rejects_abandoned_page(self):
-    from openpilot.system.ui.widgets import DialogResult
     class Session:
       def __init__(self, owner):
         self.owner = owner
@@ -373,24 +372,29 @@ class LaneChangeFeatureTests(unittest.TestCase):
     page = compact.NavScroller.__new__(compact.NavScroller)
     active = [page]
     dialogs = []
+    confirmations = []
+    dialog = Mock()
+    dialog.dismiss.side_effect = lambda callback: callback()
     request = self.request(self.row(ENABLED), -1)
     with patch.object(compact.gui_app, "get_active_widget", side_effect=lambda: active[0]), \
          patch.object(compact.gui_app, "push_widget", dialogs.append), \
-         patch.object(compact, "ConfirmDialog", side_effect=lambda *args, **kwargs: SimpleNamespace(callback=kwargs["callback"])):
-      adapter._confirm_lane_change(request, lambda: None, page)
+         patch.object(compact.gui_app, "texture"), patch.object(compact, "SettingDescriptionDialog", return_value=dialog), \
+         patch.object(compact, "BigConfirmationCircleButton", side_effect=lambda _title, _icon, callback: confirmations.append(callback)):
+      adapter._confirm(request, compact.lane_change_question(request), lambda: None, page)
+      self.assertIsNone(read_saved(self.params).raw)
       active[0] = object()
-      dialogs[-1].callback(DialogResult.CONFIRM)
+      confirmations[-1]()
       self.assertIsNone(read_saved(self.params).raw)
       active[0] = page
-      adapter._confirm_lane_change(request, lambda: None, page)
-      dialogs[-1].callback(DialogResult.CONFIRM)
+      adapter._confirm(request, compact.lane_change_question(request), lambda: None, page)
+      confirmations[-1]()
       self.assertFalse(read_saved(self.params).policy.enabled)
-      adapter._confirm_lane_change(self.request(self.row(AUTO)), lambda: None, page)
-      dialogs[-1].callback(DialogResult.CONFIRM)
+      request = self.request(self.row(AUTO))
+      adapter._confirm(request, compact.lane_change_question(request), lambda: None, page)
+      confirmations[-1]()
       self.assertTrue(read_saved(self.params).policy.auto_lane_change)
 
   def test_compact_parent_child_and_confirmed_edit(self):
-    from openpilot.system.ui.widgets import DialogResult
     class Button:
       def __init__(self, text, value):
         self.text, self.value, self.click = text, value, None
@@ -399,11 +403,13 @@ class LaneChangeFeatureTests(unittest.TestCase):
       def set_enabled(self, enabled):
         self.enabled = enabled
     class Scroller:
-      def __init__(self):
+      def __init__(self, *_args):
         self.items = []
         self._scroller = self
       def add_widgets(self, widgets):
         self.items.extend(widgets)
+      def dismiss(self, callback):
+        callback()
     class Session:
       def __init__(self, owner):
         self.owner = owner
@@ -414,7 +420,8 @@ class LaneChangeFeatureTests(unittest.TestCase):
     stack = []
     with patch.object(compact, "BigButton", Button), patch.object(compact, "GreyBigButton", Button), \
          patch.object(compact, "NavScroller", Scroller), \
-         patch.object(compact, "ConfirmDialog", side_effect=lambda *args, **kwargs: SimpleNamespace(callback=kwargs["callback"])), \
+         patch.object(compact, "SettingDescriptionDialog", Scroller), patch.object(compact.gui_app, "texture"), \
+         patch.object(compact, "BigConfirmationCircleButton", side_effect=lambda _title, _icon, callback: SimpleNamespace(callback=callback)), \
          patch.object(compact.gui_app, "push_widget", stack.append), \
          patch.object(compact.gui_app, "get_active_widget", side_effect=lambda: stack[-1]):
       adapter = compact.FeatureSettingsCompact(Session(self.owner))
@@ -424,7 +431,7 @@ class LaneChangeFeatureTests(unittest.TestCase):
       self.assertTrue(any(card.text == "one change per signal" for card in child.items))
       next(card for card in child.items if card.text == "one change per signal").click()
       dialog = stack.pop()
-      dialog.callback(DialogResult.CONFIRM)
+      dialog.items[-1].callback()
       self.assertFalse(read_saved(self.params).policy.one_per_signal)
       self.assertTrue(any(card.text == "one change per signal" and card.value.startswith("Off") for card in child.items),
                       repr([(card.text, card.value) for card in child.items]))

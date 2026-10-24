@@ -162,6 +162,9 @@ def test_actual_factory_rejection_restores_and_warms_exact_stock_before_publicat
     def traced_factory(cp, callbacks, *, requested):
       owner = factory(cp, callbacks, requested=requested)
       assert isinstance(owner, OrdinaryClassicStartup)
+      # This fixture exercises the explicit eager startup/fallback API.
+      # Default deferred takeover is covered by test_classic_deferred_takeover.
+      owner.prepare_when_controls_ready = owner.prepare
       owner._query = query
       owners.append(owner)
       return owner

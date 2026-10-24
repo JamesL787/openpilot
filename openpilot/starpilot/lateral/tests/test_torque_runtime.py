@@ -169,7 +169,18 @@ class TorqueRuntimeTests(unittest.TestCase):
     with mock.patch.dict(os.environ, {'TORQUE_REPLAY_RUNTIME': '1'}):
       self.assertTrue(development_enabled(cp))
       cp.carFingerprint = 'TOYOTA_RAV4_TSS2_2023'
-      self.assertFalse(development_enabled(cp))
+      self.assertTrue(development_enabled(cp))
+      for field in ('passive', 'dashcamOnly', 'notCar'):
+        invalid = cp.as_reader().as_builder()
+        setattr(invalid, field, True)
+        with self.subTest(field=field):
+          self.assertFalse(development_enabled(invalid))
+      invalid = cp.as_reader().as_builder()
+      invalid.carFingerprint = 'UNREGISTERED_TORQUE_VEHICLE'
+      self.assertFalse(development_enabled(invalid))
+      invalid = cp.as_reader().as_builder()
+      invalid.lateralTuning.torque.latAccelFactor = math.nan
+      self.assertFalse(development_enabled(invalid))
     with mock.patch.dict(os.environ, {'TORQUE_REPLAY_RUNTIME': '0'}):
       self.assertFalse(development_enabled(corolla()))
 
@@ -182,6 +193,11 @@ class TorqueRuntimeTests(unittest.TestCase):
       self.assertEqual(get_cache.call_count, 0)
       self.assertEqual(fresh.filtered_params['latAccelFactor'].x, cp.lateralTuning.torque.latAccelFactor)
       cp.carFingerprint = 'TOYOTA_RAV4_TSS2_2023'
+      with mock.patch.dict(os.environ, {'TORQUE_REPLAY_RUNTIME': '1'}):
+        TorqueEstimator(cp.as_reader())
+      self.assertEqual(get_cache.call_count, 0)
+      self.assertAlmostEqual(float(Params().get('SteerFriction')), cp.lateralTuning.torque.friction * 1.2)
+      Params().remove('SteerFriction')
       with mock.patch.dict(os.environ, {'TORQUE_REPLAY_RUNTIME': '1'}):
         TorqueEstimator(cp.as_reader())
       self.assertEqual(get_cache.call_count, 2)

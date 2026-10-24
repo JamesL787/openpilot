@@ -340,3 +340,24 @@ def test_newer_active_proof_cannot_extend_original_healthy_source_lease():
 
 def test_reverse_qualification_keeps_malformed_configuration_fail_closed():
   assert not retain_reverse_intent(None, None, None, None, None, NOW, latched=True, producer=PRODUCER)
+
+
+@pytest.mark.parametrize('event,immediate,soft,expected', [
+  ('pedalPressed', False, False, True), ('pedalPressed', True, False, False),
+  ('pedalPressed', False, True, False), ('controlsMismatch', True, False, False),
+  ('steerUnavailable', True, False, False),
+])
+def test_brake_user_disable_at_reverse_join_retains_only_existing_lateral_intent(event, immediate, soft, expected):
+  cp, cs, feedback = baseline()
+  cs.gearShifter = structs.CarState.GearShifter.reverse
+  sm, native = sample(cp, NOW + 10_000_000, NOW + 20_000_000, 2, allowed=False)
+  change(sm, 'onroadEvents', lambda events: setattr(events[0], 'name', event))
+  change(sm, 'onroadEvents', lambda events: setattr(events[0], 'immediateDisable', immediate))
+  change(sm, 'onroadEvents', lambda events: setattr(events[0], 'softDisable', soft))
+  before = (feedback.healthy_feedback_ns, feedback.healthy_native_ns, feedback.lateral_baseline_ns,
+            feedback.lateral_source_ns, feedback.lateral_native_ns)
+  assert retain_reverse_intent(feedback, sm, cp, cs, sm['aolAxisState'], NOW + 20_000_000,
+                               latched=True, producer=PRODUCER) == expected
+  assert before == (feedback.healthy_feedback_ns, feedback.healthy_native_ns, feedback.lateral_baseline_ns,
+                    feedback.lateral_source_ns, feedback.lateral_native_ns)
+  assert not native.lateralAllowed and not native.longitudinalAllowed

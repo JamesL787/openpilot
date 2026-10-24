@@ -74,7 +74,7 @@ def exercise(*, failure=None):
     def close(self, reason):
       self.child = None
   c_sock, a_sock = object(), object()
-  fitter, persistence, sm = Fitter(), mock.Mock(), mock.Mock()
+  fitter, persistence, sm = Fitter(), mock.Mock(), mock.Mock(updated={'deviceMotion': False}, logMonoTime={'deviceMotion': 0})
   def update(timeout=None):
     if timeout == 0:
       return

@@ -88,7 +88,11 @@ def _libc_connect(proto: int, kind: int, address: str, port: int, timeout: float
 def _connect(proto: int, kind: int, address: str, port: int, timeout: float) -> socket.socket:
   address = normalize_address(address)
   if hasattr(socket, "AF_BLUETOOTH") and hasattr(socket, "BTPROTO_RFCOMM"):
-    return _native(proto, kind, address, port, timeout)
+    try:
+      return _native(proto, kind, address, port, timeout)
+    except OSError as exc:
+      if exc.errno != errno.ENOSYS:
+        raise
   return _libc_connect(proto, kind, address, port, timeout)
 
 

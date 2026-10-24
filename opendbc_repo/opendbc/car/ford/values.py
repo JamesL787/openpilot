@@ -48,6 +48,7 @@ class FordSafetyFlags(IntFlag):
   MACH_E_EXTENDED = 16
   CLASSIC_EXTENDED = 32
   EXPLORER_EXTENDED = CLASSIC_EXTENDED  # Existing public profile spelling.
+  MANUAL = 256
   BLUEPILOT_ANGLE = 128
   GENERIC_CANFD_EXTENDED = 64
 
@@ -328,12 +329,12 @@ FW_QUERY_CONFIG = FwQueryConfig(
       whitelist_ecus=[Ecu.abs, Ecu.debug, Ecu.engine, Ecu.eps, Ecu.fwdCamera, Ecu.fwdRadar, Ecu.shiftByWire],
       logging=True,
     ),
-    Request(
+    *[Request(
       [StdQueries.TESTER_PRESENT_REQUEST, StdQueries.MANUFACTURER_SOFTWARE_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, StdQueries.MANUFACTURER_SOFTWARE_VERSION_RESPONSE],
       whitelist_ecus=[Ecu.abs, Ecu.debug, Ecu.engine, Ecu.eps, Ecu.fwdCamera, Ecu.fwdRadar, Ecu.shiftByWire],
-      bus=0,
-    ),
+      bus=bus,
+    ) for bus in (0, 4)],
     *[Request(
       [StdQueries.TESTER_PRESENT_REQUEST, ford_asbuilt_block_request(block_id)],
       [StdQueries.TESTER_PRESENT_RESPONSE, ford_asbuilt_block_response(block_id)],

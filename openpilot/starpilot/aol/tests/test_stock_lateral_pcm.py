@@ -9,6 +9,7 @@ from openpilot.starpilot.aol.tests import stock_lateral_test_helpers as fixture
 from openpilot.starpilot.aol.tests.test_input_deadline_continuity import BASE
 from openpilot.starpilot.aol.tests.test_ordinary_source_availability import settings
 from openpilot.starpilot.aol.tests.stock_lateral_test_helpers import callers
+from openpilot.starpilot.aol.tests.legacy_lag_test_helpers import source_availability_refusals
 
 
 def receive_pair(sd, controls, card, now, *, axis=None, event=None):
@@ -162,31 +163,21 @@ def test_pcm_role_never_waives_other_owners_or_historical_user_fault(fault):
     if fault == 'native_denied':
       options['allowed'] = False
     physical_faults = ('main_off', 'stock_enabled', 'cancel', 'brake', 'gas', 'regen')
-    with mock.patch.object(sd, 'update_events', side_effect=events), mock.patch.object(sd.rk.avg_dt, 'get_average', return_value=0.02):
+    with (
+      source_availability_refusals(sd, historical=fault == 'prior_user_history'),
+      mock.patch.object(sd, 'update_events', side_effect=events),
+      mock.patch.object(sd.rk.avg_dt, 'get_average', return_value=0.02),
+    ):
       if fault in physical_faults:
-        # Deliver real original carState bytes before the missing tick. The
-        # generic fixture normalizes MAIN/gas before serializing, so amend the
-        # received envelope itself; no unseen timeout input is invented.
-        from openpilot.selfdrive.selfdrived import selfdrived as sd_module
-
-        receiver = sd_module.messaging.recv_one
-
-        def delivered(sock):
-          message = receiver.return_value
-          if message is None:
-            return None
-          packet = message.as_builder()
-          if fault == 'main_off':
-            packet.carState.cruiseState.available = False
-          elif fault == 'stock_enabled':
-            packet.carState.cruiseState.enabled = True
-          elif fault == 'gas':
-            packet.carState.gasPressed = True
-          return packet.as_reader()
-
         fault_stamp = BASE + 10_000_000
-        with mock.patch.object(receiver, 'side_effect', side_effect=delivered):
-          drive(3, observed_state=physical, state_stamp=fault_stamp, **settings('lateral_only', fault_stamp, 4))
+        physical.cruiseState.available = fault != 'main_off'
+        physical.cruiseState.enabled = fault == 'stock_enabled'
+        if fault == 'gas':
+          physical.gasPressed = True
+        packet = messaging.new_message('carState', valid=True, logMonoTime=fault_stamp)
+        packet.carState = physical
+        drive(3, car_state_message=packet, state_stamp=fault_stamp,
+              **settings('lateral_only', fault_stamp, 4))
         actual = sd.CS_prev
         if fault == 'main_off':
           assert not actual.cruiseState.available
@@ -206,7 +197,14 @@ def test_pcm_role_never_waives_other_owners_or_historical_user_fault(fault):
         axis, state, command = drive(5, timeout=True, state_stamp=BASE, offset_ns=5_399_000, **options)
     assert not command.latActive and not command.longActive
     assert not axis.lateralActive and not axis.longitudinalActive
-    assert str(axis.faultReason) != 'availabilityPause' and not sd.aol_ordinary_source_pause
+    if fault == 'prior_user_history' and sd.aol_ordinary_source_pause:
+      native = sd.aol_ordinary_source_native
+      assert str(axis.faultReason) == 'availabilityPause' and not sd.aol_authority_lost
+      assert native.requestedLateral and native.lateralAllowed
+    else:
+      assert not sd.aol_ordinary_source_pause
+    assert axis.sourceCarStateMonoTime == 0
+    assert not sd.events.contains('enable')
     assert old.validUntilMonoTime < BASE + 35_399_000
     assert not command.longActive
 

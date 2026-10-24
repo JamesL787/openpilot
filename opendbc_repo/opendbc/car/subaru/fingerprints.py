@@ -576,6 +576,7 @@ FW_VERSIONS = {
     (Ecu.abs, 0x7b0, None): [
       b'\xa1 #\x14\x00',
       b'\xa1 #\x17\x00',
+      b'\xa1 $\x17\x00',
     ],
     (Ecu.eps, 0x746, None): [
       b'+\xc0\x10\x11\x00',
@@ -587,10 +588,12 @@ FW_VERSIONS = {
     (Ecu.engine, 0x7a2, None): [
       b'\xed,\xa0q\x07',
       b'\xed,\xa2q\x07',
+      b'\xfb,\xa2p\x07',
     ],
     (Ecu.transmission, 0x7a3, None): [
       b'\xa8\x8e\xf41\x00',
       b'\xa8\xfe\xf41\x00',
+      b'\xa9\x17w!r',
     ],
   },
 

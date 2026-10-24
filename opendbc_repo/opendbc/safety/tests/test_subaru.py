@@ -59,6 +59,13 @@ class TestSubaruSafetyBase(common.CarSafetyTest):
 
   INACTIVE_GAS = 1818
 
+  def setUp(self):
+    # The inherited baseline selects hooks before init_tests resets AE. Declare
+    # ordinary stock AE0 before selection so a prior marked profile cannot leak.
+    from opendbc.safety.tests.libsafety import libsafety_py
+    libsafety_py.libsafety.set_alternative_experience(0)
+    super().setUp()
+
   def _set_prev_torque(self, t):
     self.safety.set_desired_torque_last(t)
     self.safety.set_rt_torque_last(t)
@@ -112,6 +119,12 @@ class TestSubaruTorqueSafetyBase(TestSubaruSafetyBase, common.DriverTorqueSteeri
 
 class TestSubaruGen1TorqueStockLongitudinalSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruTorqueSafetyBase):
   TX_MSGS = lkas_tx_msgs(SUBARU_MAIN_BUS)
+
+  def test_marked_profile_cannot_leak_into_stock_torque_fixture(self):
+    self.safety.set_alternative_experience(32)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.subaru, 177)
+    self.setUp()
+    self.test_against_torque_driver()
 
 
 class TestSubaruGen2TorqueSafetyBase(TestSubaruTorqueSafetyBase):

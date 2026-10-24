@@ -94,10 +94,10 @@ def test_family_host_gap_does_not_authorize_negative_inputs(family, fault):
         assert not retained
         assert card.aol_card_intent._main_cycle_required
       else:
-        # Toyota MAIN is physical permission, not a deliberate latch. Its
-        # unchanged source persists while failed transport withdraws all axes.
+        # MAIN does not override the current hard transport owner. A current
+        # native fault clears Card intent and both command axes remain OFF.
         assert not card.aol_card_intent.explicit_latch
         assert card.aol_card_intent.settings.main_action == card.aol_card_intent.lkas_action == 0
-        assert retained == bool(physical.cruiseState.available)
-        assert retained and not axis.lateralActive and not axis.longitudinalActive
+        assert not retained and not card.aol_card_intent.allowed_latch
+        assert not axis.lateralActive and not axis.longitudinalActive
     assert not command.longActive and not command.latActive

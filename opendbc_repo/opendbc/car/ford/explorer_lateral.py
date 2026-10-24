@@ -11,6 +11,7 @@ from typing import Protocol
 import numpy as np
 
 from opendbc.car import structs
+from opendbc.car.ford.aol import base_safety_param
 from opendbc.car.ford.lateral_strategy import FordLateralController, FordLateralResult, FORD_CURVATURE_LIMITS, STEER_DT
 from opendbc.car.ford.values import CAR, CarControllerParams, FordFlags, FordSafetyFlags
 
@@ -34,8 +35,6 @@ class ExplorerLateralController(FordLateralController):
 
 
 def qualified(CP) -> bool:
-  if CP.alternativeExperience == 32 and len(CP.safetyConfigs) != 1:
-    return False
   if (CP.brand != "ford" or CP.carFingerprint != CAR.FORD_EXPLORER_MK6 or
       CP.flags & ~int(FordFlags.HAS_BSM) or CP.passive or CP.dashcamOnly or CP.notCar or
       CP.alternativeExperience not in (0, 32) or len(CP.safetyConfigs) not in (1, 2)):
@@ -45,7 +44,7 @@ def qualified(CP) -> bool:
     return False
   safety = CP.safetyConfigs[-1]
   expected = int(FordSafetyFlags.EXPLORER_EXTENDED | (FordSafetyFlags.LONG_CONTROL if CP.openpilotLongitudinalControl else 0))
-  return safety.safetyModel == structs.CarParams.SafetyModel.ford and safety.safetyParam == expected
+  return safety.safetyModel == structs.CarParams.SafetyModel.ford and base_safety_param(CP) == expected
 
 
 class CurvatureOwner(Protocol):

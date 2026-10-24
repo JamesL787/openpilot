@@ -803,6 +803,7 @@ def run(session_dir: Path, route_id: str, data_dir: Path, target: str, profile: 
           value['seekRanges'] = status['seekRanges']
         if 'segmentRanges' in status:
           value['segmentRanges'] = status['segmentRanges']
+        value['timelineState'] = status.get('timelineState', 'unavailable')
         warnings = [*detail.get('warnings', []), *status.get('sourceWarnings', [])]
         if recorded_wall_clock(sample, core.wall_minus_mono_ns) is None:
           warnings.append('Recorded wall-clock time is unavailable; clock and arrival time are hidden.')

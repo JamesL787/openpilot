@@ -122,16 +122,10 @@ def disarming_fault(events, CS, *, temporary_ui_process_failure: bool = False,
       if event.name == log.OnroadEvent.EventName.controlsMismatch and temporary_source_pause:
         continue
       return True
-    if event.softDisable:
-      if event.name == log.OnroadEvent.EventName.selfdrivedLagging and temporary_selfdrive_lagging:
-        continue
-      if event.name == log.OnroadEvent.EventName.processNotRunning and temporary_ui_process_failure:
-        continue
-      if event.name in (log.OnroadEvent.EventName.steerTempUnavailable, log.OnroadEvent.EventName.seatbeltNotLatched):
-        continue
-      if event.name == log.OnroadEvent.EventName.wrongGear and CS.gearShifter != GearShifter.unknown:
-        continue
+    if event.softDisable and event.name == log.OnroadEvent.EventName.wrongGear and CS.gearShifter == GearShifter.unknown:
       return True
+    # SOFT warnings withdraw commands through the normal runtime/state machine.
+    # They do not revoke the driver's separate armed lateral intent.
   return False
 
 
@@ -154,6 +148,7 @@ class AolCardIntent:
     self._lkas_held = False
     self._fault_inhibit = False
     self._last_latch_edge_ns = 0
+    self.physical_arm_ns = 0
     self._native_rejection_ns = 0
     self._engagement_source_ns = 0
     self._engagement_consumed = True
@@ -350,6 +345,8 @@ class AolCardIntent:
           self._record_latch_clear('physical_toggle')
         self.allowed_latch = not lateral_engaged
         self.pause_lateral = lateral_engaged
+        if not lateral_engaged:
+          self.physical_arm_ns = now_ns
 
     for event in CS.buttonEvents:
       button = int(event.type.raw)
@@ -401,11 +398,11 @@ class AolCardIntent:
     rearm_safe = (CS.canValid and not CS.canTimeout and not self._calibration_fault and
                   not CS.steerFaultPermanent and not CS.steerFaultTemporary and
                   CS.gearShifter not in (GearShifter.park, GearShifter.neutral, GearShifter.reverse, GearShifter.unknown))
-    if self._calibration_inhibit and main_derived:
+    if self._calibration_inhibit and self._calibration_fault and main_derived:
       self._calibration_rearm_required = True
     elif self._calibration_rearm_required and fresh_edge and rearm_safe and self.settings.enabled:
       self._calibration_rearm_required = False
-    if self._calibration_inhibit or self._calibration_rearm_required:
+    if self._calibration_fault or self._calibration_rearm_required:
       self._record_latch_clear('calibration_inhibit')
       self.allowed_latch = False
     self._calibration_main = main
@@ -439,4 +436,4 @@ class AolCardIntent:
   def output(self, CS) -> tuple[bool, bool, bool]:
     driving = CS.gearShifter not in (GearShifter.neutral, GearShifter.park, GearShifter.reverse, GearShifter.unknown)
     return (self.allowed_latch and self.settings.enabled and CS.canValid and driving,
-            self.pause_lateral, self.pause_longitudinal)
+            self.pause_lateral or self._calibration_inhibit, self.pause_longitudinal or self._calibration_inhibit)

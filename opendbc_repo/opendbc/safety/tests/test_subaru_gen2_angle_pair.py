@@ -34,20 +34,23 @@ class TestSubaruGen2AnglePair(unittest.TestCase):
   @staticmethod
   def sources(car, *, brake=False, cruise=True, speed=30, main=True, torque=0):
     packer = CANPacker(DBC[car][Bus.pt])
-    inputs = (
-      ('Throttle', 0, {}),
+    wheel_bus = 0 if car == CAR.SUBARU_FORESTER_2022 else 1
+    status_bus = 2 if car == CAR.SUBARU_FORESTER_2022 else 1
+    pt_bus = 1 if car == CAR.SUBARU_OUTBACK_2023 else 0
+    inputs: tuple[tuple[str, int, dict[str, float]], ...] = (
+      ('Throttle', pt_bus, {}),
       ('Steering_Torque', 0, {'Steer_Torque_Sensor': torque}),
       ('Steering_2', 0, {'Steering_Angle': 0}),
-      ('Wheel_Speeds', 1, {'FL': speed, 'FR': speed, 'RL': speed, 'RR': speed}),
-      ('Brake_Status', 1, {'Brake': int(brake)}),
-      ('ES_Status', 1, {'Cruise_Activated': int(cruise)}),
+      ('Wheel_Speeds', wheel_bus, {'FL': speed, 'FR': speed, 'RL': speed, 'RR': speed}),
+      ('Brake_Status', wheel_bus, {'Brake': int(brake)}),
+      ('ES_Status', status_bus, {'Cruise_Activated': int(cruise)}),
       ('ES_DashStatus', 2, {'Cruise_On': int(main)}),
-      ('Transmission', 0, {'Gear': 121}),
-      ('Dashlights', 0, {}),
-      ('BodyInfo', 0, {}),
-      ('ES_Distance', 1, {}),
+      ('Transmission', pt_bus, {'Gear': 121}),
+      ('Dashlights', pt_bus, {}),
+      ('BodyInfo', pt_bus, {}),
+      ('ES_Distance', status_bus, {}),
       ('ES_LKAS_State', 2, {}),
-      ('ES_Brake', 1, {}),
+      ('ES_Brake', status_bus, {}),
     )
     return packer, [packer.make_can_msg(name, bus, values) for name, bus, values in inputs]
 

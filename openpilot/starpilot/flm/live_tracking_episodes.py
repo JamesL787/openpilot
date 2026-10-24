@@ -780,7 +780,7 @@ class TrackingEpisodeBuilder:
       episode.validate()
       requests = {point.control_ns: self.probe_requests[point.control_ns] for point in points if point.control_ns in self.probe_requests}
       defer = (
-        kind == 'subtle'
+        (kind == 'subtle' or self.source_tracking)
         and getattr(self, 'defer_unprobed', False) is True
         and type(getattr(self, 'numerical_observed_ns', 0)) is int
         and self.numerical_observed_ns > 0
@@ -843,6 +843,17 @@ class TrackingEpisodeBuilder:
     # Preserve source order before the optimizer's strict chronological check;
     # never replace source time with numerical completion time. The original
     # probe deadline and bounded ready deque still bound this wait.
+    if self.source_tracking and self.ready:
+      # Fixed source windows are independently usable. An earlier incomplete
+      # numerical job must not hold every later complete window for 30 seconds.
+      # Drop it by source order alone, without inspecting tracking error or
+      # native sensitivity; late numerical results cannot resurrect it.
+      through = max(episode.end_ns for episode in self.ready)
+      for key, row in tuple(self.completed.items()):
+        if row['episode'].end_ns <= through:
+          for point in row['points']:
+            self.probe_requests.pop(point.control_ns, None)
+          del self.completed[key]
     barrier = min((row['episode'].start_ns for row in self.completed.values()), default=None)
     ordered = sorted(self.ready, key=lambda episode: episode.start_ns)
     result = tuple(episode for episode in ordered if barrier is None or episode.end_ns < barrier)

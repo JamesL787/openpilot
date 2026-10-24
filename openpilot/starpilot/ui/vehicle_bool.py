@@ -1,6 +1,6 @@
 """Confirmation text for parked vehicle preferences."""
 
-VEHICLE_BOOL_KEYS = frozenset(("SubaruAvhStartup", "SubaruStopStartOff", "SubaruSNG", "SubaruRedneckCruise",
+VEHICLE_BOOL_KEYS = frozenset(("AlphaLongitudinalEnabled", "SubaruAvhStartup", "SubaruStopStartOff", "SubaruSNG", "SubaruRedneckCruise",
                               "GMPedalLongitudinal", "DisableOpenpilotLongitudinal", "LongPitch", "VoltSNG", "GMAutoHold", "VoltOnePedalMode",
                               "TeslaAOLScreenTap", "TeslaAOLDisengageOnBrake",
                               "RemoteStartBootsComma", "HKGRemoteStartBootsComma", "IgnoreIgnitionLine", "TeslaWakeOnCAN"))
@@ -13,6 +13,9 @@ def confirmation_question(request):
   from openpilot.starpilot.ui.panda_wake_feature import LABELS
   if request.key in LABELS:
     return f"{verb} {LABELS[request.key][0].lower()}? This changes Panda firmware after the next device restart."
+  if request.key == "AlphaLongitudinalEnabled":
+    return (f"{verb} Alpha Longitudinal after the next startup? StarPilot will request speed control instead of factory ACC. " +
+            "Automatic Emergency Braking may be disabled; exact startup checks still apply.")
   if request.key == "GMPedalLongitudinal":
     return (f"{verb} Pedal Speed Control after the next startup? " +
             "A compatible connected interceptor must be detected before StarPilot can control it.")

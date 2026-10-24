@@ -35,7 +35,7 @@ class OrdinaryClassicStartup(G90Startup):
     return self.cp
 
   def sources_current(self, ci, now_ns):
-    if self.outcome is not Outcome.SENT_UNCONFIRMED:
+    if self.outcome not in (Outcome.PENDING, Outcome.SENT_UNCONFIRMED):
       return True
     if not ci.CS.out.canValid or ci.CS.out.canTimeout:
       return False
@@ -55,14 +55,15 @@ class OrdinaryClassicStartup(G90Startup):
 
   def before_control(self, **context):
     self.check()
-    return self.outcome is not Outcome.SENT_UNCONFIRMED or (context['configured'] and context['sources_current'] and context['control_current'])
+    return self.outcome is not Outcome.PENDING and (self.outcome is not Outcome.SENT_UNCONFIRMED or
+      (context['configured'] and context['sources_current'] and context['control_current']))
 
   def finalize_aol_configuration(self, ci):
     if self.published or self.closed or ci is not self.ci or not self.ready:
       raise RuntimeError('Classic LONG finalization requires configured startup')
     if self.prepared_for(ci.CP):
       return
-    if self.outcome is Outcome.SENT_UNCONFIRMED and qualified(ci.CP, marked_only=True):
+    if self.outcome in (Outcome.PENDING, Outcome.SENT_UNCONFIRMED) and qualified(ci.CP, marked_only=True):
       before_word, after_word = ordinary_word(ci.CP), aol_word(ci.CP)
     elif self.outcome in (Outcome.STOCK_UNTOUCHED, Outcome.STOCK_RESTORED) and stock_qualified(ci.CP, marked_only=True):
       before_word, after_word = stock_word(ci.CP), stock_aol_word(ci.CP)

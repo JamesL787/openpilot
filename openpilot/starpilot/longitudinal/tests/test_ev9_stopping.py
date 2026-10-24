@@ -34,12 +34,18 @@ def context(**fields):
 
 class TestEV9Stopping(unittest.TestCase):
   def test_only_exact_long_profile_gets_policy_and_stock_siblings_stay_unmodified(self):
-    assert policy_for(cp(), .01) is not None
+    for marker in (0, 32):
+      with self.subTest(admitted_marker=marker):
+        admitted = cp()
+        admitted.alternativeExperience = marker
+        self.assertIsNotNone(policy_for(admitted, .01))
     for identity in (CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_6):
       self.assertIsNone(policy_for(params(candidate=identity), .01))
-    malformed = cp()
-    malformed.alternativeExperience = 32
-    self.assertIsNone(policy_for(malformed, .01))
+    for marker in (1, 33, 64):
+      with self.subTest(invalid_marker=marker):
+        malformed = cp()
+        malformed.alternativeExperience = marker
+        self.assertIsNone(policy_for(malformed, .01))
 
   def test_actual_loop_release_hysteresis_reset_and_lead_fast_path(self):
     loop = LongControl(cp())

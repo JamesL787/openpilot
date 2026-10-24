@@ -154,6 +154,95 @@ class Machine:
 
 @unittest.skipUnless(BINARY.is_file() and os.name == "posix", "build the replay test binary first")
 class TestMachine(unittest.TestCase):
+  def test_local_timeline_requires_recorded_axes_validity_and_warning_severity(self):
+    engine = Machine([(0, [.05, 2.5], True)])
+    path = engine.routes / '00000001--1234567890--0/rlog'
+    with path.open('ab') as output:
+      for seconds, lat, long, enabled, valid, alert, size in (
+        (.1, True, True, True, True, 'normal', 'none'),
+        (.5, False, True, True, True, 'normal', 'none'),
+        (.8, True, True, False, True, 'normal', 'none'),
+        (1., True, False, False, True, 'normal', 'none'),
+        (1.3, True, False, False, True, 'normal', 'none'),
+        (1.6, True, True, True, False, 'critical', 'full'),
+        (1.9, True, True, True, True, 'normal', 'full'),
+        (2.2, True, True, True, True, 'normal', 'none'),
+      ):
+        stamp = MONO + round(seconds * 1e9)
+        output.write(message('carControl', stamp, valid=valid, latActive=lat, longActive=long))
+        output.write(message('selfdriveState', stamp, enabled=enabled, alertStatus=alert, alertSize=size))
+        output.write(message('aolAxisState', stamp, valid=seconds != 1.3, mode='lateralOnly', qualified=False,
+                             nativeAcknowledged=True, lateralActive=True))
+        if seconds == 2.2:
+          output.write(message('carControl', stamp, latActive=False, longActive=False))
+      output.write(message('userBookmark', MONO + 2_000_000_000, valid=False))
+    try:
+      engine.start()
+      engine.wait(lambda s: s['state'] == 'paused')
+      rows = [row for line in (engine.root / 'cache/timeline.jsonl').read_text().splitlines()
+              for row in json.loads(line)['rows']]
+      self.assertEqual(rows, [[.1, .3, 'chill'], [1.6, 1.8, 'error'], [1.9, 2.1, 'chill']])
+    finally:
+      engine.close()
+
+  def test_local_timeline_capacity_never_blocks_playback(self):
+    engine = Machine([(0, [.05, 1.], True)])
+    path = engine.routes / '00000001--1234567890--0/rlog'
+    with path.open('ab') as output:
+      for index in range(65537):
+        output.write(message('userBookmark', MONO + 100_000_000 + index))
+    try:
+      engine.start()
+      state = engine.wait(lambda s: s['state'] == 'paused')
+      self.assertEqual(state['timelineState'], 'unavailable')
+      self.assertFalse((engine.root / 'cache/timeline.jsonl').exists())
+      self.assertEqual(engine.command_status('seek', 'e2', position=.5)['state'], 'paused')
+    finally:
+      engine.close()
+
+  def test_local_timeline_modes_errors_bookmarks_and_expiry(self):
+    engine = Machine([(0, [.05, 2.2], True)])
+    path = engine.routes / '00000001--1234567890--0/rlog'
+    with path.open('ab') as output:
+      for i in range(1, 20):
+        stamp = MONO + i * 100_000_000
+        full = i < 11
+        output.write(message('carControl', stamp, latActive=True, longActive=full))
+        output.write(message('selfdriveState', stamp, enabled=full, experimentalMode=6 <= i < 11,
+                             alertSize='mid' if 13 <= i < 16 else 'none', alertStatus='userPrompt' if 13 <= i < 16 else 'normal'))
+        output.write(message('aolAxisState', stamp, mode='combined' if full else 'lateralOnly', qualified=True,
+                             nativeAcknowledged=True, lateralActive=True, longitudinalActive=full, sessionId='recorded',
+                             validUntilMonoTime=stamp + 30_000_000))
+      output.write(message('userBookmark', MONO + 1_400_000_000))
+    try:
+      engine.start()
+      state = engine.wait(lambda s: s['state'] == 'paused')
+      self.assertEqual(state['timelineState'], 'ready')
+      pages = [json.loads(line) for line in (engine.root / 'cache/timeline.jsonl').read_text().splitlines()]
+      rows = [row for page in pages for row in page['rows']]
+      self.assertEqual(rows, [[.1, .6, 'chill'], [.6, 1.1, 'experimental'], [1.1, 2.1, 'aol'],
+                              [1.3, 1.6, 'error'], [1.4, 1.4, 'bookmark']])
+      # The AOL live deadline is 30 ms, but the recorded 10 Hz history is continuous.
+      self.assertLess(rows[2][1], state['end'])
+      engine.command_status('seek', 'e1', position=1.5)
+      self.assertEqual(pages, [json.loads(line) for line in (engine.root / 'cache/timeline.jsonl').read_text().splitlines()])
+    finally:
+      engine.close()
+
+  def test_optional_history_filter_limit_keeps_footage_admission(self):
+    engine = Machine([(0, [.1, .2], True)])
+    path = engine.routes / '00000001--1234567890--0/rlog'
+    with path.open('ab') as output:
+      output.write(message('userBookmark', MONO + 150_000_000) * 250001)
+    try:
+      engine.start()
+      state = engine.wait(lambda s: s['state'] == 'paused', timeout=15)
+      self.assertEqual(state['seekRanges'], [[.1, .25]])
+      self.assertTrue(any('incomplete' in warning for warning in state['sourceWarnings']))
+      self.assertEqual(json.loads((engine.root / 'cache/timeline.jsonl').read_text())['rows'], [])
+    finally:
+      engine.close()
+
   @unittest.skipUnless(Path('/proc/self/statm').is_file(), 'requires Linux RSS accounting')
   def test_seek_releases_old_logs_before_the_new_target_is_ready(self):
     engine = Machine([(n, [60 * n + .1, 60 * n + .2], True) for n in range(6)], compressed=True)
@@ -371,7 +460,7 @@ os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])
       self.assertEqual(message.logMonoTime, BOOT + 200_000_000)
       self.assertEqual(message.narrowRoadEncodeIdx.frameId, 1)
       self.assertEqual(message.narrowRoadEncodeIdx.timestampSof, BOOT + 150_000_000)
-      self.assertEqual(list((engine.root / "cache").iterdir()), [])
+      self.assertEqual([p.name for p in (engine.root / "cache").iterdir()], ['timeline.jsonl'])
     finally:
       del socket
       engine.close()

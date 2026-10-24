@@ -57,10 +57,13 @@ def test_actual_fit_missing_stage_frame_is_fail_closed():
        mock.patch('openpilot.starpilot.flm.event_raw_fit.fit_event_physical', return_value=model), \
        mock.patch('openpilot.starpilot.flm.event_raw_fit.objective_excited', return_value=True), \
        mock.patch('openpilot.starpilot.flm.event_raw_fit.control_from_dict',
-                  side_effect=lambda values: SimpleNamespace(control_ns=values['stamp'])), \
+                  side_effect=lambda values, *, trace_archive: SimpleNamespace(control_ns=values['stamp'])) as control, \
        mock.patch('openpilot.starpilot.flm.event_raw_fit.output_from_dict',
                   side_effect=lambda values: SimpleNamespace(apply_ns=values['stamp'])), \
        mock.patch('openpilot.starpilot.flm.event_raw_fit.delivered', return_value=.01), \
        pytest.raises(ValueError, match='supported actual physical response'):
     engine.projected[first_stage['apply_ns']] = (.01, (1.,))
     fit_event_torque({}, engine, objective)
+  # This isolated legacy fixture has no normalized trace archive; the stage
+  # decoder must still receive the explicit archive argument before the join.
+  control.assert_called_once_with(first_stage['control'], trace_archive=None)

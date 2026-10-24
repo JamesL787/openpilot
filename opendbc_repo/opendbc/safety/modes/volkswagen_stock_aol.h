@@ -5,6 +5,9 @@ static bool vw_aol_longitudinal = false;
 static bool vw_aol_long_armed = false;
 static uint8_t vw_aol_buttons = 0U;
 static bool vw_aol_manual = false;
+static bool vw_aol_direct = false;
+static bool vw_aol_direct_counter_seen = false;
+static uint8_t vw_aol_direct_counter = 0U;
 static bool vw_aol_token = false;
 static bool vw_aol_initial_main = true;
 static bool vw_aol_cruise_engaged = false;
@@ -38,6 +41,9 @@ static void vw_aol_reset(void) {
   vw_aol_longitudinal = false;
   vw_aol_cruise_engaged = false;
   vw_aol_manual = false;
+  vw_aol_direct = false;
+  vw_aol_direct_counter_seen = false;
+  vw_aol_direct_counter = 0U;
   vw_aol_requested = false;
   vw_aol_gear_drive = false;
   vw_aol_eps_ready = false;
@@ -98,7 +104,26 @@ static uint8_t vw_aol_permission(void) {
 
 static void vw_aol_optional_rx(const CANPacket_t *msg) {
   if (vw_aol_enabled) {
-    if (!vw_aol_manual && msg_matches(msg, 0x3DCU, 0U, 8U)) {
+    if (vw_aol_direct && msg_matches(msg, 0x187U, 0U, 8U)) {
+      const uint8_t counter = volkswagen_mxb_get_counter(msg);
+      const bool checksum_ok = volkswagen_mxb_get_checksum(msg) == volkswagen_mxb_compute_crc(msg);
+      const bool fresh_pair = vw_aol_direct_counter_seen &&
+        (safety_get_ts_elapsed(microsecond_timer_get(), vw_aol_gear_ts) <= 300000U) &&
+        (counter == ((vw_aol_direct_counter + 1U) & 15U));
+      vw_aol_direct_counter_seen = checksum_ok;
+      vw_aol_direct_counter = counter;
+      if (checksum_ok) {
+        vw_aol_gear_ts = microsecond_timer_get();
+      }
+      if (checksum_ok && fresh_pair) {
+        const unsigned int gear = msg->data[2] & 7U;
+        vw_aol_seen |= 2U;
+        vw_aol_gear_drive = (gear == 5U) || (gear == 6U);
+      } else {
+        vw_aol_seen &= 5U;
+        vw_aol_gear_drive = false;
+      }
+    } else if (!vw_aol_direct && !vw_aol_manual && msg_matches(msg, 0x3DCU, 0U, 8U)) {
       const unsigned int gear = msg->data[5] & 15U;
       vw_aol_seen |= 2U;
       vw_aol_gear_ts = microsecond_timer_get();

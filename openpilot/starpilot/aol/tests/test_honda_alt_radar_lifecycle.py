@@ -1,10 +1,7 @@
 """Alternate radar stock Honda with current factory/parser/Card/SD/Controls/native."""
-import pytest
 from opendbc.car.honda.values import CAR
 from openpilot.starpilot.aol.tests.test_honda_recovery_lifecycle import TestHondaCurrentCaller as CurrentCaller
-from openpilot.starpilot.aol.tests.honda_native_fixture import honda_native_pair as honda_native_pair
 
-@pytest.mark.usefixtures('honda_native_pair')
 class TestHondaAlternateRadar(CurrentCaller):
   def test_alt_0_eps_reverse_recovery(self):
     self.run_current_caller(candidate=CAR.ACURA_RDX_3G_MMR, word=1, speed_mps=25.)

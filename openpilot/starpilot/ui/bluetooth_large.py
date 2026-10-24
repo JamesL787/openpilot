@@ -5,8 +5,9 @@ import time
 import uuid
 
 from openpilot.starpilot.galaxy_bluetooth.bootstrap import setup_status
-from openpilot.starpilot.galaxy_bluetooth.phone_ui import forget_phone_keys, large_phone_rows
-from openpilot.starpilot.bluetooth.owner import BluetoothOwner, BluetoothRejected, BluetoothUnavailable
+from openpilot.starpilot.galaxy_bluetooth.phone_ui import forget_phone_keys, is_app_link, large_phone_rows
+from openpilot.starpilot.bluetooth.owner import BluetoothRejected, BluetoothUnavailable
+from openpilot.starpilot.bluetooth.native_owner import NativeBluetoothOwner as BluetoothOwner
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog, alert_dialog
@@ -132,6 +133,11 @@ class BluetoothLarge(Widget):
     if operation in ("pair", "pairing_response", "cancel_pair"):
       self.pending = self.executor.submit(self.owner.request, operation, address=address, session=session,
                                           prompt_id=prompt_id, accepted=accepted, value=value)
+    elif operation == "power":
+      self.pending = self.executor.submit(self._power_request, bool(enabled))
+    elif operation == "auto_scan":
+      # Opening the page never starts discovery while Android Auto holds the adapter.
+      self.pending = self.executor.submit(self.owner.request, "scan", delegate=False)
     else:
       self.pending = self.executor.submit(self.owner.request, operation, address=address, enabled=enabled)
     self.operation = operation
@@ -139,6 +145,9 @@ class BluetoothLarge(Widget):
     self.pending_session = getattr(self, "session", None)
     self.return_to_root = return_to_root
     self._rebuild()
+
+  def _power_request(self, enabled: bool) -> dict:
+    return self.owner.request("power", address=None, enabled=enabled)
 
   def _forget(self, address: str) -> None:
     self._request("forget", address=address)
@@ -190,7 +199,7 @@ class BluetoothLarge(Widget):
         self.status.get("powered") and self.status.get("parked")):
       self.scan_on_ready = False
       if not self.status.get("discovering"):
-        self._request("scan")
+        self._request("auto_scan")
         return
     if self.pending is None and time.monotonic() >= self.next_refresh:
       self._snapshot()
@@ -239,7 +248,7 @@ class BluetoothLarge(Widget):
 
   def _rebuild(self):
     status = self.status or {}
-    devices = tuple((item.get("address"), item.get("name"), item.get("paired"), item.get("connected"))
+    devices = tuple((item.get("address"), item.get("name"), item.get("paired"), item.get("connected"), item.get("trusted"))
                     for item in status.get("devices", ()))
     signature = repr((self.status is None, status.get("available"), status.get("powered"), status.get("parked"),
                       status.get("discovering"), status.get("errorCode"), status.get("pairing"), devices,
@@ -277,7 +286,11 @@ class BluetoothLarge(Widget):
           rows.append(button_item("Reject pairing", "Reject", callback=lambda p=prompt:
             self._request("pairing_response", prompt_id=p["id"], accepted=False), enabled=self._pairing_ready))
         rows.append(button_item("Cancel pairing", "Cancel", callback=lambda: self._request("cancel_pair"), enabled=self._pairing_ready))
+      links = []
       for device in status.get("devices", ()):
+        if is_app_link(device):
+          links.append(device)
+          continue
         address = device.get("address")
         name = "".join(char for char in str(device.get("name") or "") if char.isprintable()).strip()
         address_name = bool(re.fullmatch(r"(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}", name))
@@ -290,6 +303,12 @@ class BluetoothLarge(Widget):
           rows.append(button_item("Forget " + device_label(device), "Forget", callback=lambda a=address:
             self._confirm("Forget this Bluetooth device?", lambda: self._forget(a)),
             enabled=lambda: self.active and self._ready()))
+      if links:
+        rows.append(text_item("App pairings", "Phones connected through the StarPilot app. These are not Bluetooth pairings."))
+        for device in links:
+          link_address = device.get("address")
+          rows.append(button_item(device_label(device), "Forget", description=link_address, callback=lambda a=link_address:
+            self._confirm("Forget this app connection?", lambda: self._forget(a)), enabled=lambda: self.active and self._ready()))
     rows.extend(large_phone_rows(self.phone_pairing_allowed))
     previous = getattr(self, "_scroller", None)
     self._scroller = Scroller(rows, spacing=0, line_separator=True)

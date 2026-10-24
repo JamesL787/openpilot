@@ -42,6 +42,7 @@ def exercise(*, failure=None, polls=86, pending=True):
       'b' * 64, (0., 0., 0.), calibration_generation='c' * 32)
 
   def update(timeout=None):
+    sm.updated = dict.fromkeys(sm.messages, False)
     if timeout == 0:
       return
     loop[0] += 1
@@ -56,6 +57,9 @@ def exercise(*, failure=None, polls=86, pending=True):
     sm['carState'].canValid = True
     sm['deviceMotion'].inputsOK = True
     sm['deviceMotion'].timestamp = pose
+    sm.logMonoTime['deviceMotion'] = pose
+    sm.updated['deviceMotion'] = not right
+    sm.updated['carState'] = sm.updated['lateralDelay'] = True
     sm.recv_time['deviceMotion'] = (pose + 2_000_000) / 1e9
     sm.logMonoTime['carState'] = state
     sm.logMonoTime['lateralDelay'] = clock[0]

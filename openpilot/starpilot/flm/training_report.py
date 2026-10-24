@@ -289,6 +289,8 @@ class TrainingReporter:
           'controls': 0 if receipts is None else len(receipts.controls),
           'readyPairs': len(collector.ready),
         }
+        from openpilot.starpilot.flm.source_observation_report import refusal_report
+        details['GLOBAL source observation refusals'] = refusal_report(collector)
         details['GLOBAL response bootstrap readiness'] = dict(getattr(collector, '_live_bootstrap_readiness',
           {'reason': 'response_snapshot_not_attempted'}))
       readiness_reader = getattr(collector, 'snapshot_readiness_report', None)

@@ -201,12 +201,14 @@ int runMachine(Replay &replay, int output, int start_segment) {
     }
     json11::Json::array warnings;
     if (replay.legacyClock()) warnings.emplace_back("Legacy recording uses original timestamps; exact camera/HUD clock alignment is unavailable.");
+    if (replay.timelineIncomplete()) warnings.emplace_back("Timeline history is incomplete; unavailable evidence remains neutral.");
     const auto value = json11::Json::object{
       {"event", "status"}, {"state", replay.state()}, {"position", replay.currentSeconds()},
       {"start", replay.minSeconds()}, {"end", replay.maxSeconds()}, {"rate", replay.getSpeed()},
       {"paused", replay.isPaused()}, {"epoch", double(replay.epoch())},
       {"routeStartNs", double(replay.routeStartNanos())}, {"wallMinusMonoNs", std::to_string(replay.wallMinusMonoNanos())},
       {"seekRanges", ranges}, {"segmentRanges", segment_ranges}, {"sourceWarnings", warnings}, {"lastRequestId", last_request},
+      {"timelineState", replay.timelineState()},
       {"error", command_error.empty() ? replay.error() : command_error}};
     const auto line = json11::Json(value).dump() + "\n";
     return write(output, line.data(), line.size()) == ssize_t(line.size());

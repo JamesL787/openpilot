@@ -271,9 +271,12 @@ def test_parser_supported_toyota_auxiliary_lkas_does_not_require_aol_admission(t
   params, cp = Params(str(tmp_path)), factory(vehicle)
   baseline = cp.to_dict()
   policy = policy_for(cp)
-  assert not (policy.intent_supported or policy.settings_supported or policy.runtime_supported or
-              policy.normal_runtime_supported or policy.full_axis_runtime_required)
-  assert policy.alternative_experience_addition == policy.safety_param_addition == 0
+  # Bare factory RAV4 uses qualified angle AOL; keyless SecOC Sienna stays refused.
+  admitted = vehicle == CAR.TOYOTA_RAV4_TSS2_2023
+  assert all(value == admitted for value in (policy.intent_supported, policy.settings_supported, policy.runtime_supported,
+                                            policy.normal_runtime_supported, policy.full_axis_runtime_required))
+  assert policy.alternative_experience_addition == (32 if admitted else 0)
+  assert policy.safety_param_addition == 0
   assert policy.auxiliary_lkas_supported
   wheel = feature(params, cp)
   rows = {row.key: row for row in wheel.rows()}
@@ -309,7 +312,7 @@ def test_aol_unsupported_toyota_bookmark_reaches_real_native_callback(native_ses
   runtime, session, ui, _, _ = native_session
   ui.CP = factory(vehicle)
   ui.has_longitudinal_control = ui.CP.openpilotLongitudinalControl
-  assert not policy_for(ui.CP).intent_supported
+  assert policy_for(ui.CP).intent_supported == (vehicle == CAR.TOYOTA_RAV4_TSS2_2023)
   calls = []
   session._native_favorite_actions = lambda: session.native_favorite_actions(
     lambda: calls.append('bookmark') or True, lambda _: True, lambda: True)

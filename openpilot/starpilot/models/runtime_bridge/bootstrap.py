@@ -1,6 +1,7 @@
 """Select the integrity-pinned driving and monitoring runtime before imports."""
 import hashlib
 import importlib
+import importlib.abc
 import importlib.machinery
 import importlib.util
 import json
@@ -90,6 +91,34 @@ def _namespace(name, directory):
   return importlib.util.module_from_spec(spec)
 
 
+class _PinnedSourceImports(importlib.abc.MetaPathFinder):
+  """Resolve only verified source files, before ambient editable/import hooks."""
+
+  def __init__(self, root):
+    self.roots = {'tinygrad': root / 'tinygrad', 'examples': root / 'examples',
+                  'tinygrad_repo': root, 'extra': root / 'extra'}
+
+  def find_spec(self, fullname, path=None, target=None):
+    family, *parts = fullname.split('.')
+    if family not in self.roots:
+      return None
+    leaf = self.roots[family].joinpath(*parts)
+    source = leaf / '__init__.py' if (leaf / '__init__.py').is_file() else leaf.with_suffix('.py')
+    if source.is_file():
+      _plain_path(source)
+      return importlib.util.spec_from_file_location(fullname, source)
+    if leaf.is_dir():
+      _plain_path(leaf)
+      return _namespace(fullname, leaf).__spec__
+    raise ModuleNotFoundError('Module is outside selected runtime source: ' + fullname, name=fullname)
+
+
+def _pin_source_imports(root):
+  finder = _PinnedSourceImports(root)
+  sys.meta_path.insert(0, finder)
+  return finder
+
+
 def _check_source_package(name, expected):
   spec = importlib.util.find_spec(name)
   if (spec is None or not isinstance(spec.loader, importlib.machinery.SourceFileLoader) or
@@ -153,6 +182,7 @@ def activate(bundle, manifest_sha256, compiler_revision, role, cache_root):
   _private_cache(cache)
   _private_cache(cache / 'xdg')
   old_path, old_bytecode, old_cache_prefix = sys.path[:], sys.dont_write_bytecode, sys.pycache_prefix
+  old_meta_path = sys.meta_path[:]
   old_env = {key: os.environ.get(key) for key in _ENV_KEYS}
   try:
     sys.path[:0] = [str(bundle), str(tg_root)]
@@ -164,11 +194,13 @@ def activate(bundle, manifest_sha256, compiler_revision, role, cache_root):
     # Fixed parent paths prevent namespace merging with the global runtime tree.
     sys.modules['tinygrad_repo'] = _namespace('tinygrad_repo', tg_root)
     sys.modules['extra'] = _namespace('extra', tg_root / 'extra')
+    _pin_source_imports(tg_root)
     importlib.invalidate_caches()
     _check_source_package('tinygrad', tg_root / 'tinygrad/__init__.py')
     _check_source_package('examples', tg_root / 'examples/__init__.py')
   except BaseException:
     sys.path[:] = old_path
+    sys.meta_path[:] = old_meta_path
     sys.dont_write_bytecode = old_bytecode
     sys.pycache_prefix = old_cache_prefix
     for name in ('tinygrad_repo', 'extra'):

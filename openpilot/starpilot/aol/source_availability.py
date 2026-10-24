@@ -111,6 +111,11 @@ def ordinary_source_availability(self, CS, now_ns, native=None, *, replay: bool,
   anchor = getattr(self, 'aol_ordinary_source_anchor', None)
   companion = getattr(self, 'aol_intent_companion', None)
   events = self.events.to_msg()
+  from openpilot.starpilot.car.gm.aol import held_sdgm_lateral_pedal
+  held_pedal = held_sdgm_lateral_pedal(self, CS)
+  if held_pedal:
+    events = [event for event in events if not (event.name == EventName.pedalPressed and
+      event.userDisable and not event.softDisable and not event.immediateDisable)]
   stock_user = None
   if any(event.name in (EventName.pcmDisable, EventName.cruiseDisabled) and event.userDisable for event in events):
     # Resolve the native value once, as this classifier already does below.
@@ -190,7 +195,8 @@ def ordinary_source_availability(self, CS, now_ns, native=None, *, replay: bool,
     bool(getattr(self, 'car_state_retained_valid', False) or held_metadata)),)
   if any(not valid or not sample.canValid or sample.canTimeout or sample.steerFaultPermanent or
          sample.steerFaultTemporary or sample.accFaulted or sample.doorOpen or sample.seatbeltUnlatched or
-         sample.brakePressed or sample.regenBraking or sample.gasPressed or physical_cancel(sample, self.CP) or
+         (sample.brakePressed or sample.regenBraking) and not held_pedal or
+         sample.gasPressed or physical_cancel(sample, self.CP) or
          sample.gearShifter not in (car.CarState.GearShifter.drive, car.CarState.GearShifter.sport,
                                    car.CarState.GearShifter.low, car.CarState.GearShifter.brake)
          for sample, valid in samples):
@@ -234,7 +240,8 @@ def ordinary_source_availability(self, CS, now_ns, native=None, *, replay: bool,
     return False
   native = native or native_provider(self.sm, self.CP, now_ns=now_ns, axis_session_id=self.aol_session_id)
   lateral_intent_only = bool(proof[8] and not proof[9] and not self.enabled)
-  if (native is None or lateral_intent_only and not (accepted.allowedLatch and accepted.lateralArmed and
+  if (native is None or held_pedal and (native.requestedLongitudinal or native.longitudinalAllowed) or
+      lateral_intent_only and not (accepted.allowedLatch and accepted.lateralArmed and
         not accepted.pauseLateral and not getattr(self, 'aol_dm_lateral_inhibit', False) and
         native.requestedLateral and native.lateralAllowed) or
       not healthy_transport(self.sm, self.CP, CS, self.aol_session_id, now_ns, native) or

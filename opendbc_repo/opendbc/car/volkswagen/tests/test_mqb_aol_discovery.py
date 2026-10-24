@@ -45,8 +45,8 @@ def test_normal_golf_discovery_and_card_stock_aol_owner(manual, gateway, alpha, 
                  'subAddress': None,
                  'fwVersion': 'f1873551303930373536374720f18930333930f182013031'}],
    'origin': 'Synthetic ECU bytes from configuration-matrix.json; actual matcher must verify uniqueness.'}
-  fw = [structs.CarParams.CarFw(ecu=getattr(structs.CarParams.Ecu, r['ecu']),
-        address=r['address'], subAddress=r['subAddress'] or 0, fwVersion=bytes.fromhex(r['fwVersion']),
+  fw = [structs.CarParams.CarFw(ecu=getattr(structs.CarParams.Ecu, str(r['ecu'])),
+        address=r['address'], subAddress=r['subAddress'] or 0, fwVersion=bytes.fromhex(str(r['fwVersion'])),
         brand='volkswagen', bus=offset) for r in fixture['firmware']]
   exact, candidates = match_fw_to_car(fw, fixture['vin'], log=False)
   assert exact and candidates == {CAR.VOLKSWAGEN_GOLF_MK7}, (exact, candidates)

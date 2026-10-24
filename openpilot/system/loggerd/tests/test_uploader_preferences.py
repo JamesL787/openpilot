@@ -20,7 +20,7 @@ class TestUploadPreferences(unittest.TestCase):
   def run_loop(self, observations, *, force_wifi=False):
     main = next(node for node in ast.parse(Path(__file__).parents[1].joinpath('uploader.py').read_text()).body
                 if isinstance(node, ast.FunctionDef) and node.name == 'main')
-    state = NS(index=-1, calls=[], reads=[], cleared=False)
+    state = NS(index=-1, calls=[], reads=[], cleared=False, phone_checks=[])
 
     class Saved:
       def get(self, key):
@@ -47,12 +47,16 @@ class TestUploadPreferences(unittest.TestCase):
         state.calls.append((network, metered))
         return None
 
+    def phone_uplink_active():
+      state.phone_checks.append(state.index)
+      return observations[state.index].get('phone_uplink', False)
+
     namespace: dict = {'threading': NS(Event=object), 'Params': Saved, 'Uploader': InertUploader,
                  'Paths': NS(log_root=lambda: '/unused'), 'clear_locks': lambda _: None,
                  'set_core_affinity': lambda _: None, 'messaging': NS(SubMaster=lambda _: Master()),
                  'NetworkType': Network, 'force_wifi': force_wifi, 'allow_sleep': False,
                  'cloudlog': NS(info=lambda *_: None, exception=lambda *_: None),
-                 'active_provider': lambda: NS(name='comma')}
+                 'active_provider': lambda: NS(name='comma'), 'phone_uplink_active': phone_uplink_active}
     exec(compile(ast.Module(body=[main], type_ignores=[]), 'uploader.py', 'exec'), namespace)
     namespace['main'](NS(is_set=lambda: state.index + 1 >= len(observations)))
     return state
@@ -72,6 +76,15 @@ class TestUploadPreferences(unittest.TestCase):
   def test_force_wifi_preserves_actual_network_metadata_and_metering(self):
     state = self.run_loop([{'network': Network.none}, {'network': Network.cell, 'allow': True}], force_wifi=True)
     self.assertEqual(state.calls, [(0, True), (2, False)])
+
+  def test_phone_uplink_blocks_uploads_and_refreshes_despite_overrides(self):
+    for force_wifi in (False, True):
+      for allow in (False, True):
+        with self.subTest(force_wifi=force_wifi, allow=allow):
+          state = self.run_loop([{'phone_uplink': active, 'allow': allow} for active in (False, True, False)],
+                                force_wifi=force_wifi)
+          self.assertEqual(state.calls, [(2, not allow), (2, not allow)])
+          self.assertEqual(state.phone_checks, [0, 1, 2])
 
   def test_typed_persistent_default_is_off(self):
     keys = Path(__file__).parents[3].joinpath('common/params_keys.h').read_text()

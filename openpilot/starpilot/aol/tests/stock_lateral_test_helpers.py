@@ -117,9 +117,47 @@ def _hkg_family_callers(self, full_op=True):
   self.addCleanup(restore_simulation)
   os.environ['SIMULATION'] = '0'
   cp = self.family_cp.as_builder()
-  sd, controls, step = self._authority_callers(full_op, cp=cp, genuine_events=True)
-  card_cp = cp.as_reader().as_builder()
-  card = Car(CI=CarInterface(card_cp), RI=RadarInterface(card_cp))
+  startup = None
+  if cp.brand == 'hyundai' and CarInterface.startup_required(cp):
+    from types import SimpleNamespace
+    from opendbc.car.hyundai.ordinary_classic_startup import OrdinaryClassicStartup
+    from opendbc.car.hyundai.ecu_startup import Outcome
+
+    # Synthetic UDS transport, real exact-CP preparation/finalization owner.
+    # No startup_required/configure/admission or source predicate is replaced.
+    sent = []
+    startup = CarInterface.startup_owner(cp, (lambda **kwargs: [], sent.extend), requested=True)
+    self.assertIsInstance(startup, OrdinaryClassicStartup)
+
+    def query(send, recv, bus, addresses, requests, responses):
+      self.assertEqual((bus, addresses), (0, [(0x7D0, None)]))
+      request = requests[0]
+      self.assertIn(request, (b'\x10\x03', b'\x28\x83\x01', b'\x28\x00\x01', b'\x10\x01'))
+
+      def receive(timeout):
+        send([(0x7D0, bytes([len(request)]) + request + bytes(7 - len(request)), bus)])
+        return {} if request == b'\x28\x83\x01' else {(0x7D0, None): b''}
+      return SimpleNamespace(get_data=receive)
+    startup._query = query
+    self.addCleanup(startup.close)
+    with mock.patch.object(time, 'clock_gettime_ns', return_value=9_970_000_000):
+      cp = startup.prepare(admission=lambda: not startup.published)
+    self.assertEqual(startup.outcome, Outcome.SENT_UNCONFIRMED)
+    self.assertTrue(startup.disable_attempted and startup.prepared_for(cp))
+    saved = Params()
+    saved.put_bool('OpenpilotEnabledToggle', True, block=True)
+    saved.put_bool('AlwaysOnLateral', True, block=True)
+    saved.put_bool('SafeMode', False, block=True)
+    card_cp = cp.as_reader().as_builder()
+    card = Car(CI=CarInterface(card_cp), RI=RadarInterface(card_cp), startup_owner=startup)
+    self.assertTrue(startup.published and startup.prepared_for(card.CP))
+    self.assertFalse(startup.before_control(configured=True, sources_current=False, control_current=True))
+    cp = card.CP.as_reader().as_builder()
+    sd, controls, step = self._authority_callers(full_op, cp=cp, genuine_events=True)
+  else:
+    sd, controls, step = self._authority_callers(full_op, cp=cp, genuine_events=True)
+    card_cp = cp.as_reader().as_builder()
+    card = Car(CI=CarInterface(card_cp), RI=RadarInterface(card_cp))
   self.assertEqual(card.CP.to_dict(), sd.CP.to_dict())
   from openpilot.starpilot.aol.vehicle import policy_for
 
@@ -153,6 +191,7 @@ def _hkg_family_callers(self, full_op=True):
       mock.patch('openpilot.selfdrive.car.card.messaging.drain_sock_raw', return_value=[b'fixture']),
       mock.patch('openpilot.selfdrive.car.card.can_capnp_to_list', return_value=[]),
       mock.patch('openpilot.selfdrive.car.card.time.monotonic_ns', return_value=now),
+      mock.patch('openpilot.selfdrive.car.card.time.clock_gettime_ns', return_value=now),
       mock.patch('openpilot.selfdrive.car.card.REPLAY', False),
       mock.patch.object(card.CI, 'update', return_value=observed),
       mock.patch.object(card.RI, 'update', return_value=None),

@@ -135,14 +135,36 @@ class TestGmConventionalPedalStartup(unittest.TestCase):
         self.assertTrue(sent.pop().confirmation)
       page = Mock(spec=compact.NavScroller)
       adapter = compact.FeatureSettingsCompact(Mock(feature_request=lambda request, sent=sent: sent.append(request) or True))
-      with patch.object(compact, 'BigButton', Button), patch.object(compact, 'ConfirmDialog', Dialog), \
-           patch.object(compact.gui_app, 'get_active_widget', return_value=page), \
+      class DescriptionDialog:
+        def __init__(self, *_args):
+          self.buttons = []
+          self._scroller = Mock(add_widgets=self.buttons.extend)
+
+        def dismiss(self, callback=None):
+          if callback is not None:
+            callback()
+
+      class ConfirmationButton:
+        def __init__(self, _title, _icon, callback):
+          self.confirm = callback
+
+      with patch.object(compact, 'BigButton', Button), \
+           patch.object(compact, 'SettingDescriptionDialog', DescriptionDialog), \
+           patch.object(compact, 'BigConfirmationCircleButton', ConfirmationButton), \
+           patch.object(compact.gui_app, 'texture', return_value=None), \
+           patch.object(compact.gui_app, 'get_active_widget', return_value=page) as active_page, \
            patch.object(compact.gui_app, 'push_widget', dialogs.append):
         button = adapter._editable(row, lambda: None, page)[0]
         button.click()
         self.assertFalse(sent)
-        dialogs.pop().callback(DialogResult.CANCEL)
+        dialogs.pop().dismiss()
         self.assertFalse(sent)
         button.click()
-        dialogs.pop().callback(DialogResult.CONFIRM)
+        dialog = dialogs.pop()
+        active_page.return_value = None
+        dialog.buttons[0].confirm()
+        self.assertFalse(sent)
+        active_page.return_value = page
+        button.click()
+        dialogs.pop().buttons[0].confirm()
         self.assertTrue(sent.pop().confirmation)

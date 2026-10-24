@@ -34,11 +34,14 @@ def test_stock_lat_intent_fresh_lag_then_source_gap_then_recovery(family):
     with mock.patch.object(sd.rk.avg_dt, 'get_average', return_value=0.02):
       lag, state, command = drive(3, state_stamp=first, **settings('lateral_only', first, 4))
       assert not state.enabled and not state.active and not command.latActive and not command.longActive
-      assert str(lag.faultReason) == 'critical' and lag.sourceCarStateMonoTime == first
+      assert str(lag.faultReason) == 'availabilityPause' and lag.sourceCarStateMonoTime == first
       assert not lag.lateralActive and not lag.longitudinalActive and not lag.nativeAcknowledged
-      witness = sd.aol_published_fault_proof
-      assert witness is not None and len(witness) == 9 and not any(witness[4:])
-      assert witness[0] == sd.aol_session_id and witness[1] == 'critical' and witness[2] == lag.faultEventMonoTime
+      assert not lag.desiredLateral and not lag.desiredLongitudinal
+      assert lag.faultSessionId == sd.aol_session_id and lag.faultEventMonoTime == first
+      assert lag.validUntilMonoTime == lag.observedMonoTime + 30_000_000
+      # SOFT availability is not a fabricated critical/user-disable witness.
+      assert sd.aol_published_fault_proof is None
+      assert sd.aol_published_stock_lateral_proof is None
       users = [e for e in sd.events.to_msg() if e.userDisable]
       expected = log.OnroadEvent.EventName.cruiseDisabled if family == 'honda' else log.OnroadEvent.EventName.pcmDisable
       assert users and all(e.name == expected and not e.softDisable and not e.immediateDisable for e in users)

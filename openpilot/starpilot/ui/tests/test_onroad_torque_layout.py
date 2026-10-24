@@ -6,7 +6,7 @@ from unittest.mock import patch
 import numpy as np
 import pyray as rl
 
-from openpilot.starpilot.ui.onroad_customization import PROFILES, default_document, validate_document
+from openpilot.starpilot.ui.onroad_customization import PROFILES, default_document, validate_document, widget_size
 from openpilot.starpilot.ui.onroad_state import OnroadState, SpeedLimitObservation
 from openpilot.starpilot.ui.onroad_torque import TorqueBarWidget
 
@@ -79,7 +79,11 @@ class TestTorqueLayout(unittest.TestCase):
     for key in ('max_speed', 'driver_monitor', 'steering_wheel'):
       with self.subTest(key=key):
         invalid = default_document()
-        invalid['layouts']['compact'][key].update(x=174, y=19 if key == 'max_speed' else 130)
+        actions = invalid['layouts']['compact']['speed_limit_actions']
+        _, height = widget_size(invalid, 'compact', key)
+        invalid['layouts']['compact'][key].update(x=actions['x'], y=actions['y'] - height)
+        self.assertEqual(validate_document(invalid), invalid)  # Touching edges do not overlap.
+        invalid['layouts']['compact'][key]['y'] += 1
         with self.assertRaises(ValueError):
           validate_document(invalid)
 

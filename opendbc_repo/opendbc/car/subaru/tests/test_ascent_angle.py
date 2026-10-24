@@ -3,7 +3,6 @@ from math import isclose
 
 from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, structs
-from opendbc.car.subaru import subarucan
 from opendbc.car.subaru.carcontroller import CarController
 from opendbc.car.subaru.carstate import CarState
 from opendbc.car.subaru.interface import CarInterface
@@ -54,7 +53,7 @@ def receive_distance(cp, state, parsers, counter, now):
 
 
 class TestSubaruAscentController(unittest.TestCase):
-  def test_ascent_admission_and_outback_unchanged(self):
+  def test_ascent_and_outback_angle_admission(self):
     cp, _, _, state = setup_controller()
     assert not cp.dashcamOnly
     assert not cp.openpilotLongitudinalControl
@@ -65,14 +64,26 @@ class TestSubaruAscentController(unittest.TestCase):
     assert state.out.cruiseState.enabled
     assert state.out.cruiseState.available
     outback = CarInterface.get_non_essential_params(CAR.SUBARU_OUTBACK_2023)
-    assert outback.dashcamOnly
-    assert outback.safetyConfigs[0].safetyParam == SubaruSafetyFlags.GEN2
+    assert not outback.dashcamOnly
+    assert not outback.openpilotLongitudinalControl
+    assert not outback.alphaLongitudinalAvailable
+    assert outback.steerControlType == structs.CarParams.SteerControlType.angle
+    assert outback.safetyConfigs[0].safetyParam == (SubaruSafetyFlags.GEN2 | SubaruSafetyFlags.LKAS_ANGLE |
+                                                  SubaruSafetyFlags.FIXED_ANGLE_LIMITS | SubaruSafetyFlags.D_PLATFORM)
     _, controller, command, state = setup_controller(CAR.SUBARU_OUTBACK_2023)
     command.latActive = False
     _, sends = controller.update(command.as_reader(), state, 1_000_000_000)
-    assert not any(frame[0] == 0x124 for frame in sends)
-    torque = next(frame for frame in sends if frame[0] == 0x122)
-    assert torque == subarucan.create_steering_control(CANPacker(DBC[CAR.SUBARU_OUTBACK_2023][Bus.pt]), 0, False)
+    assert not any(frame[0] == 0x122 for frame in sends)
+    angle = next(frame for frame in sends if frame[0] == 0x124)
+    parser = CANParser(DBC[CAR.SUBARU_OUTBACK_2023][Bus.pt], [('ES_LKAS_ANGLE', 0)], angle[2])
+    parser.update([(1, [angle])])
+    assert angle[2] == 0
+    assert parser.vl['ES_LKAS_ANGLE']['LKAS_Request'] == 0
+
+    for unsupported in (CAR.SUBARU_CROSSTREK_HYBRID, CAR.SUBARU_FORESTER_PREGLOBAL):
+      unsupported_cp = CarInterface.get_non_essential_params(unsupported)
+      assert unsupported_cp.dashcamOnly
+      assert not unsupported_cp.safetyConfigs[0].safetyParam & SubaruSafetyFlags.LKAS_ANGLE
 
   def test_first_entry_and_reentry_use_original_transmitted_history(self):
     _, controller, command, state = setup_controller()

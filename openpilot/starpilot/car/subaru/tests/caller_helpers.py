@@ -70,7 +70,10 @@ def actual_factory(candidate, fingerprint, fw, vin, *, manual, alpha=False, rele
     ]:
       params.put_bool(key, value, block=True)
     for key, value in (preferences or {}).items():
-      params.put_bool(key, value, block=True)
+      if type(value) is bool:
+        params.put_bool(key, value, block=True)
+      else:
+        params.put(key, value, block=True)
     params.put('VehicleSelection', json.loads(encode(str(candidate) if manual else None)), block=True)
     _, matches = match_fw_to_car(fw, vin, log=False)
     if not manual:

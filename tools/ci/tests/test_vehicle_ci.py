@@ -16,6 +16,40 @@ from tools.ci.record_firmware import compile_commands
 
 
 class TestVehicleCollection(unittest.TestCase):
+
+  def test_gv70_two_panda_and_stop_parity_callers_are_required(self):
+    required = (
+      'openpilot/starpilot/aol/tests/test_hkg_cancel_joined.py',
+      'openpilot/starpilot/aol/tests/test_gv70_two_panda_long.py',
+      'openpilot/starpilot/longitudinal/tests/test_gv70_stopping_parity.py',
+    )
+    targets = targets_for('aol-lifecycle')
+    self.assertLessEqual(set(required), set(targets))
+    for target in targets:
+      self.assertTrue(target.endswith('.py'), target)
+      self.assertNotIn('::', target)
+
+
+  def test_hkg_gv60_and_inherited_profile_guards_are_required(self):
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_hyundai_gv60_long.py::TestGV60LongDebug', targets_for('safety-debug'))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_hyundai_blended_alpha_inherited.py', targets_for('safety-debug'))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_hyundai_gv60_long.py::TestGV60LongReleaseDenied', targets_for('safety-release'))
+
+  def test_stock_angle_recovery_callers_are_required_by_vehicle_ci(self):
+    for path in ('opendbc_repo/opendbc/safety/tests/test_hyundai_angle_tx_recovery.py',
+                 'openpilot/starpilot/aol/tests/test_stock_angle_physical_recovery.py'):
+      self.assertIn(path, targets_for('aol-lifecycle'))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_hyundai_angle_tx_recovery.py', targets_for('safety-debug'))
+
+  def test_hkg_mode_parity_callers_are_required(self):
+    path = 'opendbc_repo/opendbc/safety/tests/test_hkg_mode_parity.py'
+    self.assertIn(path, targets_for('aol-lifecycle'))
+    self.assertIn(path, targets_for('safety-debug'))
+
+  def test_pe_real_stop_caller_is_required_by_vehicle_ci(self):
+    path = 'opendbc_repo/opendbc/safety/tests/test_pe_stopped_callers.py'
+    self.assertIn(path, targets_for('aol-lifecycle'))
+    self.assertIn(path, targets_for('safety-debug'))
   def test_pe_combined_native_callers_and_refusals_keep_debug_release_separate(self):
     for target in (
       'opendbc_repo/opendbc/safety/tests/test_pe_combined_callers.py',
@@ -124,7 +158,8 @@ class TestVehicleCollection(unittest.TestCase):
     test = unittest.FunctionTestCase(lambda: None)
     with tempfile.TemporaryDirectory() as directory, \
          patch.object(test, 'id', return_value=test_id), \
-         patch.object(run_vehicle_tests, 'source_provenance', side_effect=[{'inputs': 'before'}, {'inputs': 'after'}]), \
+         patch.object(run_vehicle_tests, 'source_provenance', side_effect=[{'inputs': value, 'build_identity': {'inputs': {'revision': 'fixture'}}}
+                                                                          for value in ('before', 'after')]), \
          patch.object(run_vehicle_tests, 'vehicle_inventory', return_value={'platform_ids': ['A'], 'platform_count': 1}), \
          patch.object(run_vehicle_tests, 'native_provenance', return_value={}), \
          patch.object(run_vehicle_tests, 'audit_interface_modules', return_value=([], [])), \
@@ -170,7 +205,7 @@ class TestVehicleCollection(unittest.TestCase):
       "__module__": module.__name__, "setUpClass": set_up_class, "test_car_interfaces_A": lambda self: self.fail("unreachable")})
     tests = list(test_runner.flatten(unittest.defaultTestLoader.loadTestsFromModule(module)))
     with tempfile.TemporaryDirectory() as directory, patch.dict(sys.modules, {module.__name__: module}), \
-         patch.object(run_vehicle_tests, "source_provenance", return_value={}), \
+         patch.object(run_vehicle_tests, "source_provenance", return_value={"build_identity": {"inputs": {"revision": "fixture"}}}), \
          patch.object(run_vehicle_tests, "vehicle_inventory", return_value={"platform_ids": ["A"], "platform_count": 1}), \
          patch.object(run_vehicle_tests, "native_provenance", return_value={}), \
          patch.object(run_vehicle_tests, "audit_interface_modules", return_value=([], [])), \
@@ -198,6 +233,8 @@ class TestVehicleCollection(unittest.TestCase):
 
           for name in ("source_provenance", "vehicle_inventory", "native_provenance"):
             value = {"platform_ids": ["A"], "platform_count": 1} if name == "vehicle_inventory" else {}
+            if name == "source_provenance":
+              value = {"build_identity": {"inputs": {"revision": "fixture"}}}
             stack.enter_context(patch.object(run_vehicle_tests, name, side_effect=fail if name == failing else None, return_value=value))
           stack.enter_context(patch.object(run_vehicle_tests.vehicle_pytest, "split_targets", return_value=(["fixture.py"], [])))
           stack.enter_context(patch.object(run_vehicle_tests.vehicle_pytest, "collect", return_value=([], [])))
@@ -363,3 +400,4 @@ class TestCar(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
+

@@ -147,7 +147,13 @@ def run_neutral(identity, aol, variation):
       def capture(frames, valid=True):
         emitted.extend((now[0], frame, valid) for frame in frames)
         original_send(frames, valid=valid)
-      with patch.object(card, 'publish_sendcan', side_effect=capture):
+      write_bool = card.params.put_bool
+      def persist_readiness(key, value, block=False):
+        # Persist Card's actual readiness request before advancing simulated time.
+        # The real asynchronous writer otherwise races the fixture's virtual clock.
+        return write_bool(key, value, block=block or key == 'ControlsReady')
+      with patch.object(card, 'publish_sendcan', side_effect=capture), \
+           patch.object(card.params, 'put_bool', side_effect=persist_readiness):
         for tick in range(620):
           now[0] = stamp = 10_000_000_000 + tick * 10_000_000
           native.set_timer(stamp // 1000)

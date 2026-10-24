@@ -20,18 +20,24 @@ PROFILES = (
 
 @pytest.mark.parametrize('identity,base_word', PROFILES)
 @pytest.mark.parametrize('alpha', (False, True))
-def test_unmarked_profiles_keep_actual_ordinary_controls(identity, base_word, alpha, monkeypatch):
+@pytest.mark.parametrize('topology', ('automatic', 'manual', 'multi-panda', 'manual-multi'))
+def test_unmarked_profiles_keep_actual_ordinary_controls(identity, base_word, alpha, topology, monkeypatch):
   from openpilot.common.params import Params
   from openpilot.common.prefix import OpenpilotPrefix
   from openpilot.selfdrive.controls.controlsd import Controls
   from openpilot.starpilot.lateral.tests.test_lane_runtime import feed
-  from opendbc.car.ford.tests.test_three_ports import params
 
   monkeypatch.setenv('REPLAY', '1')
   monkeypatch.setenv('AOL_REPLAY_RUNTIME', '0')
-  cp = params(identity, alpha, False)
+  offset = 4 if topology in ('multi-panda', 'manual-multi') else 0
+  manual = topology in ('manual', 'manual-multi')
+  fp = gen_empty_fingerprint()
+  if not manual:
+    fp[offset][0x5A] = 8
+  fp[offset + 2].update({0x3D6: 8, 0x186: 8})
+  cp = CarInterface.get_params(identity, fp, [], alpha, True, False)
   assert cp.alternativeExperience == 0
-  assert cp.safetyConfigs[0].safetyParam == base_word | int(alpha)
+  assert cp.safetyConfigs[-1].safetyParam == base_word | int(alpha)
   with OpenpilotPrefix():
     saved = Params()
     saved.put_bool('AlwaysOnLateral', False, block=True)
@@ -67,15 +73,17 @@ def run_startup(identity, base_word, alpha, release, topology, monkeypatch):
   if topology != "manual":
     fingerprint[offset][0x5A] = 8
   fingerprint[offset + 2].update({0x3D6: 8, 0x186: 8})
-  expected_long = alpha and not release
-  expected_word = base_word | int(expected_long)
+  expected_long = alpha
+  initial_word = base_word | int(expected_long)
+  expected_word = initial_word | (256 if topology == "manual" else 0)
   initial = CarInterface.get_params(identity, fingerprint, [], expected_long, release, False)
   initial.carVin = "0" * 17
   initial.carFw = []
-  admitted = topology == "automatic"
+  admitted = True
   expected = initial.to_dict()
   expected["alternativeExperience"] = 32 if admitted else 0
-  assert initial.safetyConfigs[-1].safetyParam == expected_word
+  expected["safetyConfigs"][-1]["safetyParam"] = expected_word
+  assert initial.safetyConfigs[-1].safetyParam == initial_word
   assert initial.openpilotLongitudinalControl == expected_long
   assert not initial.passive and not initial.dashcamOnly
   with OpenpilotPrefix():
@@ -145,7 +153,7 @@ def run_startup(identity, base_word, alpha, release, topology, monkeypatch):
       controls.publish(command, lateral_log)
       ci.apply(command.as_reader(), 1_000_000_000)
       if admitted:
-        from openpilot.starpilot.aol.wire import SAFETY_SERVICE, SafetyState, encode_safety
+        from openpilot.starpilot.aol.wire import SAFETY_SERVICE, PandaSlot, SafetyState, encode_safety
 
         for tick, (acknowledged, stale) in enumerate(((False, False), (True, False), (True, True)), 1):
           now = 1_000_000_000 + tick * 10_000_000
@@ -160,8 +168,11 @@ def run_startup(identity, base_word, alpha, release, topology, monkeypatch):
           axis.aolAxisState.nativeAcknowledged = acknowledged
           native = messaging.new_message(SAFETY_SERVICE, 0, valid=True, logMonoTime=now)
           native.aolSafetyWire = encode_safety(SafetyState(
-            1, True, now, now + 200_000_000, int(card.CP.safetyConfigs[0].safetyModel.raw),
-            card.CP.safetyConfigs[0].safetyParam, acknowledged, False, True, False, 'fixture-panda', 'ford-current'))
+            1, True, now, now + 200_000_000, int(card.CP.safetyConfigs[-1].safetyModel.raw),
+            card.CP.safetyConfigs[-1].safetyParam, acknowledged, False, True, False, 'fixture-panda', 'ford-current', sourcePandaStatesMonoTime=now,
+            pandaInventory=tuple(PandaSlot(index, 'fixture-panda' if index == len(card.CP.safetyConfigs) - 1 else 'passive-panda',
+              int(config.safetyModel.raw), config.safetyParam, 32, False, False)
+              for index, config in enumerate(card.CP.safetyConfigs))))
           controls.sm.update_msgs(now / 1e9, [axis.as_reader(), native.as_reader()])
           active_command, _ = controls.state_control()
           assert active_command.enabled
@@ -182,7 +193,7 @@ def test_actual_card_aol_publication_and_disabled_controls(identity, word, alpha
 
 @pytest.mark.parametrize("identity,word", PROFILES)
 @pytest.mark.parametrize("topology", ("manual", "multi-panda"))
-def test_aol_denied_topology_preserves_actual_ordinary_startup(identity, word, topology, monkeypatch):
+def test_aol_manual_and_multi_panda_keep_actual_ordinary_startup(identity, word, topology, monkeypatch):
   run_startup(identity, word, False, False, topology, monkeypatch)
 
 

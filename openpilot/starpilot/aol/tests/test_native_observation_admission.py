@@ -191,7 +191,7 @@ def test_unsupported_owner_or_legacy_wire_keeps_full_validation(legacy):
 
 
 @pytest.mark.parametrize('profile_name', ['honda', 'ev6_two_pandas'])
-def test_other_admitted_profiles_keep_full_validation(profile_name):
+def test_other_admitted_profiles_use_only_scoped_reuse(profile_name):
   if profile_name == 'honda':
     from opendbc.car import gen_empty_fingerprint
     from opendbc.car.honda.interface import CarInterface
@@ -211,8 +211,8 @@ def test_other_admitted_profiles_keep_full_validation(profile_name):
   with mock.patch.object(runtime, 'native_matches_cp', wraps=runtime.native_matches_cp) as profile:
     assert current(sm, cp) == state
     assert current(sm, cp) == state
-    assert profile.call_count == 2
-  assert sm._aol_native_admission is None
+    assert profile.call_count == 1
+  assert sm._aol_native_admission is not None
 
 
 def test_rejected_observation_then_valid_recovery_cannot_reuse_a_failed_verdict():

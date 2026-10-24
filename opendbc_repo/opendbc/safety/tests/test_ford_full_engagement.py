@@ -3,7 +3,6 @@
 import pytest
 
 from opendbc.car import structs
-from opendbc.safety.tests.ford_release_contract import assert_release_denial
 from opendbc.safety.tests.test_ford_aol import TestFordAolDriverIntent as _FordNative
 
 WORDS = (8, 9, 10, 11, 12, 13, 18, 19, 32, 33, 66, 67)
@@ -21,14 +20,10 @@ def ford_native():
 
 def select(native, word, *, ae=32):
   safety = native.safety
-  debug = safety.set_safety_hooks(structs.CarParams.SafetyModel.allOutput, 0) == 0
   safety.init_tests()
   safety.set_alternative_experience(ae)
   result = safety.set_safety_hooks(structs.CarParams.SafetyModel.ford, word)
   assert result == 0
-  if not debug and word in (11, 19, 67):
-    assert_release_denial(native, word)
-    pytest.skip('RELEASE configuration/physical RX/AOL and TX denial proved; positive vector requires DEBUG')
   native.word, native.tick = word & ~1, 0
   safety.set_aol_test_heartbeat(True)
 

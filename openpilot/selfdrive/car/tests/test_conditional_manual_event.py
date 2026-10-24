@@ -141,6 +141,7 @@ class CardManualEventTests(unittest.TestCase):
               rk=NS(remaining=0.0), v_cruise_helper=VCruiseHelper(self.cp), slc_receipts=[])
     initialize_publication_sources(fake)
     fake.radar_publish = MethodType(Car.radar_publish, fake)
+    fake._feedback_capture = MethodType(Car._feedback_capture, fake)
     fake.publish_traffic_receipt = lambda event: Car.publish_traffic_receipt(cast(Car, fake), event)
     Car.state_publish(cast(Car, fake), state(), None)
     records = [messaging.log_from_bytes(payload).slcCruiseEvent for service, payload in publisher.events
@@ -243,6 +244,7 @@ class CardManualEventTests(unittest.TestCase):
               rk=NS(remaining=0.0), v_cruise_helper=VCruiseHelper(self.cp), slc_receipts=[])
     initialize_publication_sources(fake)
     fake.radar_publish = MethodType(Car.radar_publish, fake)
+    fake._feedback_capture = MethodType(Car._feedback_capture, fake)
     fake.publish_traffic_receipt = lambda event: Car.publish_traffic_receipt(cast(Car, fake), event)
     Car.state_publish(cast(Car, fake), state(), None)
     published = [messaging.log_from_bytes(payload) for service, payload in publisher.events
@@ -271,6 +273,7 @@ class CardManualEventTests(unittest.TestCase):
               can_log_mono_time=self.now + 2_000_000)
     initialize_publication_sources(fake)
     fake.radar_publish = MethodType(Car.radar_publish, fake)
+    fake._feedback_capture = MethodType(Car._feedback_capture, fake)
     invalid = car.CarState(canValid=False)
     with patch('openpilot.selfdrive.car.card.REPLAY', True):
       fake.publish_traffic_receipt = lambda event: Car.publish_traffic_receipt(cast(Car, fake), event)
@@ -300,6 +303,7 @@ class CardManualEventTests(unittest.TestCase):
               v_cruise_helper=VCruiseHelper(self.cp), slc_receipts=[])
     initialize_publication_sources(fake)
     fake.radar_publish = MethodType(Car.radar_publish, fake)
+    fake._feedback_capture = MethodType(Car._feedback_capture, fake)
     fake.publish_traffic_receipt = lambda event: Car.publish_traffic_receipt(cast(Car, fake), event)
     Car.state_publish(cast(Car, fake), release, None)
     car_events = [messaging.log_from_bytes(payload).carState for service, payload in publisher.events if service == 'carState']

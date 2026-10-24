@@ -35,7 +35,7 @@ def test_filter_preserves_radar_and_existing_tune(alpha):
     disable.assert_not_called()
 
 
-@pytest.mark.parametrize('fault', ['length', 'camera', 'radar_bus', 'duplicate', 'pedal', 'sdsu', 'sibling'])
+@pytest.mark.parametrize('fault', ['length', 'camera', 'radar_bus', 'mismatched_copy', 'pedal', 'sdsu', 'sibling'])
 def test_filter_detection_rejects_wrong_topology(fault):
   fp = gen_empty_fingerprint()
   fp[0][0x2AA] = 8
@@ -44,8 +44,8 @@ def test_filter_detection_rejects_wrong_topology(fault):
     fp[0][0x2AA] = 7
   elif fault in ('camera', 'radar_bus'):
     fp[2 if fault == 'camera' else 1][0x2AA] = fp[0].pop(0x2AA)
-  elif fault == 'duplicate':
-    fp[2][0x2AA] = 8
+  elif fault == 'mismatched_copy':
+    fp[2][0x2AA] = 7
   elif fault in ('pedal', 'sdsu'):
     fp[0][0x201 if fault == 'pedal' else 0x2FF] = 8
   else:

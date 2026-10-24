@@ -12,7 +12,8 @@ def current_native_health(sm, cp, control, now_ns):
       allowed
       and state is not None
       and control.native_allowed
-      and 0 < control.native_observed_ns <= control.control_ns <= now_ns <= control.native_expires_ns
+      and 0 < control.native_observed_ns <= control.control_ns <= control.native_expires_ns
+      and control.control_ns <= now_ns
       and identity == control.native_identity
     )
   except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
@@ -30,7 +31,8 @@ def current_ford_native_health(sm, cp, row, now_ns):
       and row.native_allowed
       and row.native_identity
       and identity == row.native_identity
-      and 0 < row.native_observed_ns <= row.native_validated_ns <= row.event_ns <= now_ns <= row.native_expires_ns
+      and 0 < row.native_observed_ns <= row.native_validated_ns <= row.event_ns <= row.native_expires_ns
+      and row.event_ns <= now_ns
       and row.native_command_ns == row.announced_control_ns
       and row.native_command_ns > 0
     )

@@ -153,3 +153,17 @@ class TestTeslaPreapRadar(unittest.TestCase):
     self.safety.safety_rx_hook(self.source(0x145))
     self.assertEqual(self.safety.get_recorded_can_count(), 1)
     self.assertFalse(self.safety.safety_tx_hook(self.recorded()[0]))
+
+  def test_invalid_steering_status_is_rewritten_with_literal_crc(self):
+    for parameter in (2, 6):
+      with self.subTest(parameter=parameter):
+        self.setUp()
+        self.safety.set_safety_hooks(39, parameter)
+        data = bytearray.fromhex('cdabffff78563400')
+        data[7] = stock_fixture.TestTeslaPreapStock.crc(data[:7])
+        self.safety.safety_rx_hook(make_msg(0, 0xE, dat=bytes(data)))
+        packets = self.recorded()
+        self.assertEqual(len(packets), 1)
+        self.assertEqual((packets[0][0].addr, packets[0][0].bus), (0x199, 1))
+        self.assertEqual(bytes(packets[0][0].data[0:8]), bytes.fromhex('cdabe0007456343d'))
+        self.assertFalse(self.safety.safety_tx_hook(packets[0]), 'scheduled ticket cannot be replayed by host')

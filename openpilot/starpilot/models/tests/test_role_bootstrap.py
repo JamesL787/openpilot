@@ -1,5 +1,7 @@
 """Integrity and import isolation of the production role bootstrap."""
 import importlib
+import importlib.abc
+import importlib.util
 import os
 import sys
 import types
@@ -148,3 +150,37 @@ class BootstrapTests(BootstrapFixture):
 
 if __name__ == '__main__':
   unittest.main()
+
+
+class SourceHookTests(BootstrapFixture):
+  def test_selected_source_wins_over_ambient_meta_path_hook(self):
+    outside = self.base / 'ambient'
+    (outside / 'tinygrad').mkdir(parents=True)
+    (outside / 'tinygrad/__init__.py').write_text("raise AssertionError('ambient source executed')")
+
+    class AmbientHook(importlib.abc.MetaPathFinder):
+      def find_spec(hook, fullname, path=None, target=None):
+        if fullname == 'tinygrad':
+          return importlib.util.spec_from_file_location(fullname, outside / 'tinygrad/__init__.py')
+        return None
+
+    sys.meta_path.insert(0, AmbientHook())
+    self.activate()
+    selected = importlib.import_module('tinygrad')
+    self.assertEqual(selected.IDENTITY, 'selected legacy')
+    self.assertEqual(selected.__file__, str(self.bundle / 'tinygrad_repo/tinygrad/__init__.py'))
+
+  def test_selected_children_cannot_fall_back_to_ambient_hook(self):
+    outside = self.base / 'unowned.py'
+    outside.write_text("raise AssertionError('unowned child executed')")
+
+    class AmbientHook(importlib.abc.MetaPathFinder):
+      def find_spec(hook, fullname, path=None, target=None):
+        if fullname == 'tinygrad.unowned':
+          return importlib.util.spec_from_file_location(fullname, outside)
+        return None
+
+    sys.meta_path.insert(0, AmbientHook())
+    self.activate(role='monitoring')
+    with self.assertRaises(ModuleNotFoundError):
+      importlib.import_module('tinygrad.unowned')

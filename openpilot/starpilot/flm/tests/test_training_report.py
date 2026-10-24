@@ -206,8 +206,9 @@ def test_actual_parent_publication_also_writes_training_snapshot(tmp_path):
   control, applied, physical = snapshots(NOW)
   source = SourceState(True, False, '0', control.source_epoch, NOW, NOW + 500_000_000,
                        'b' * 64, (0., 0., 0.))
-  sm = mock.Mock()
-  sm.update.side_effect = [None, StopIteration]
+  sm = mock.Mock(updated={'deviceMotion': False}, logMonoTime={'deviceMotion': 0})
+  polls = iter((None,))
+  sm.update.side_effect = lambda timeout=None: None if timeout == 0 else next(polls)
   fitter = mock.Mock(child=None)
   fitter.poll.return_value = None
   publisher = mock.Mock()

@@ -154,6 +154,9 @@ def test_actual_classic_family_cancel_and_manual_withdrawal(identity, monkeypatc
           assert not expects_owner
           return None
         assert expects_owner
+        # This fixture exercises the explicit eager startup/fallback API.
+        # Default deferred takeover is covered by test_classic_deferred_takeover.
+        owner.prepare_when_controls_ready = owner.prepare
         owner._query = startup_query
         owner.clock = lambda: now[0] / 1e9
         owner.keeper_factory = ManualKeeper

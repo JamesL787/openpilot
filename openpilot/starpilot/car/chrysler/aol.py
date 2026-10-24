@@ -86,7 +86,7 @@ def cold_calibration_intent_current(feedback, sm, cp, cs, axis, native, now_ns, 
     return False
   cold = any(e.name == cal and e.softDisable and not e.immediateDisable for e in events)
   if cold:
-    if (not pending or str(axis.faultReason) != 'critical' or not 0 < axis.faultEventMonoTime <= event_ns or
+    if (not pending or str(axis.faultReason) not in ('critical', 'availabilityPause') or not 0 < axis.faultEventMonoTime <= event_ns or
         axis.desiredLateral or native.requestedLateral or native.lateralAllowed):
       return False
     feedback.cold_main_wait_ns = int(axis.observedMonoTime)
@@ -94,7 +94,7 @@ def cold_calibration_intent_current(feedback, sm, cp, cs, axis, native, now_ns, 
   # The old OFF response may precede the ready event. Its original transport
   # and native leases are validated by the caller; this bounded join arms none.
   return bool(0 < feedback.cold_main_wait_ns <= now_ns <= feedback.cold_main_wait_ns + SAFETY_MAX_AGE_NS and
-              str(axis.faultReason) in ('critical', 'none') and
+              str(axis.faultReason) in ('critical', 'availabilityPause', 'none') and
               (not native.requestedLateral and not native.lateralAllowed or
                str(axis.faultReason) == 'none' and axis.desiredLateral and
                native.requestedLateral and native.lateralAllowed))

@@ -66,7 +66,7 @@ from openpilot.starpilot.car.nissan.aol import (
   qualified as qualified_nissan_aol, native_observation as nissan_native_observation,
   temporary_restriction as nissan_temporary_restriction,
 )
-from openpilot.starpilot.car.hyundai.aol import aol_safety_config as hyundai_aol_safety_config
+from openpilot.starpilot.car.hyundai.aol import aol_safety_config as hyundai_aol_safety_config, pending_stock_angle_arm
 from openpilot.starpilot.car.hyundai.aol import retained_shared_long_cancel_intent as hkg_cancel_intent_retained
 from openpilot.starpilot.aol.runtime import AXIS_MAX_AGE_NS, current_axis, current_native
 from openpilot.starpilot.aol.vehicle import create_intent as create_aol_intent, native_latch_rejected, policy_for as aol_policy_for
@@ -297,9 +297,11 @@ class Car:
             cp, long_cp, enabled=eligible, is_release=is_release)
           self.ioniq6_long_selected = self.ioniq6_long_pending
         cp = startup_preferences.prepare(cp, fingerprints=fingerprints)
+        from openpilot.starpilot.car.ford.longitudinal_preferences import prepare_release_long as prepare_ford_release_long
+        cp = prepare_ford_release_long(cp, self.params, is_release=is_release, enabled=openpilot_enabled_toggle)
         return self.vehicle_startup.prepare(cp, interfaces[candidate], self.can_callbacks,
                                             requested=alpha_long_allowed and not is_release and openpilot_enabled_toggle,
-                                            admission=self.startup_diagnostic_admission)
+                                            admission=self.startup_diagnostic_admission, defer_until_controls=True)
 
       self.CI = get_car(*self.can_callbacks, obd_callback(self.params), alpha_long_allowed, is_release, cached_params,
                         pre_create_hook=pre_create_hook,
@@ -389,8 +391,12 @@ class Car:
     self.aol_sequence = 0
     self.aol_process_fault_context = AolProcessFaultContext() if self.aol_replay else None
     if self.aol_qualified:
-      config = (volkswagen_aol_safety_config(self.CP) if self.CP.brand == 'volkswagen' else
-                (hyundai_aol_safety_config(self.CP) if self.CP.brand == 'hyundai' else self.CP.safetyConfigs[0]))
+      if self.CP.brand == 'ford':
+        from opendbc.car.ford.aol import aol_safety_config as ford_aol_safety_config
+        config = ford_aol_safety_config(self.CP)
+      else:
+        config = (volkswagen_aol_safety_config(self.CP) if self.CP.brand == 'volkswagen' else
+                  (hyundai_aol_safety_config(self.CP) if self.CP.brand == 'hyundai' else self.CP.safetyConfigs[0]))
       if config is None:
         raise RuntimeError('AOL requires the exact vehicle safety configuration')
       config.safetyParam |= aol_policy.safety_param_addition
@@ -442,6 +448,8 @@ class Car:
     from openpilot.starpilot.car.tesla.radar_context import install_startup_context
     self.tesla_preap_radar_context = install_startup_context(
       self.RI, self.CP, cp_bytes, startup_preferences.tesla_preap_radar)
+    from openpilot.starpilot.car.subaru.smoothing import install as install_subaru_smoothing
+    install_subaru_smoothing(self.CP, cp_bytes, startup_preferences.subaru_smoothing, self.params)
     self.params.put("CarParams", cp_bytes, block=True)
     put_cache(self.params, "CarParamsCache", self.CP)
     put_cache(self.params, "CarParamsPersistent", self.CP)
@@ -605,7 +613,11 @@ class Car:
           cancel_feedback.last_cancel_source_ns = cancel_source_ns
       rivian_brake_retained = rivian_brake_intent_retained(self.CP, CS, self.sm, self.aol_transport_feedback,
         self.aol_card_intent, now_ns=now_ns, producer=self.slc_producer_session)
-      transport_reset = not (hkg_cancel_retained or rivian_brake_retained) and self.aol_transport_feedback.observe(self.sm, self.CP, CS, now_ns,
+      angle_arm_pending = pending_stock_angle_arm(self.CP, CS, self.sm, self.aol_card_intent,
+        now_ns=now_ns, producer=self.slc_producer_session,
+        acknowledged_arm_ns=getattr(self, '_angle_aol_acknowledged_arm_ns', 0))
+      transport_reset = not (hkg_cancel_retained or rivian_brake_retained or angle_arm_pending) and self.aol_transport_feedback.observe(
+        self.sm, self.CP, CS, now_ns,
         latched=self.aol_card_intent.allowed_latch, cancel_source_ns=cancel_source_ns,
         brake_source_ns=brake_source_ns,
         gm_withdrawal_source_ns=gm_withdrawal_source_ns,
@@ -630,7 +642,7 @@ class Car:
           not feedback.retention_started_ns and not feedback.retention_qualified and not feedback.retention_pending and
           not any(e.immediateDisable or e.softDisable or e.userDisable for e in self.sm['onroadEvents']))
         fault_active = transport_reset or self.aol_disarming_fault(CS, event_ns, now_ns,
-          transport_observed_healthy=reuse_transport)
+          transport_observed_healthy=reuse_transport or angle_arm_pending)
       angle_aol, ford_aol, honda_aol, mazda_aol, preap_aol, volkswagen_aol = self.aol_permission_owners()
       nissan_aol = qualified_nissan_aol(self.CP, marked_only=True)
       rivian_aol = qualified_rivian_aol(self.CP, marked_only=True)
@@ -662,7 +674,8 @@ class Car:
           native,
           latched=self.aol_card_intent.allowed_latch,
           panda_ready=angle_panda_ready,
-          restricted=(restrict(self.CP, CS) or
+          restricted=(getattr(self.aol_transport_feedback, 'ordinary_warning_qualified', False) or
+            restrict(self.CP, CS) or
             ((angle_aol or mazda_aol or preap_aol or rivian_aol) and self.aol_card_intent.pause_lateral) or
             (angle_aol and CS.brakePressed and (not CS.standstill) and (CS.vEgo < self.aol_settings.pause_brake_mps)) or
             (volkswagen_aol and (self.aol_card_intent.pause_lateral or
@@ -677,7 +690,11 @@ class Car:
         self._angle_aol_pending_since_ns = pending_since
         if lost:
           fault_active = True
-      rejected = native_reset or native_latch_rejected(self.CP, native, state=CS if angle_panda_ready else None)
+      if (angle_aol and native is not None and native.requestedLateral and native.lateralAllowed and
+          0 < self.aol_card_intent.physical_arm_ns <= native.observedMonoTime):
+        self._angle_aol_acknowledged_arm_ns = self.aol_card_intent.physical_arm_ns
+      rejected = native_reset or (not angle_arm_pending and
+        native_latch_rejected(self.CP, native, state=CS if angle_panda_ready else None))
       rejection_ns = now_ns if native_reset else int(native.observedMonoTime) if rejected else 0
       observe_physical = getattr(self.aol_card_intent, 'observe_physical_samples', None)
       if observe_physical is not None:
@@ -881,6 +898,8 @@ class Car:
       getattr(self, '_aol_can_observation', None), now_ns)
 
   def aol_disarming_fault(self, CS, event_ns: int, now_ns: int, *, transport_observed_healthy=False) -> bool:
+    if not aol_policy_for(self.CP).intent_supported:
+      return True
     from openpilot.starpilot.aol.vehicle import intent_disarming_fault
     if getattr(self, 'aol_transport_feedback', None) is None:
       self.aol_transport_feedback = TransportPauseFeedback(self.CP)
@@ -1464,11 +1483,12 @@ class Car:
   def classic_startup_keepalive(self):
     from opendbc.car.hyundai.g90_startup import G90Startup
     from opendbc.car.hyundai.classic_long_aol import qualified
+    from opendbc.car.hyundai.legacy_long_aol import qualified as legacy_qualified
     from opendbc.car.hyundai.ecu_startup import Outcome
     owner = getattr(getattr(self, 'vehicle_startup', None), 'owner', None)
-    return (isinstance(owner, G90Startup) and owner.outcome is Outcome.SENT_UNCONFIRMED and
+    return (isinstance(owner, G90Startup) and owner.outcome in (Outcome.PENDING, Outcome.SENT_UNCONFIRMED) and
             owner.ready and owner.published and owner.ci is self.CI and not owner.closed and
-            qualified(self.CP))
+            (qualified(self.CP) or legacy_qualified(self.CP)))
 
   def mixed_startup_keepalive(self):
     from opendbc.car.hyundai.blended_longitudinal import BlendedStartup
@@ -1543,7 +1563,23 @@ class Car:
         self.publish_sendcan([], valid=False)
         return
       mixed = self.vehicle_startup.owner if self.mixed_startup_keepalive() else None
-      if mixed is not None and mixed.pending_target:
+      from opendbc.car.hyundai.g90_startup import G90Startup
+      from opendbc.car.hyundai.ecu_startup import Outcome
+      classic = self.vehicle_startup.owner
+      if isinstance(classic, G90Startup) and classic.outcome is Outcome.PENDING:
+        now = time.monotonic_ns()
+        source = int(self.sm.logMonoTime['carControl'])
+        receipt = int(self.sm.recv_time['carControl'] * 1e9)
+        current = bool(self.sm.seen['carControl'] and self.sm.alive['carControl'] and self.sm.valid['carControl'] and
+                       0 < source <= now and now - source <= 150_000_000 and
+                       0 < receipt <= now and now - receipt <= 150_000_000)
+        inactive = not (CC.enabled or CC.latActive or CC.longActive or CC.actuators.torque != 0.0 or CC.actuators.accel != 0.0)
+        sources = classic.sources_current(self.CI, time.clock_gettime_ns(time.CLOCK_BOOTTIME))
+        if not current or not inactive or not sources or CS.accFaulted or CS.cruiseState.enabled or not self.startup_diagnostic_admission():
+          self.publish_sendcan([], valid=False)
+          return
+        classic.commit_pending(self.CI, sources_current=sources, control_current=current)
+      elif mixed is not None and mixed.pending_target:
         now = time.monotonic_ns()
         current = (self.sm.seen['carControl'] and self.sm.alive['carControl'] and self.sm.valid['carControl'] and
                    0 < int(self.sm.logMonoTime['carControl']) <= now and now - int(self.sm.logMonoTime['carControl']) <= 150_000_000 and

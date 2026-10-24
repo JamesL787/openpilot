@@ -169,27 +169,11 @@ class TestFordMachEDebugLongExtended(TestFordMachEExtended):
   REQUIRES_DEBUG = True
 
 
-class TestFordMachELongReleaseDenied(unittest.TestCase):
+class TestFordMachELongReleaseExtended(TestFordMachEExtended):
   SAFETY_PARAM = 19
   REQUIRES_DEBUG = False
 
-  def setUp(self):
-    safety = libsafety_py.libsafety
-    debug = safety.set_safety_hooks(CarParams.SafetyModel.allOutput, 0) == 0
-    safety.set_safety_hooks(CarParams.SafetyModel.noOutput, 0)
-    safety.set_alternative_experience(0)
-    if self.REQUIRES_DEBUG is not None and debug != self.REQUIRES_DEBUG:
-      self.skipTest("This case requires " + ("DEBUG" if self.REQUIRES_DEBUG else "RELEASE") + " safety")
-    self._message_fixture = ford.TestFordCANFDStockSafety()
-    self._message_fixture.SAFETY_PARAM = self.SAFETY_PARAM
-    self._message_fixture.setUp()
 
-  def __getattr__(self, name):
-    fixture = self.__dict__.get("_message_fixture")
-    if fixture is None:
-      raise AttributeError(name)
-    return getattr(fixture, name)
-
-  def test_long_profile_no_transmit_authority_in_release(self):
-    self.safety.set_controls_allowed(True)
-    self.assertFalse(self._tx(self._lat_ctl_msg(True, 0.0, 0.0, 0.0, 0.0)))
+# Compatibility for existing CI selector names: this runs the promoted profile's
+# complete positive RELEASE contract, including the unchanged actuation bounds.
+TestFordMachELongReleaseDenied = TestFordMachELongReleaseExtended

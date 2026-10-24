@@ -20,7 +20,7 @@ def test_actual_card_publication_reaches_ford_extensions(identity, alpha, releas
   from openpilot.cereal import messaging
   from openpilot.common.params import Params
   from openpilot.common.prefix import OpenpilotPrefix
-  from openpilot.selfdrive.car.card import Car, alpha_long_requested
+  from openpilot.selfdrive.car.card import Car
   from openpilot.selfdrive.controls.controlsd import Controls
   from openpilot.starpilot.controller_extensions import ManualTurnInputs
   from openpilot.starpilot.lateral.tests.test_lane_runtime import feed
@@ -36,7 +36,7 @@ def test_actual_card_publication_reaches_ford_extensions(identity, alpha, releas
     saved.put_bool('IsReleaseBranch', release, block=True)
     saved.put_bool('DisableOpenpilotLongitudinal', disable, block=True)
     saved.put_bool('FordHumanTurnDetection', False, block=True)
-    cp = params(identity, alpha_long_requested(saved, is_release=release), release)
+    cp = params(identity, alpha, release)
     cp.carVin = '0' * 17
     cp.carFw = []
     expected = cp.to_dict()

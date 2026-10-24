@@ -51,6 +51,10 @@ class NativeCruiseDelayTests(unittest.TestCase):
                                                    acceleration_max=.7, cruise_brake_magnitude=.6)
         if case in ('cem', 'experimental'):
           kwargs['conditional_handoff'] = KEY
+        # SubMaster supplies immutable payload readers; reading an absent struct
+        # on a fixture builder otherwise allocates wire storage.
+        for service, payload in sm.items():
+          sm[service] = payload.as_reader()
         before = message_bytes(envelopes)
         real_helper = planner_module.get_cruise_accel
         forwarded = []

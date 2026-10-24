@@ -113,8 +113,10 @@ def retained_gas_lateral_native(feedback, sm, cp, cs, axis, now_ns, *, latched, 
       or native.longitudinalAllowed
       or native.observedMonoTime < feedback.lateral_native_ns
       or (native.pandaSerial, tuple(p.hardwareSerial for p in native.pandaInventory)) != feedback.lateral_inventory
-      or not all(p.controlsAllowed for p in native.pandaInventory)
-      or not all(p.controlsAllowed for p in sm['pandaStates'])
+      or not all(bool(p.controlsAllowed) == (p.safetyModel == int(structs.CarParams.SafetyModel.ford))
+                 for p in native.pandaInventory)
+      or not all(bool(p.controlsAllowed) == (c.safetyModel == structs.CarParams.SafetyModel.ford)
+                 for p, c in zip(sm['pandaStates'], cp.safetyConfigs, strict=True))
     ):
       return None
     return native

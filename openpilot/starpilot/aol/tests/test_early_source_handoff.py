@@ -26,8 +26,8 @@ def test_early(mode, condition):
 
       def joined_messages(timestamp, messages):
         event = sd.pm.messages.get('onroadEvents')
-        if event is not None:
-          messages = [sample for sample in messages if sample.which() != 'onroadEvents'] + [event]
+        if event is not None and any(sample is not None for sample in messages):
+          messages = [sample for sample in messages if sample is None or sample.which() != 'onroadEvents'] + [event]
         return actual_update_msgs(timestamp, messages)
 
       stack.enter_context(mock.patch.object(controls.sm, 'update_msgs', side_effect=joined_messages))
@@ -75,10 +75,18 @@ def test_early(mode, condition):
         mock.patch.object(messaging, 'recv_one_or_none', side_effect=receive),
       ):
         axis, state, command = step(5, timeout=True, offset_ns=-100_000, intent_message=wire(BASE, 3), gas=gas, brake=brake, steering=True, latched=lateral)
-      if condition in ['timely', 'repeat']:
+      if condition in ['timely', 'repeat'] or (condition == 'entry_expired' and mode in ('ordinary', 'lateral_gas')):
         assert axis.to_dict() == original.to_dict() and command.latActive
         assert command.longActive == (mode == 'ordinary')
         assert sd.aol_axis_publication_deferred and attempt == [True]
+        if condition == 'entry_expired':
+          # Source age crossed 30ms, but the ORIGINAL output proof remains
+          # within its lease. One deferral issues no new source or deadline.
+          assert original.sourceCarStateMonoTime == BASE
+          assert now[0] < original.validUntilMonoTime
+          with mock.patch.object(owner.time, 'monotonic_ns', return_value=original.validUntilMonoTime + 1):
+            expired, _ = controls.state_control()
+          assert not expired.latActive and not expired.longActive
         if condition == 'repeat':
           # Next normal iteration gets no new source; the original deadline is
           # still unexpired and a second deferral may not retain it again.

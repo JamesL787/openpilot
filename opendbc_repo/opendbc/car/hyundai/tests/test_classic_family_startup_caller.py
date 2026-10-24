@@ -151,6 +151,9 @@ def test_classic_family_actual_startup_cancel_and_manual_withdrawal(identity, mo
 
         owner = startup_factory(prepared_cp, (recv, diagnostic_send), requested=requested)
         assert owner is not None
+        # This fixture exercises the explicit eager startup/fallback API.
+        # Default deferred takeover is covered by test_classic_deferred_takeover.
+        owner.prepare_when_controls_ready = owner.prepare
         owner._query = startup_query
         owner.clock = lambda: now[0] / 1e9
         owner.keeper_factory = ManualKeeper

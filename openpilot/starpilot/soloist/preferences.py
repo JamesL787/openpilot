@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from openpilot.starpilot.soloist.paths import Layout, private_dir
 
@@ -12,24 +12,35 @@ ADDRESS = re.compile(r'^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$')
 NAME = re.compile(r'^[^\x00-\x1f\x7f]{1,40}$')
 CACHE_CHOICES = (100, 256, 512, 1024)
 OUTPUTS = ('bluetooth', 'android_auto', 'test')
+MUTE_MAX = 1.5
 
 
 @dataclass(frozen=True)
 class Preferences:
   device_name: str = 'StarPilot'
   cache_mb: int = 256
-  initial_volume: int = 60
+  initial_volume: int = 100
   output: str = 'bluetooth'           # or 'android_auto' (the car's media channel), or 'test' (a silent sink)
   output_address: str = ''
   output_name: str = ''
   source: str = 'spotify'
   phone_address: str = ''
   phone_name: str = ''
+  # Live-tunable while driving: excluded from equality so changing them never restarts the player.
+  pause_mute: float = field(default=0.5, compare=False)
+  skip_mute: float = field(default=0.25, compare=False)
 
   def public(self) -> dict:
     return {'deviceName': self.device_name, 'cacheMb': self.cache_mb, 'initialVolume': self.initial_volume,
             'output': self.output, 'outputAddress': self.output_address, 'outputName': self.output_name,
-            'source': self.source, 'phoneAddress': self.phone_address, 'phoneName': self.phone_name}
+            'source': self.source, 'phoneAddress': self.phone_address, 'phoneName': self.phone_name,
+            'pauseMute': self.pause_mute, 'skipMute': self.skip_mute, 'muteMax': MUTE_MAX}
+
+
+def _mute(value: object) -> float:
+  if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MUTE_MAX:
+    raise ValueError(f'Mute must be 0–{MUTE_MAX} seconds')
+  return round(float(value), 2)
 
 
 def validated(values: dict) -> Preferences:
@@ -56,7 +67,7 @@ def validated(values: dict) -> Preferences:
     raise ValueError('Choose a different device for the phone and speaker')
   phone_name = prefs.phone_name.strip()[:80] if isinstance(prefs.phone_name, str) else ''
   return Preferences(name, prefs.cache_mb, prefs.initial_volume, prefs.output, address, output_name if address else '',
-                     prefs.source, phone, phone_name if phone else '')
+                     prefs.source, phone, phone_name if phone else '', _mute(prefs.pause_mute), _mute(prefs.skip_mute))
 
 
 def load(layout: Layout | None = None) -> Preferences:

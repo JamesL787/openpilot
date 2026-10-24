@@ -123,7 +123,7 @@ class TestVolkswagenStockAol(unittest.TestCase):
     self.arm()
     self.safety.set_timer(self.time + 300_001)
     assert self.safety.aol_get_permission_mask() == 0
-    for word, exp in ((8, 0), (24, 0), (9, 32), (25, 32), (0, 32), (40, 32)):
+    for word, exp in ((8, 0), (24, 0), (9, 32), (25, 32), (0, 32), (56, 32)):
       self.configure(word, exp)
       assert self.safety.aol_get_permission_mask() == 0
       assert not self.safety.safety_tx_hook(self.packet("HCA_01", {"HCA_01_LM_Offset": 4, "HCA_01_Sendestatus": 1}))
@@ -143,3 +143,17 @@ class TestVolkswagenStockAol(unittest.TestCase):
     self.safety.set_relay_malfunction(True)
     assert self.safety.aol_get_permission_mask() == 0
     assert not self.safety.safety_tx_hook(self.packet("HCA_01", {"HCA_01_LM_Offset": 0, "HCA_01_Sendestatus": 0}))
+
+  def test_fresh_accepted_hud_eps_forwarding_and_ownership_expiry(self):
+    self.configure()
+    self.arm()
+    assert self.safety.safety_tx_hook(self.packet('HCA_01', {'HCA_01_LM_Offset': 4, 'HCA_01_Sendestatus': 1}))
+    assert self.safety.safety_tx_hook(self.packet('LDW_02', {}))
+    assert self.safety.safety_tx_hook(self.packet('LH_EPS_03', {'EPS_HCA_Status': 3}, 2))
+    assert self.safety.safety_fwd_hook(2, 0x397) == -1
+    assert self.safety.safety_fwd_hook(0, 0x9F) == -1
+    assert self.safety.safety_fwd_hook(2, 0x777) == 0
+    self.safety.set_timer(self.time + 300_001)
+    assert self.safety.aol_get_permission_mask() == 0
+    assert self.safety.safety_fwd_hook(2, 0x397) == 0
+    assert self.safety.safety_fwd_hook(0, 0x9F) == 2

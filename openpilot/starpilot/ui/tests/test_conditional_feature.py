@@ -597,7 +597,6 @@ class ConditionalFeatureTests(unittest.TestCase):
     self.assertFalse(path.exists())
 
   def test_large_hit_target_and_compact_parent_child_reset(self):
-    from openpilot.system.ui.widgets import DialogResult
     state = self.owner.snapshot(FeaturePage.CONDITIONAL, parked=True, system_long=False,
                                 lateral_context=False, metric=False)
     hit = FeatureInput.target(2000, 285, state)
@@ -611,11 +610,13 @@ class ConditionalFeatureTests(unittest.TestCase):
       def set_enabled(self, enabled):
         self.enabled = enabled
     class Scroller:
-      def __init__(self):
+      def __init__(self, *_args):
         self.items = []
         self._scroller = self
       def add_widgets(self, widgets):
         self.items.extend(widgets)
+      def dismiss(self, callback):
+        callback()
     class Session:
       def __init__(self, owner):
         self.owner = owner
@@ -626,7 +627,8 @@ class ConditionalFeatureTests(unittest.TestCase):
     stack = []
     with patch.object(compact, "BigButton", Button), patch.object(compact, "GreyBigButton", Button), \
          patch.object(compact, "NavScroller", Scroller), \
-         patch.object(compact, "ConfirmDialog", side_effect=lambda *args, **kwargs: SimpleNamespace(callback=kwargs["callback"])), \
+         patch.object(compact, "SettingDescriptionDialog", Scroller), patch.object(compact.gui_app, "texture"), \
+         patch.object(compact, "BigConfirmationCircleButton", side_effect=lambda _title, _icon, callback: SimpleNamespace(callback=callback)), \
          patch.object(compact.gui_app, "push_widget", stack.append), \
          patch.object(compact.gui_app, "get_active_widget", side_effect=lambda: stack[-1]):
       adapter = compact.FeatureSettingsCompact(Session(self.owner))
@@ -643,7 +645,7 @@ class ConditionalFeatureTests(unittest.TestCase):
       adapter.open(FeaturePage.CONDITIONAL)
       next(card for card in stack[-1].items if card.text == "restore chill defaults").click()
       dialog = stack.pop()
-      dialog.callback(DialogResult.CONFIRM)
+      dialog.items[-1].callback()
       self.assertEqual(decode_preferences(Path(self.params.get_param_path("ConditionalModeConfig")).read_bytes()).mode.value,
                        "stock")
       manual_path = Path(self.params.get_param_path("ConditionalManualState"))
@@ -651,7 +653,7 @@ class ConditionalFeatureTests(unittest.TestCase):
       adapter.open(FeaturePage.CONDITIONAL)
       next(card for card in stack[-1].items if card.text == "reset remembered manual choices").click()
       dialog = stack.pop()
-      dialog.callback(DialogResult.CONFIRM)
+      dialog.items[-1].callback()
       self.assertEqual(decode_manual(manual_path.read_bytes()), SavedCodes())
 
   def test_large_pane_renders_mode_and_child_labels_in_existing_geometry(self):

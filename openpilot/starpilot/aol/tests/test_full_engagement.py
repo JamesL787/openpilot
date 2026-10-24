@@ -123,18 +123,21 @@ def test_vehicle_fault_rearm_cannot_be_bypassed(factory, field):
 
 
 
-def test_gm_resolved_fault_accepts_new_successful_engagement_only():
+def test_gm_resolved_fault_rearms_only_after_healthy_main_observation():
   owner, cs = GmAolCardIntent(SETTINGS), state()
   observe(owner, cs, 1, enabled=False, active=False)
   owner.update(cs, now_ns=2, fault_active=True)
   assert owner._main_cycle_required and not owner.allowed_latch
   owner.update(cs, now_ns=3, fault_active=False)
-  assert owner._main_cycle_required and not owner.allowed_latch
+  assert not owner._main_cycle_required and owner.allowed_latch
   observe(owner, cs, 3, active=False)
-  assert owner._main_cycle_required and not owner.allowed_latch
+  assert not owner._main_cycle_required and owner.allowed_latch
   observe(owner, cs, 4)
   assert owner.allowed_latch and not owner._main_cycle_required
   assert not owner.pause_lateral
+  cs.cruiseState.available = False
+  owner.update(cs, now_ns=5, fault_active=False)
+  assert not owner.allowed_latch
 
 
 def test_physical_owners_cannot_be_forged_by_host_engagement():

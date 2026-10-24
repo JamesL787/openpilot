@@ -19,7 +19,7 @@ def test_independent_aol_low_memory_withdrawal_selects_takeover_alert(identity):
     assert axis.lateralActive and command.latActive and not host.enabled
     axis, host, command = step(20, critical_event=log.OnroadEvent.EventName.lowMemory)
     assert not axis.lateralActive and not command.latActive and not host.enabled
-    assert sd.aol_fault_reason == 'critical'
+    assert sd.aol_fault_reason == 'availabilityPause'
     state = sd.pm.messages['selfdriveState'].selfdriveState
     assert state.alertType == 'lowMemory/softDisable', state.to_dict()
     assert state.alertStatus == log.SelfdriveState.AlertStatus.critical

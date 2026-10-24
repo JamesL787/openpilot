@@ -46,9 +46,9 @@ def test_only_supported_identity_and_exact_saved_boolean_startup(tmp_path):
       cp = CarInterface.get_params(car, gen_empty_fingerprint(), [], True, False, False)
       before = cp.to_dict()
       choice.prepare(cp)
-      assert selected(cp) == (expected and car == CAR.SUBARU_LEGACY_2025)
+      assert selected(cp) == (expected and car in (CAR.SUBARU_LEGACY_2025, CAR.SUBARU_OUTBACK_2023))
       assert not cp.openpilotLongitudinalControl and not cp.alphaLongitudinalAvailable
-      if car != CAR.SUBARU_LEGACY_2025 or not expected:
+      if car not in (CAR.SUBARU_LEGACY_2025, CAR.SUBARU_OUTBACK_2023) or not expected:
         assert cp.to_dict() == before
 
 

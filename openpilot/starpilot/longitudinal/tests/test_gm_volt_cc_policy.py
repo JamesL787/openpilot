@@ -263,7 +263,7 @@ class TestVoltCc(unittest.TestCase):
       with self.assertRaises(Registered):
         Car(CI=ci, RI=RadarInterface(ci.CP))
     self.assertEqual(len(captured), 1)
-    self.assertEqual(set(captured[0]), {'pandaStates', 'carControl', 'onroadEvents', 'deviceState'})
+    self.assertEqual(set(captured[0]), {'pandaStates', 'carControl', 'onroadEvents', 'deviceState', 'autoSteeringLearning'})
 
   def test_actual_card_transport_epoch_and_individual_source_loss(self):
     controls, card, ci, packer, sent, base, offset = fixture()

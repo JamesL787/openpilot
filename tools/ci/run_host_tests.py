@@ -50,7 +50,13 @@ def main(arguments=None):
       environment.pop('PYTEST_ADDOPTS', None)
       environment.pop('PYTEST_PLUGINS', None)
       environment['PYTEST_DISABLE_PLUGIN_AUTOLOAD'] = '1'
-    command = ([sys.executable, '-m', 'pytest', '-q', '--import-mode=importlib', *arguments[1:], *files] if pytest_mode
+    diagnostics = environment.get('STARPILOT_TEST_DIAGNOSTICS')
+    evidence = []
+    if pytest_mode and diagnostics:
+      directory = Path(diagnostics).resolve()
+      directory.mkdir(parents=True, exist_ok=True)
+      evidence = ['-p', 'tools.ci.pytest_progress', '--junitxml=' + str(directory / 'pytest.xml')]
+    command = ([sys.executable, '-m', 'pytest', '-q', '--import-mode=importlib', *evidence, *arguments[1:], *files] if pytest_mode
                else [sys.executable, str(RUNNER), *arguments])
     result = subprocess.run(command, cwd=ROOT, env=environment, check=False)
     return result.returncode if result.returncode >= 0 else 128 - result.returncode

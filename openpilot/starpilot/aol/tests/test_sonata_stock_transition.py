@@ -29,7 +29,7 @@ from openpilot.cereal import log
 disable_ecu_module = importlib.import_module('opendbc.car.disable_ecu')
 
 
-def classic_frames(ci, tick, *, main=0, lkas=0, button=0, engaged=False):
+def classic_frames(ci, tick, *, main=0, main_button=0, lkas=0, button=0, engaged=False):
 
   assert ci.CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID
   packer = CANPacker('hyundai_can_generated')
@@ -52,7 +52,7 @@ def classic_frames(ci, tick, *, main=0, lkas=0, button=0, engaged=False):
     counter = tick // period
     values = {}
     if name == 'CLU11':
-      values.update(CF_Clu_AliveCnt1=counter%16, CF_Clu_CruiseSwState=button, CF_Clu_CruiseSwMain=main)
+      values.update(CF_Clu_AliveCnt1=counter%16, CF_Clu_CruiseSwState=button, CF_Clu_CruiseSwMain=main_button)
     elif name == 'E_EMS11':
       values.update(CR_Vcu_AccPedDep_Pos=0)
     elif name == 'WHL_SPD11':
@@ -204,7 +204,7 @@ def test_full_engagement_arms_aol_through_stock_off_with_main_on(raw_fault, with
           return send(service, raw)
         local.setattr(card.pm, 'send', capture)
 
-        def step(*, main=1, lkas=0, button=0, engaged=False, withdraw_request=False, bad_checksum=False,
+        def step(*, main=1, main_button=0, lkas=0, button=0, engaged=False, withdraw_request=False, bad_checksum=False,
                  heartbeat_override=None, inject_relay=False, drop_wheel=False):
           nonlocal tick
           tick += 1
@@ -219,7 +219,7 @@ def test_full_engagement_arms_aol_through_stock_off_with_main_on(raw_fault, with
           native.set_timer(source_ns // 1000)
           native.set_aol_test_heartbeat(heartbeat if heartbeat_override is None else heartbeat_override)
           native.aol_set_host_request(request)
-          frames = classic_frames(card.CI, tick, main=main, lkas=lkas, button=button, engaged=engaged)
+          frames = classic_frames(card.CI, tick, main=main, main_button=main_button, lkas=lkas, button=button, engaged=engaged)
           if drop_wheel:
             frames = [frame for frame in frames if frame[0] != 0x386]
           if bad_checksum:
@@ -352,6 +352,10 @@ def test_full_engagement_arms_aol_through_stock_off_with_main_on(raw_fault, with
             assert card.aol_card_intent.allowed_latch and not card.aol_card_intent.pause_lateral
         assert not state.cruiseState.enabled and state.cruiseState.available
         assert native_counts['lateral_only_nonzero'] > 0
+        assert not card.aol_card_intent._main_held
+        if withdrawal == 'main-off':
+          for _ in range(2):
+            step(main=0, main_button=1, engaged=False)
         if withdrawal == 'lkas-off':
           for _ in range(2):
             step(main=1, lkas=1, engaged=False)

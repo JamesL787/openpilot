@@ -7,6 +7,7 @@ from dataclasses import replace
 import math
 
 from opendbc.car import structs
+from opendbc.car.ford.aol import base_safety_param
 from opendbc.car.ford.explorer_lateral import bounded_command as shared_bound
 from opendbc.car.ford.lateral_strategy import FordLateralController, FordLateralResult
 from opendbc.car.ford.values import CAR, FordFlags
@@ -22,7 +23,7 @@ def qualified(cp):
   if (profile is None or cp.brand != "ford" or cp.passive or cp.dashcamOnly or cp.notCar or
       cp.alternativeExperience not in (0, 32) or not cp.pcmCruise or
       cp.steerControlType != structs.CarParams.SteerControlType.angle or
-      len(cp.safetyConfigs) not in (1, 2) or (cp.alternativeExperience == 32 and len(cp.safetyConfigs) != 1)):
+      len(cp.safetyConfigs) not in (1, 2)):
     return False
   flags, word = profile
   if (int(cp.flags) & ~int(FordFlags.HAS_BSM)) != flags:
@@ -31,7 +32,7 @@ def qualified(cp):
                                    cp.safetyConfigs[0].safetyParam != 0):
     return False
   safety = cp.safetyConfigs[-1]
-  return safety.safetyModel == structs.CarParams.SafetyModel.ford and safety.safetyParam == word + int(cp.openpilotLongitudinalControl)
+  return safety.safetyModel == structs.CarParams.SafetyModel.ford and base_safety_param(cp) == word + int(cp.openpilotLongitudinalControl)
 
 
 class NewPortCurvatureController(FordLateralController):

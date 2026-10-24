@@ -37,7 +37,8 @@ class TestBlendedCruiseAcknowledgment(unittest.TestCase):
     helper.v_cruise_kph = helper.v_cruise_kph_last = 90.
     instance = SimpleNamespace(sm={'carControl': SimpleNamespace(enabled=True)},
                                CC_prev=SimpleNamespace(enabled=False), CS_prev=previous,
-                               experimental_mode=False, is_metric=True, vehicle_startup=holder, v_cruise_helper=helper)
+                               experimental_mode=False, is_metric=True, initial_cruise_speed=V_CRUISE_INITIAL,
+                               vehicle_startup=holder, v_cruise_helper=helper)
     Car.update_cruise_speed(cast(Car, instance), previous)
     self.assertIsNone(holder.consume_cruise_resume())
     return helper.v_cruise_kph

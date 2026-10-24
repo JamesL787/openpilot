@@ -8,6 +8,8 @@ from opendbc.safety.tests.test_hyundai_ev9_long import Ev9LongFixture
 
 
 class TestPECombinedReleaseDenied(PEFixture, unittest.TestCase):
+  RELEASE_NATIVE = True
+
   def test_combined_pe_profile_has_no_transmit_authority_in_release(self):
     self.safety.set_alternative_experience(32)
     self.assertEqual(self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, 0x5495), 0)

@@ -48,14 +48,15 @@ static safety_config volkswagen_mqb_init(uint16_t param) {
 
   volkswagen_common_init();
   vw_aol_reset();
-  vw_aol_enabled = ((unsigned int)alternative_experience == 32U) && ((param == 8U) || (param == 24U));
+  vw_aol_enabled = ((unsigned int)alternative_experience == 32U) && ((param == 8U) || (param == 24U) || (param == 40U));
 #ifdef ALLOW_DEBUG
-  if (((unsigned int)alternative_experience == 32U) && ((param == 9U) || (param == 25U))) {
+  if (((unsigned int)alternative_experience == 32U) && ((param == 9U) || (param == 25U) || (param == 41U))) {
     vw_aol_enabled = true;
     vw_aol_longitudinal = true;
   }
 #endif
   vw_aol_manual = (param == 24U) || (param == 25U);
+  vw_aol_direct = (param == 40U) || (param == 41U);
   // Keep relay checks. Only replace unconditional forwarding blocks with accepted ownership.
   VOLKSWAGEN_MQB_STOCK_TX_MSGS[0].disable_static_blocking = vw_aol_enabled;
   VOLKSWAGEN_MQB_STOCK_TX_MSGS[3].disable_static_blocking = vw_aol_enabled;

@@ -22,7 +22,7 @@ def eligible(cp):
       and not cp.notCar
       and cp.transmissionType != structs.CarParams.TransmissionType.manual
       and cp.alternativeExperience in (0, 32)
-      and int(cp.flags) & ~int(SubaruFlags.HAS_BSM | SubaruFlags.SEND_INFOTAINMENT) == int(CAR[cp.carFingerprint].config.flags)
+      and int(cp.flags) & ~int(SubaruFlags.HAS_BSM | SubaruFlags.SEND_INFOTAINMENT | SubaruFlags.SMOOTHING_BOUND) == int(CAR[cp.carFingerprint].config.flags)
       and len(cp.safetyConfigs) == 1
       and cp.safetyConfigs[0].safetyModel == structs.CarParams.SafetyModel.subaru
       and word in words

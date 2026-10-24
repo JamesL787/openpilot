@@ -78,6 +78,8 @@ class FeatureSettingsOwnerTests(unittest.TestCase):
     from openpilot.starpilot.aol.vehicle import policy_for
     self.params.put_bool('AlwaysOnLateral', False, block=True)
     cp = CarInterface.get_params(CAR.TOYOTA_PRIUS_RETROFIT, gen_empty_fingerprint(), [], False, False, False)
+    # A manual choice can expose saved settings before any native configuration is available.
+    cp.safetyConfigs = []
     original = cp.as_reader().as_builder().to_bytes()
     self.fingerprint = cp.carFingerprint
     self.owner.vehicle_params = lambda: cp
@@ -99,7 +101,7 @@ class FeatureSettingsOwnerTests(unittest.TestCase):
     self.fingerprint = ordinary.carFingerprint
     self.owner.configuration_vehicle = lambda: True
     self.assertFalse(self._row('aol', 'AlwaysOnLateral').available)
-    fw = [structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps,
+    fw = [structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps, address=0x7A1, brand='toyota', bus=0,
           fwVersion=b'8965B47070\x00\x00\x00\x00\x00\x00')]
     actual = CarInterface.get_params(CAR.TOYOTA_PRIUS, {0: {0x2FF: 4}, 1: {}, 2: {}}, fw, False, False, False)
     self.owner.vehicle_params = lambda: actual
@@ -107,6 +109,32 @@ class FeatureSettingsOwnerTests(unittest.TestCase):
     self.owner.configuration_vehicle = lambda: False
     self.assertTrue(self._row('aol', 'AlwaysOnLateral').available)
     self.assertTrue(policy_for(actual).runtime_supported)
+
+  def test_prius_retrofit_stock_settings_preserve_existing_runtime_profile(self):
+    from opendbc.car import gen_empty_fingerprint
+    from opendbc.car.toyota.interface import CarInterface
+    from opendbc.car.toyota.values import CAR
+    from openpilot.starpilot.aol.vehicle import policy_for
+    self.params.put_bool('AlwaysOnLateral', False, block=True)
+    cp = CarInterface.get_params(CAR.TOYOTA_PRIUS_RETROFIT, gen_empty_fingerprint(), [], False, False, False)
+    self.assertEqual(cp.safetyConfigs[0].safetyParam, 585)
+    self.assertFalse(cp.openpilotLongitudinalControl)
+    self.assertTrue(policy_for(cp).runtime_supported)
+    self.assertTrue(policy_for(cp).intent_supported)
+    original = cp.as_reader().as_builder().to_bytes()
+    self.fingerprint = cp.carFingerprint
+    self.owner.vehicle_params = lambda: cp
+    for configuration in (True, False):
+      with self.subTest(configuration=configuration):
+        self.owner.configuration_vehicle = lambda configuration=configuration: configuration
+        row = self._row('aol', 'AlwaysOnLateral')
+        self.assertTrue(row.available)
+        self.assertNotIn('next startup', row.reason)
+        self.assertTrue(self.owner.apply(required_change(row)))
+        self.assertEqual(self.params.get_bool('AlwaysOnLateral'), configuration)
+        self.assertEqual(cp.as_reader().as_builder().to_bytes(), original)
+        self.assertTrue(policy_for(cp).runtime_supported)
+        self.assertTrue(policy_for(cp).intent_supported)
 
   def test_toyota_hold_is_reachable_from_hub_with_correct_stop_description(self):
     from opendbc.car import structs

@@ -20,6 +20,8 @@ ARTWORK_HOSTS = ('i.scdn.co', 'mosaic.scdn.co', 'image-cdn-ak.spotifycdn.com', '
 STATUSES = ('idle', 'playing', 'paused', 'buffering')
 REPEATS = ('off', 'context', 'track')
 ACTIONS = ('play', 'pause', 'skip_next', 'skip_prev', 'seek', 'shuffle', 'set_repeat')
+AUTH_POLL_SECONDS = 15.0
+AUTH_TIMEOUT_SECONDS = 45.0
 
 
 def _text(value: Any) -> str:
@@ -161,8 +163,10 @@ def _connect(url: str):
 
 
 class PlayerClient:
-  def __init__(self, data_dir: Path, *, connect: Callable[[str], Any] = _connect, on_change: Callable[[], None] = lambda: None):
+  def __init__(self, data_dir: Path, *, connect: Callable[[str], Any] = _connect, on_change: Callable[[], None] = lambda: None,
+               clock: Callable[[], float] = time.monotonic):
     self.data_dir, self.connect, self.on_change = data_dir, connect, on_change
+    self.clock = clock
     self.state = PlayerState()
     self.lock = threading.Lock()
     self.outbox: queue.Queue[dict] = queue.Queue(maxsize=16)
@@ -227,12 +231,20 @@ class PlayerClient:
     connection.settimeout(0.25)
     with self.lock:
       self.state.reset()
-      self.state.value['connected'] = True
     while not self.outbox.empty():  # never replay commands from before a reconnect
       self.outbox.get_nowait()
     connection.send(json.dumps({'type': 'command', 'command': 'get_auth_state'}))
+    pending_auth = self.clock()
+    next_auth = pending_auth + AUTH_POLL_SECONDS
     asked_state = False
     while not self.stop_event.is_set():
+      now = self.clock()
+      if pending_auth is not None and now - pending_auth >= AUTH_TIMEOUT_SECONDS:
+        raise TimeoutError('Soloist did not answer its local health check')
+      if pending_auth is None and now >= next_auth:
+        connection.send(json.dumps({'type': 'command', 'command': 'get_auth_state'}))
+        pending_auth = now
+        next_auth = now + AUTH_POLL_SECONDS
       try:
         while True:
           connection.send(json.dumps(self.outbox.get_nowait()))
@@ -254,10 +266,16 @@ class PlayerClient:
         continue
       if not isinstance(message, dict):
         continue
+      if message.get('type') == 'auth_state':
+        pending_auth = None
       with self.lock:
         self.state.apply(message)
+        if message.get('type') == 'auth_state':
+          self.state.value['connected'] = True
         logged_in = self.state.value['loggedIn']
       if logged_in and not asked_state:
         asked_state = True
         connection.send(json.dumps({'type': 'command', 'command': 'get_state'}))
+      elif not logged_in:
+        asked_state = False
       self.on_change()

@@ -73,8 +73,16 @@ def test_recorded_temporary_host_path_never_masks_native_or_hard_fault(fault, co
       event.onroadEvents = [entry.to_dict() for entry in event.onroadEvents] + extra
     if fault == 'hard_event':
       event.onroadEvents[0].immediateDisable = True
-    assert not receive(10_020_000_000, axis=proof, event=event.as_reader(), state=state)
-    assert not command.longActive
+    original = leases(card.aol_transport_feedback)
+    retained = receive(10_020_000_000, axis=proof, event=event.as_reader(), state=state)
+    # Overheat remains a SOFT output withdrawal. Native/CAN/permanent and
+    # IMMEDIATE faults retain their independent latch-refusal expectations.
+    assert retained == (fault == 'overheat')
+    assert not axis.lateralActive and not axis.longitudinalActive
+    assert not command.latActive and not command.longActive
+    if fault == 'overheat':
+      assert card.aol_transport_feedback.ordinary_warning_qualified
+      assert leases(card.aol_transport_feedback) == original
 
 
 def test_actual_ordinary_brake_with_current_lateral_grant_never_reenables_long():

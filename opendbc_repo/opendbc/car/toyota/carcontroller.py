@@ -8,7 +8,8 @@ from opendbc.car.common.pid import PIDController
 from opendbc.car.secoc import add_mac, build_sync_mac
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota import prius_longitudinal, rav4h_filter, pedal, eps8_sdsu
+from opendbc.car.toyota import prius_longitudinal, rav4h_filter, pedal, eps8_sdsu, legacy_sdsu, advert_filter, legacy_stop_timer, legacy_advert_filter
+from opendbc.car.toyota import pedal_composite, camera_2aa_filter, prius_sdsu, prius_advert_filter
 from opendbc.car.toyota.door_locks import DoorLocks
 from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, uses_toyota_auto_hold_aeb
 from opendbc.can import CANPacker
@@ -73,8 +74,11 @@ class CarController(CarControllerBase):
     self.door_locks = DoorLocks()
     self.reverse_cruise_input = None
     self.prius_filter_input = None
+    self.original_prius_sdsu = prius_sdsu.configured(CP) or prius_longitudinal.eps73_status_configured(CP)
+    self.original_prius_filter = self.original_prius_sdsu or prius_advert_filter.configured(CP)
     self.pedal_input = None
     self.rav4h_filter_input = None
+    self.advert_filter_input = None
     self.params = CarControllerParams(self.CP)
     self.last_torque = 0
     self.last_angle = 0
@@ -82,7 +86,10 @@ class CarController(CarControllerBase):
     self.standstill_req = False
     self.last_standstill = False
     self.prius_longitudinal = prius_longitudinal.enabled(CP)
-    self.eps8_hybrid = eps8_sdsu.configured(CP) and bool(CP.flags & ToyotaFlags.HYBRID)
+    self.sdsu_hybrid = (eps8_sdsu.configured(CP) or legacy_sdsu.configured(CP)) and bool(CP.flags & ToyotaFlags.HYBRID)
+    self.legacy_stop_timer = legacy_stop_timer.enabled(CP)
+    self.legacy_advert_filter = legacy_advert_filter.configured(CP)
+    self.camera_twoaa_filter = camera_2aa_filter.configured(CP)
     self.permit_braking = True
     self.steer_rate_counter = 0
     self.distance_button = 0
@@ -135,27 +142,86 @@ class CarController(CarControllerBase):
     self.brake_hold_active = False
 
   def update(self, CC, CS, now_nanos):
+    from opendbc.car.toyota import dsu_bypass
+    bypass_long = dsu_bypass.enabled(self.CP)
     _projection = self.learning_projection_observer
     if _projection is not None:
       _projection.begin(CC.actuators.torque, self.frame)
     filter_allowed = (not self.prius_longitudinal or self.prius_filter_input is not None and
                       self.prius_filter_input.update(now_nanos))
+    original_prius_long = self.original_prius_filter and self.CP.openpilotLongitudinalControl
+    if self.original_prius_filter:
+      filter_allowed = filter_allowed and bool(
+        CS.out.canValid and not CS.out.canTimeout and CS.out.cruiseState.available and (not self.original_prius_sdsu or CS.sdsu_state == 0) and
+        not CS.out.accFaulted and not CS.out.stockAeb and not CS.out.steerFaultTemporary and not CS.out.steerFaultPermanent and
+        CS.out.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.sport) and not CS.out.doorOpen and
+        not CS.out.seatbeltUnlatched and not CS.out.gasPressed and not CS.out.brakePressed)
     rav4h_long = rav4h_filter.enabled(self.CP)
     if rav4h_long:
       filter_allowed = bool(self.rav4h_filter_input is not None and self.rav4h_filter_input.update(now_nanos) and
                             CS.out.canValid and not CS.out.canTimeout and CS.sdsu_state == 0 and
                             not CS.out.accFaulted and not CS.out.stockAeb)
+      if legacy_sdsu.configured(self.CP) and self.CP.carFingerprint in legacy_sdsu.ALT_MAIN_CARS:
+        # The native owner requires fresh physical DSU MAIN independently of
+        # status. Neutral output must also withdraw its standstill release.
+        filter_allowed = filter_allowed and bool(CS.out.cruiseState.available)
+    advert_owner = advert_filter.configured(self.CP)
+    advert_long = advert_owner and self.CP.openpilotLongitudinalControl
+    if advert_long:
+      filter_allowed = bool(self.advert_filter_input is not None and self.advert_filter_input.update(now_nanos) and
+                            CS.out.canValid and not CS.out.canTimeout and CS.out.cruiseState.available and
+                            not CS.out.steerFaultTemporary and not CS.out.steerFaultPermanent and not CS.out.accFaulted and not CS.out.stockAeb)
+    guarded_advert = self.legacy_advert_filter or self.camera_twoaa_filter
+    legacy_advert_source_ready = not guarded_advert or (
+      CS.out.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.sport) and not CS.out.doorOpen)
+    if guarded_advert:
+      filter_allowed = filter_allowed and legacy_advert_source_ready
     pedal_owner = pedal.configured(self.CP)
+    hold_source_ready = filter_allowed and bool(
+      CS.out.canValid and not CS.out.canTimeout and CS.out.cruiseState.available and not CS.out.accFaulted and
+      not CS.out.stockAeb and not CS.out.steerFaultTemporary and not CS.out.steerFaultPermanent and not CS.out.doorOpen and
+      not CS.out.seatbeltUnlatched and CS.out.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.sport))
     if pedal_owner:
-      filter_allowed = bool(self.pedal_input is not None and self.pedal_input.update(now_nanos) and CS.pedal_ready)
+      hold_source_ready = hold_source_ready and bool(self.pedal_input is not None and self.pedal_input.update(now_nanos) and CS.pedal_ready)
+    if bypass_long:
+      hold_source_ready = hold_source_ready and bool(self.bypass_input is not None and self.bypass_input.update(now_nanos))
+    if pedal_composite.configured(self.CP):
+      filter_allowed = filter_allowed and bool(
+        CS.out.canValid and not CS.out.canTimeout and CS.out.cruiseState.available and not CS.out.accFaulted and not CS.out.stockAeb and
+        not CS.out.steerFaultTemporary and not CS.out.steerFaultPermanent and not CS.out.doorOpen and not CS.out.seatbeltUnlatched and
+        not CS.out.gasPressed and not CS.out.brakePressed and
+        CS.out.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.sport))
+    if pedal_owner:
+      filter_allowed = filter_allowed and bool(self.pedal_input is not None and self.pedal_input.update(now_nanos) and CS.pedal_ready)
+    if bypass_long:
+      preference = getattr(self, 'bypass_input', None)
+      filter_allowed = filter_allowed and bool(
+        preference is not None and preference.update(now_nanos) and CS.out.canValid and not CS.out.canTimeout and
+        CS.out.cruiseState.available and not CS.out.accFaulted and not CS.out.stockAeb and
+        not CS.out.steerFaultTemporary and not CS.out.steerFaultPermanent and not CS.out.doorOpen and
+        not CS.out.seatbeltUnlatched and not CS.out.gasPressed and not CS.out.brakePressed and
+        CS.out.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.sport))
     long_active = CC.longActive and filter_allowed
+    if guarded_advert:
+      long_active = long_active and not (CS.out.seatbeltUnlatched or CS.out.gasPressed or CS.out.brakePressed)
     actuators = CC.actuators
     stopping = actuators.longControlState == LongCtrlState.stopping
     hud_control = CC.hudControl
     pcm_cancel_cmd = CC.cruiseControl.cancel
-    if (rav4h_long or pedal_owner) and not filter_allowed and CS.out.cruiseState.enabled:
+    if (bypass_long or rav4h_long or pedal_owner or advert_long or original_prius_long) and not filter_allowed and CS.out.cruiseState.enabled:
       pcm_cancel_cmd = True
     lat_active = CC.latActive and abs(CS.out.steeringTorque) < MAX_USER_TORQUE
+    if dsu_bypass.configured(self.CP):
+      lat_active = lat_active and CS.out.canValid and not CS.out.canTimeout and CS.out.cruiseState.available and not (
+        CS.out.steerFaultTemporary or CS.out.steerFaultPermanent or CS.out.doorOpen)
+    if self.original_prius_filter:
+      lat_active = lat_active and CS.out.canValid and not CS.out.canTimeout and CS.out.cruiseState.available and not (
+        CS.out.accFaulted or CS.out.steerFaultTemporary or CS.out.steerFaultPermanent or CS.out.doorOpen)
+    if advert_owner:
+      lat_active = lat_active and CS.out.canValid and not CS.out.canTimeout and CS.out.cruiseState.available and not (
+        CS.out.steerFaultTemporary or CS.out.steerFaultPermanent)
+    if guarded_advert:
+      lat_active = lat_active and legacy_advert_source_ready
     CS.zss_lateral_active = bool(CC.latActive)
 
     if len(CC.orientationNED) == 3:
@@ -252,7 +318,7 @@ class CarController(CarControllerBase):
     lead = hud_control.leadVisible or CS.out.vEgo < 12.  # at low speed we always assume the lead is present so ACC can be engaged
 
     # *** gas and brake ***
-    if supports_toyota_auto_hold(self.CP) and CS.out.canValid and not CS.out.canTimeout and (not rav4h_long or filter_allowed):
+    if supports_toyota_auto_hold(self.CP) and CS.out.canValid and not CS.out.canTimeout and hold_source_ready:
       self.update_auto_hold_state(CS, pcm_cancel_cmd if not uses_toyota_auto_hold_aeb(self.CP) else False)
       if (uses_toyota_auto_hold_aeb(self.CP) and self.frame % 2 == 0 and
           CS.out.standstill and CS.out.cruiseState.available and not CS.out.gasPressed):
@@ -272,19 +338,30 @@ class CarController(CarControllerBase):
         self.last_standstill = CS.out.standstill
         if not long_active and CS.out.standstill:
           self.standstill_req = True
-      elif self.eps8_hybrid:
+      elif self.legacy_stop_timer:
+        self.standstill_req = legacy_stop_timer.request(
+          self.last_standstill, self.standstill_req, CS.out.standstill,
+          CS.pcm_acc_status, CC.cruiseControl.resume, long_active)
+        self.last_standstill = CS.out.standstill
+      elif self.sdsu_hybrid or (advert_long and bool(self.CP.flags & ToyotaFlags.HYBRID) and
+                              not (legacy_advert_filter.enabled(self.CP) and self.CP.carFingerprint == CAR.TOYOTA_RAV4H)):
         # Retain the existing hybrid resume behavior while active. The shared
         # owner guard below still holds neutral when LONG or its source is lost.
         self.standstill_req = not long_active and CS.out.standstill
-      elif rav4h_long or not self.CP.flags & ToyotaFlags.HYBRID.value:
-        should_resume = long_active and actuators.accel > 0 if rav4h_long else actuators.accel > 0
+      elif rav4h_long or (legacy_advert_filter.enabled(self.CP) and self.CP.carFingerprint == CAR.TOYOTA_RAV4H) or not self.CP.flags & ToyotaFlags.HYBRID.value:
+        should_resume = long_active and actuators.accel > 0 if rav4h_long or legacy_advert_filter.enabled(self.CP) else actuators.accel > 0
         if should_resume:
           self.standstill_req = False
 
         if not should_resume and CS.out.cruiseState.standstill:
           self.standstill_req = True
 
-      if (rav4h_long or pedal_owner) and (not filter_allowed or not long_active and CS.out.standstill):
+      if (bypass_long or rav4h_long or pedal_owner or advert_long or original_prius_long) and (not filter_allowed or not long_active and CS.out.standstill):
+        self.standstill_req = True
+
+      if pedal_owner and (self.CP.carFingerprint in pedal.RADAR_PEDAL_CARS or pedal_composite.configured(self.CP)) and not long_active:
+        # A radar-disable safety handoff starts with fresh native RX checks.
+        # Neutral output must not request release before LONG is admitted.
         self.standstill_req = True
 
       if self.frame % 3 == 0:
@@ -298,7 +375,7 @@ class CarController(CarControllerBase):
 
         # internal PCM gas command can get stuck unwinding from negative accel so we apply a generous rate limit
         pcm_accel_cmd = actuators.accel if filter_allowed else 0.
-        if (self.prius_longitudinal or rav4h_long) and not long_active:
+        if (bypass_long or self.prius_longitudinal or rav4h_long or advert_long) and not long_active:
           pcm_accel_cmd = 0.
         if long_active:
           pcm_accel_cmd = rate_limit(pcm_accel_cmd, self.prev_accel, ACCEL_WINDDOWN_LIMIT, ACCEL_WINDUP_LIMIT)
@@ -369,7 +446,8 @@ class CarController(CarControllerBase):
           self.permit_braking = True
           self.standstill_req = True
 
-        if (rav4h_long or pedal_owner) and not long_active:
+        if ((bypass_long or rav4h_long or pedal_owner or advert_long or original_prius_long) and not long_active and
+            not (self.brake_hold_active and not uses_toyota_auto_hold_aeb(self.CP))):
           pcm_accel_cmd = 0.
         main_accel_cmd = 0. if self.CP.flags & ToyotaFlags.SECOC.value else pcm_accel_cmd
         can_sends.append(toyotacan.create_accel_command(self.packer, main_accel_cmd, pcm_cancel_cmd, self.permit_braking, self.standstill_req, lead,

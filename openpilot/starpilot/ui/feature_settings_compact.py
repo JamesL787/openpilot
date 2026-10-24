@@ -20,9 +20,7 @@ from openpilot.starpilot.ui.controller_feature import SETUP_ACTION, SETUP_QUESTI
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets.scroller import NavScroller
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton, GreyBigButton
-from openpilot.selfdrive.ui.mici.widgets.dialog import BigConfirmationDialog
-from openpilot.system.ui.widgets import DialogResult
-from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
+from openpilot.selfdrive.ui.mici.widgets.dialog import BigConfirmationDialog, BigConfirmationCircleButton, SettingDescriptionDialog
 
 class FeatureSession(Protocol):
   def feature_snapshot(self, page: str) -> FeatureSettingsState: ...
@@ -86,9 +84,9 @@ class FeatureSettingsCompact:
         if request is None:
           return
         if request.key in VEHICLE_BOOL_KEYS:
-          self._confirm_vehicle_bool(request, refresh, page)
+          self._confirm(request, vehicle_question(request), refresh, page)
         elif request.key in LANE_CHANGE_KEYS:
-          self._confirm_lane_change(request, refresh, page)
+          self._confirm(request, lane_change_question(request), refresh, page)
         elif self.session.feature_request(request):
           refresh()
 
@@ -103,11 +101,11 @@ class FeatureSettingsCompact:
                                      capability=row.capability, dependencies=row.dependencies)
     if row.key == LANE_CHANGE_RESET:
       if page is not None:
-        self._confirm_lane_change(request, refresh, page)
+        self._confirm(request, lane_change_question(request), refresh, page)
       return
     if row.key in CONDITIONAL_CONFIRM_ACTIONS:
       if page is not None:
-        self._confirm_conditional(request, refresh, page)
+        self._confirm(request, conditional_question(request), refresh, page)
       return
     def confirmed() -> None:
       if self.session.feature_request(request):
@@ -128,32 +126,15 @@ class FeatureSettingsCompact:
                                                gui_app.texture("icons_mici/settings/device/uninstall.png", 64, 64),
                                                confirmed, red=True))
 
-  def _confirm_lane_change(self, request: FeatureSettingsRequest, refresh: Callable[[], None], page: NavScroller) -> None:
+  def _confirm(self, request: FeatureSettingsRequest, question: str, refresh: Callable[[], None], page: NavScroller) -> None:
     if gui_app.get_active_widget() is not page:
       return
-    question = lane_change_question(request)
-    def confirmed(result: DialogResult) -> None:
-      if (result == DialogResult.CONFIRM and gui_app.get_active_widget() is page and
+    def confirmed() -> None:
+      if (gui_app.get_active_widget() is page and
           self.session.feature_request(replace(request, confirmation=True))):
         refresh()
-    gui_app.push_widget(ConfirmDialog(question, "Save", callback=confirmed))
-
-  def _confirm_vehicle_bool(self, request: FeatureSettingsRequest, refresh: Callable[[], None], page: NavScroller) -> None:
-    if gui_app.get_active_widget() is not page:
-      return
-    question = vehicle_question(request)
-    def confirmed(result: DialogResult) -> None:
-      if result == DialogResult.CONFIRM and gui_app.get_active_widget() is page and \
-         self.session.feature_request(replace(request, confirmation=True)):
-        refresh()
-    gui_app.push_widget(ConfirmDialog(question, "Save", callback=confirmed))
-
-  def _confirm_conditional(self, request: FeatureSettingsRequest, refresh: Callable[[], None], page: NavScroller) -> None:
-    if gui_app.get_active_widget() is not page:
-      return
-    question = conditional_question(request)
-    def confirmed(result: DialogResult) -> None:
-      if result == DialogResult.CONFIRM and gui_app.get_active_widget() is page and \
-         self.session.feature_request(replace(request, confirmation=True)):
-        refresh()
-    gui_app.push_widget(ConfirmDialog(question, "Save", callback=confirmed))
+    dialog = SettingDescriptionDialog("save change", question)
+    dialog._scroller.add_widgets([BigConfirmationCircleButton(
+      "save change", gui_app.texture("icons_mici/setup/driver_monitoring/dm_check.png", 64, 64),
+      lambda: dialog.dismiss(confirmed))])
+    gui_app.push_widget(dialog)

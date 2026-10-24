@@ -12,6 +12,7 @@ from opendbc.car.isotp_parallel_query import IsoTpParallelQuery
 
 
 class PreparedSafetyConfig(TypedDict):
+  safetyModel: str
   safetyParam: int
 
 
@@ -21,6 +22,7 @@ class PreparedParams(TypedDict):
 
 
 class Outcome(Enum):
+  PENDING = 'pending'
   STOCK_UNTOUCHED = 'stock_untouched'
   SENT_UNCONFIRMED = 'sent_unconfirmed'
   STOCK_RESTORED = 'stock_restored'
@@ -166,7 +168,7 @@ class HyundaiECUStartup:
     if not self.prepared_for(ci.CP):
       raise RuntimeError(f'{self.label} prepared startup does not match constructed CP')
     self.ci = ci
-    if self.outcome is Outcome.SENT_UNCONFIRMED:
+    if self.outcome in (Outcome.PENDING, Outcome.SENT_UNCONFIRMED):
       self.ready = True
       return  # Preserve ordinary controller commands and1Hz tester cadence.
     self._warm_stock(ci)
@@ -178,16 +180,20 @@ class HyundaiECUStartup:
     if self.prepared_for(ci.CP):
       return
     from opendbc.car.hyundai.ev6_aol import qualified as ev6_aol_qualified
-    if self.outcome is Outcome.SENT_UNCONFIRMED and ev6_aol_qualified(ci.CP, marked_only=True):
+    from opendbc.car.hyundai.canfd_stock_aol import qualified_long
+    from opendbc.car.hyundai.gv70_startup import eligible as gv70_eligible
+    captured_long = ev6_aol_qualified(ci.CP, marked_only=True) or (
+      gv70_eligible(ci.CP) and qualified_long(ci.CP, marked_only=True))
+    if self.outcome is Outcome.SENT_UNCONFIRMED and captured_long:
       expected = deepcopy(cast(PreparedParams, self.prepared_cp))
       configs = expected.get('safetyConfigs', [])
       owner = config_index(ci.CP)
       if owner is None or len(configs) != owner + 1 or configs[owner]['safetyParam'] != 0x15 or expected['alternativeExperience'] != 0:
-        raise RuntimeError('EV6 prepared LONG profile cannot be finalized')
+        raise RuntimeError('Captured ADRV prepared LONG profile cannot be finalized')
       configs[owner]['safetyParam'] |= 0x0800
       expected['alternativeExperience'] = 32
       if ci.CP.to_dict() != expected:
-        raise RuntimeError('EV6 AOL finalization changed unrelated CarParams')
+        raise RuntimeError('Captured ADRV AOL finalization changed unrelated CarParams')
       self.prepared_cp = expected
       return
     from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_aol_qualified

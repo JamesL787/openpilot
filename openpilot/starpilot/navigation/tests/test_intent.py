@@ -144,6 +144,7 @@ def test_approaching_turn_does_not_start_or_replace_lane_change(sm):
   from openpilot.starpilot.lateral.lane_change_preferences import LaneChangePolicy
   cs = sm['carState']
   cs.steeringPressed, cs.steeringTorque = True, -1.
+  cs.vEgo = 21. * CV.MPH_TO_MS  # Above the current turn-guidance lane-change floor.
   helper = DesireHelper(LaneChangePolicy(minimum_speed_mps=0.))
   turn = matching_turn_signal(sm, NOW, supported=True)
   assert turn

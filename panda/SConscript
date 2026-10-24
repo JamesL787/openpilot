@@ -121,7 +121,9 @@ def build_project(project_name, project, main, extra_flags):
     "./board/crypto/sha.c",
     "./board/bootstub.c",
   ])
-  bs_env.Objcopy(f"./board/obj/bootstub.{project_name}.bin", bs_elf)
+  bs_bin = bs_env.Objcopy(f"./board/obj/bootstub.{project_name}.bin", bs_elf)
+  # Bootstubs are data images; objcopy must not inherit the ELF executable mode.
+  bs_env.AddPostAction(bs_bin, Chmod("$TARGET", 0o644))
 
   # Build + sign main (aka app)
   main_elf = env.Program(f"{project_dir}/main.elf", [

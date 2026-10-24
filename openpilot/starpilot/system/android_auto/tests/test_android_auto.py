@@ -1036,16 +1036,19 @@ def test_network_lease_does_not_undo_user_network_change():
   assert "ActivateConnection" not in nm.calls
 
 
-def test_network_lease_session_stop_after_a_failed_attempt_restores_home_wifi():
+def test_network_lease_session_stop_after_a_failed_attempt_restores_home_wifi(tmp_path):
   nm = FakeNetworkManager()
   lease = make_lease(nm)
+  lease.marker = tmp_path / "paused.json"
   lease.acquire(credentials(), timeout=2.0)
   assert "SetAutoconnect=False" in nm.calls  # home Wi-Fi does not rejoin between attempts
   lease.release(restore=False)
   nm.active_device_connection = "/"  # NetworkManager left wlan0 disconnected
   assert lease.router is None and not nm.autoconnect
+  assert lease.marker.exists()
   lease.release(restore=True)  # the session's last attempt failed; D-Bus is already closed
   assert nm.calls[-2:] == ["SetAutoconnect=True", "ActivateConnection"] and nm.autoconnect
+  assert not lease.marker.exists()
   calls = len(nm.calls)
   lease.release(restore=True)
   assert len(nm.calls) == calls

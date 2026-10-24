@@ -1,4 +1,5 @@
 import { GxNotice } from "./notice.js"
+import { reportSave } from "./save-feedback.js"
 export const channels = ["webPush", "discord", "webhook", "ntfy"]
 export const labels = { webPush: "Browser push", discord: "Discord", webhook: "General webhook", ntfy: "ntfy" }
 
@@ -70,6 +71,7 @@ export const SentryNotifications = {
   },
   beforeUnmount() { this.client.stop(); clearInterval(this.poll); document.removeEventListener("visibilitychange", this.visibility) },
   methods: {
+    reportSave,
     start() {
       clearInterval(this.poll)
       if (this.mode !== "local" || document.hidden) return
@@ -78,9 +80,11 @@ export const SentryNotifications = {
     },
     async save(name, enabled) {
       const draft = this.drafts[name]
-      if (await this.client.run({ action: "configure", channel: name, enabled, url: draft.url, token: draft.token })) {
+      const saved = await this.client.run({ action: "configure", channel: name, enabled, url: draft.url, token: draft.token })
+      if (saved) {
         draft.url = ""; draft.token = ""
       }
+      return saved
     },
     test(name) { return this.client.run({ action: "test", channel: name }) },
     async forget(name) { if (await this.client.run({ action: "forget", channel: name })) { this.drafts[name].url = ""; this.drafts[name].token = "" } },
@@ -112,7 +116,7 @@ export const SentryNotifications = {
       <p v-if="mode !== 'local'">Notification configuration is available on your connected device.</p>
       <template v-else>
         <GxNotice tone="danger" v-if="notificationError">{{ notificationError }}</GxNotice>
-        <p v-if="notificationBusy" class="gx-settings__save-status" role="status">Updating notifications…</p>
+        <p v-if="notificationBusy" class="gx-note" role="status">Updating notifications…</p>
         <GxNotice tone="danger" v-if="notifications?.queueFull">The notification queue is full. Some events could not be queued.</GxNotice>
         <template v-if="notifications">
           <p class="gx-note">{{ notifications.deliverySemantics }}</p>
@@ -122,7 +126,7 @@ export const SentryNotifications = {
               <span class="gx-row__desc">{{ notifications.channels[name].configured ? 'Configured' : 'Not configured' }}</span></div>
               <label class="gx-switch"><input type="checkbox" role="switch" :aria-label="labels[name] + ' notifications'" :checked="notifications.channels[name].enabled"
                 :disabled="!notifications.channels[name].configured || notificationBusy"
-                @change="$event.target.checked=notifications.channels[name].enabled; save(name, !notifications.channels[name].enabled)"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
+                @change="$event.target.checked=notifications.channels[name].enabled; reportSave(() => save(name, !notifications.channels[name].enabled))"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
             <p role="status">Delivery: {{ notifications.channels[name].lastState }} · Pending: {{ notifications.channels[name].pending }}</p>
             <GxNotice tone="danger" v-if="notifications.channels[name].lastError">Delivery status: {{ notifications.channels[name].lastError.replaceAll('_', ' ') }}</GxNotice>
             <div v-if="name !== 'webPush'" class="gx-sentry-channel__fields">

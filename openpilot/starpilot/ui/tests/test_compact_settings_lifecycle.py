@@ -99,6 +99,33 @@ def test_hidden_settings_still_updates_navigation_but_does_not_project(lifecycle
   session.view.render.assert_not_called()
 
 
+@pytest.mark.parametrize("started", [False, True])
+def test_driving_controls_card_opens_shared_editor_from_live_menu(lifecycle, monkeypatch, started):
+  from dataclasses import replace
+  from openpilot.starpilot.ui import feature_settings_compact
+  from openpilot.starpilot.ui.settings_state import SettingsInput
+  from openpilot.starpilot.ui.shell import ShellRequest
+  _, session, ui, _ = lifecycle
+  ui.started = started
+  session._mode = runtime_app.ShellMode.SETTINGS
+  layout = runtime_app.StarMiciMainLayout.__new__(runtime_app.StarMiciMainLayout)
+  layout.star = session
+  session._on_compact_destination = layout._open_compact_destination
+  editor = Mock()
+  monkeypatch.setattr(feature_settings_compact, "FeatureSettingsCompact", editor)
+  snapshot = session.snapshot(runtime_app.ShellMode.SETTINGS)
+  index = next(i for i, item in enumerate(compact_menu(snapshot.settings))
+               if item[0] == runtime_app.Destination.DRIVING_CONTROLS)
+  state = replace(snapshot.settings, compact_scroll_x=-422 * index)
+  inputs = SettingsInput(session.profile, lambda action: session._emit(ShellRequest("settings", action)))
+  inputs.press(221, 120, state)
+  editor.assert_not_called()
+  inputs.release(221, 120, state)
+  assert session.notice == ""
+  editor.assert_called_once_with(session)
+  editor.return_value.open.assert_called_once_with(runtime_app.FeaturePage.HUB)
+
+
 @pytest.mark.parametrize("mode,allowed,label,target", [
   ("auto", True, "Force Off-road", "offroad"),
   ("auto", False, "Force Off-road", "offroad"),

@@ -21,9 +21,10 @@ def exercise(*, control_offset=10_000_000, callback_offset=20_000_000,
     controller_mode='starpilot', policy='ioniq6', baseline_revision='baseline',
     controller_revision='controller', turn_assist=False)
   control_socket, output_socket = object(), object()
-  adapter = mock.Mock(event_collection=False, raw_storage=False)
+  adapter = mock.Mock(event_collection=False, raw_storage=False,
+                      source_plant_protocol=None, original_feedback_archive=None)
   adapter.prepare_control.return_value = evidence
-  collector = mock.Mock(adapter=adapter)
+  collector = mock.Mock(adapter=adapter, controls={evidence.control_ns: evidence}, recent_controls={})
   receipt_clock = [NOW]
   source_reader = mock.Mock(return_value=source)
   fitter = mock.Mock()
@@ -31,7 +32,7 @@ def exercise(*, control_offset=10_000_000, callback_offset=20_000_000,
     starpilotLateralState=SimpleNamespace(learningEvidence=SimpleNamespace(version=1)))
   applied = SimpleNamespace(which=lambda: 'starpilotCarState',
     starpilotCarState=SimpleNamespace(appliedEvidence=SimpleNamespace(version=1)))
-  output_value = object()
+  output_value = SimpleNamespace(control_ns=evidence.control_ns)
 
   def drain(socket, callback, receive, sink, captured_now):
     assert captured_now == NOW  # Original outer loop snapshot really is older.
@@ -48,7 +49,7 @@ def exercise(*, control_offset=10_000_000, callback_offset=20_000_000,
        mock.patch.object(steerlearnerd, 'read_applied', return_value=output_value), \
        mock.patch.object(steerlearnerd, 'FullrateCollector', return_value=collector):
     with pytest.raises(StopIteration):
-      steerlearnerd.run(SimpleNamespace(), mock.Mock(), control_socket, output_socket,
+      steerlearnerd.run(SimpleNamespace(), mock.Mock(updated={'deviceMotion': False}, logMonoTime={'deviceMotion': 0}), control_socket, output_socket,
         mock.Mock(), mock.Mock(return_value=adapter), mock.Mock(), source_reader,
         lambda _: (KEY,), lambda _: KEY, mock.Mock(), mock.Mock(), fitter,
         mock.Mock(), clock=lambda: receipt_clock[0])
@@ -91,8 +92,9 @@ def test_post_drain_health_and_fit_use_current_time():
   source = SourceState(False, False, '0', 'a' * 64, NOW, NOW + 500_000_000,
                        'b' * 64, (0., 0., 0.))
   receipt_clock = [NOW]
-  sm, fitter = mock.Mock(), mock.Mock()
-  sm.update.side_effect = [None, StopIteration()]
+  sm, fitter = mock.Mock(updated={'deviceMotion': False}, logMonoTime={'deviceMotion': 0}), mock.Mock()
+  polls = iter((None,))
+  sm.update.side_effect = lambda timeout=None: None if timeout == 0 else next(polls)
 
   def drain(socket, callback, receive, sink, captured_now):
     assert captured_now == NOW

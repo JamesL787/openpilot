@@ -9,6 +9,7 @@ from openpilot.starpilot.flm.event_controller_replay import EventControllerRepla
 
 def engine():
   value = object.__new__(EventControllerReplay)
+  value.engine = SimpleNamespace()  # Explicit empty delegate for this policy-only shell.
   value.restore_envelope = None
   value.objective = SimpleNamespace(parameters=(SimpleNamespace(low=0., high=.25),))
   value.reference = (0.,)

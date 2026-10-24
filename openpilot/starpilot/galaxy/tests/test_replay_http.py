@@ -148,6 +148,22 @@ class ReplayHTTPTest(unittest.TestCase):
     self.assertEqual(self.request('/api/replay/start', {**payload, 'op': 'shell'}, first)[0], 400)
     self.assertEqual(self.request('/api/replay/media?sessionId=../x&clientId=' + CLIENT + '&epoch=1&sequence=0', cookie=first)[0], 400)
 
+  def test_timeline_uses_authenticated_actor_and_bounded_cursor(self):
+    path = f'/api/replay/timeline?sessionId={SESSION}&clientId={CLIENT}&cursor=0'
+    self.assertEqual(self.request(path)[0], 401)
+    cookie = self.login()
+    status, body, _ = self.request(path, cookie=cookie)
+    self.assertEqual(status, 200)
+    self.assertNotIn(b'/private/frame', body)
+    self.assertEqual(self.calls[-1]['cursor'], 0)
+    self.assertEqual(self.calls[-1]['op'], 'timeline')
+    self.assertNotEqual(self.calls[-1]['clientId'], CLIENT)
+    count = len(self.calls)
+    for suffix in ('-1', 'true', '1.5', '999999999'):
+      self.assertEqual(self.request(path[:-1] + suffix, cookie=cookie)[0], 400)
+    self.assertEqual(self.request(path, cookie=cookie, local=False)[0], 403)
+    self.assertEqual(len(self.calls), count)
+
   def test_export_scope_and_authenticated_private_download(self):
     folder = self.root / 'exports' / SESSION
     folder.mkdir(parents=True, mode=0o700)

@@ -3,7 +3,6 @@
 from pathlib import Path
 from types import SimpleNamespace
 import os
-import select
 import signal
 import shlex
 import subprocess
@@ -168,55 +167,69 @@ class TestOnroadHost(unittest.TestCase):
       self.assertEqual(kwargs["demo_commands"], [[sys.executable, "-m", "openpilot.tools.replay.alert_demo"]])
 
   def test_actual_private_alert_pubsub_shows_then_clears(self):
+    import importlib.machinery
+    import capnp.lib.capnp as native_capnp
+    import msgq.ipc_pyx as native_ipc
+    from openpilot.cereal import messaging
+    from openpilot.starpilot.ui.runtime_snapshot import current_message, _alert
+
+    root = Path(__file__).resolve().parents[4]
+    self.assertTrue(Path(native_ipc.__file__).resolve().is_relative_to(root / 'msgq_repo/msgq'))
+    for native in (native_ipc, native_capnp):
+      self.assertTrue(any(str(native.__file__).endswith(suffix)
+                          for suffix in importlib.machinery.EXTENSION_SUFFIXES))
+    self.assertIs(messaging.SubSocket, native_ipc.SubSocket)
+    self.assertEqual(messaging.SubMaster.__module__, 'openpilot.cereal.messaging')
     prefix = f"replay-alert-{os.getpid()}-{time.time_ns()}"
     env = dict(os.environ, OPENPILOT_PREFIX=prefix, USE_MSGQ_PREFIX="true", SP_HOST_RUNTIME="1")
     env.pop("CEREAL_FAKE", None)
-    receiver = """import time
-from openpilot.cereal import messaging
-from openpilot.starpilot.ui.runtime_snapshot import current_message, _alert
-sm = messaging.SubMaster(['selfdriveState'])
-print('READY', flush=True)
-seen = []
-deadline = time.monotonic() + 5
-while time.monotonic() < deadline:
-  sm.update(100)
-  if not sm.updated['selfdriveState']:
-    continue
-  msg = current_message(sm, 'selfdriveState', time.monotonic_ns())
-  if msg is None:
-    continue
-  visual = _alert(msg)
-  if visual.size.value == 'full':
-    assert visual.critical and visual.text1 == 'TAKE CONTROL IMMEDIATELY'
-    seen.append('full')
-  elif visual.size.value == 'none' and 'full' in seen:
-    seen.append('clear')
-    break
-assert seen[-2:] == ['full', 'clear'], seen
-"""
-    with owned_ipc_namespace(prefix):
-      subscriber = subprocess.Popen([sys.executable, "-c", receiver], env=env, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True)
+    with owned_ipc_namespace(prefix), patch.dict(os.environ, env, clear=True), tempfile.TemporaryFile(mode='w+b') as diagnostics:
+      subscriber = messaging.SubMaster(['selfdriveState'])
       publisher = None
+      seen = []
+      overall_deadline = time.monotonic() + 7
+
+      def publisher_diagnostics():
+        diagnostics.flush()
+        diagnostics.seek(0, os.SEEK_END)
+        diagnostics.seek(max(0, diagnostics.tell() - 4096))
+        return diagnostics.read().decode(errors='replace')
+
       try:
-        assert subscriber.stdout is not None
-        readable, _, _ = select.select([subscriber.stdout], [], [], 5)
-        self.assertTrue(readable, "Alert subscriber must initialize before publishing")
-        self.assertEqual(subscriber.stdout.readline().strip(), "READY")
         publisher = subprocess.Popen([sys.executable, "-m", "openpilot.tools.replay.alert_demo",
                                       "--delay", ".2", "--hold", ".5"], env=env,
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = subscriber.communicate(timeout=7)
-        self.assertEqual(subscriber.returncode, 0, stdout + stderr)
+                                     stdout=diagnostics, stderr=subprocess.STDOUT, text=True)
+        deadline = min(time.monotonic() + 5, overall_deadline)
+        while time.monotonic() < deadline:
+          subscriber.update(100)
+          if not subscriber.updated['selfdriveState']:
+            continue
+          msg = current_message(subscriber, 'selfdriveState', time.monotonic_ns())
+          if msg is None:
+            continue
+          visual = _alert(msg)
+          if visual.size.value == 'full':
+            self.assertTrue(visual.critical)
+            self.assertEqual(visual.text1, 'TAKE CONTROL IMMEDIATELY')
+            seen.append('full')
+          elif visual.size.value == 'none' and 'full' in seen:
+            seen.append('clear')
+            break
+        self.assertEqual(seen[-2:], ['full', 'clear'], publisher_diagnostics())
         self.assertIsNone(publisher.poll(), "Preview publisher must remain owned after clearing")
+      except BaseException as error:
+        error.add_note('Alert publisher diagnostics: ' + publisher_diagnostics())
+        raise
       finally:
-        if subscriber.poll() is None:
-          subscriber.kill()
-          subscriber.wait(timeout=2)
         if publisher is not None:
           if publisher.poll() is None:
             publisher.terminate()
-          publisher.communicate(timeout=3)
+          try:
+            publisher.communicate(timeout=max(.001, min(3, overall_deadline - time.monotonic())))
+          except subprocess.TimeoutExpired:
+            publisher.kill()
+            publisher.communicate(timeout=2)
+        del subscriber
 
   def test_alert_module_refuses_unowned_namespace_before_publishing(self):
     env = dict(os.environ, SP_HOST_RUNTIME="1", OPENPILOT_PREFIX="replay-missing-namespace")

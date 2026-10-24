@@ -72,10 +72,10 @@ class TestZssCaller(unittest.TestCase):
                                   fwVersion=b'8965B47070' + bytes(6))
     cp = CarInterface.get_params(CAR.TOYOTA_PRIUS, {0: {0x23: 8, 0x2FF: 8}, 1: {}, 2: {}}, [rack], False, False, False)
     self.assertTrue(configured(cp))
-    self.assertEqual(cp.safetyConfigs[0].safetyParam, 4169)
+    self.assertEqual(cp.safetyConfigs[0].safetyParam, 0x8049)
     sibling = cp.as_reader().as_builder()
     sibling.flags |= 1 << 17
     self.assertFalse(configured(sibling))
     self.assertTrue(prepare_stock(cp))
-    self.assertEqual(cp.safetyConfigs[0].safetyParam, 4681)
+    self.assertEqual(cp.safetyConfigs[0].safetyParam, 0x8249)
     self.assertTrue(cp.flags & ToyotaFlags.ZSS)

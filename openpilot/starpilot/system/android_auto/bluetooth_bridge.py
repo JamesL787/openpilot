@@ -319,7 +319,7 @@ class SharedBluetoothOwner(BluetoothOwner):
       self.companion_devices.clear()
       self.phone_lease = None
       window = self.pairing
-      if isinstance(window, OpenPairingSession) and not window.done.is_set():
+      if window is not None and not window.done.is_set():
         window.cancel()
         window.done.wait(5.0)
       if lease.session is not None:
@@ -327,6 +327,7 @@ class SharedBluetoothOwner(BluetoothOwner):
       try:
         try:
           try:
+            self._stop_scan()
             if lease.discovering:
               try:
                 self._client().operation('stop_scan')
@@ -646,15 +647,18 @@ class SharedBluetoothOwner(BluetoothOwner):
         self.companion_devices.pop(address, None)
         return self.snapshot(session=session)
       hfp = '0000111e-0000-1000-8000-00805f9b34fb'
-      if device is None or not device['paired'] or hfp not in device.get('uuids', []):
-        raise BluetoothRejected('Choose an already paired hands-free car', code='changed')
+      if device is None or not device['paired']:
+        raise BluetoothRejected('Choose an already paired device', code='changed')
       if not device['path'].startswith(lease.adapter_path + '/'):
         raise BluetoothRejected('Bluetooth adapter changed', code='changed')
+      is_car = hfp in device.get('uuids', [])
       was_admitted = self.companion_devices.get(address)
-      if operation == 'connect':
+      if operation == 'connect' and is_car:
         self.companion_devices[address] = device['path']
       try:
-        if operation == 'connect':
+        if not is_car:
+          client.operation(operation, address)
+        elif operation == 'connect':
           lease.phone._call(device['path'], 'org.bluez.Device1', 'ConnectProfile', 's', (hfp,), timeout=12.0)
         else:
           # Disconnect only the companion car, never the projection adapter.
@@ -679,27 +683,71 @@ class SharedBluetoothOwner(BluetoothOwner):
     finally:
       self.lock.release()
 
+  def companion_power(self, enabled: bool, session: tuple) -> dict | None:
+    """Turn the radio off (or confirm it is on) from Galaxy while Android Auto holds the adapter.
+
+    None means no lease holds it, so the caller's own owner handles the request. Turning it off releases the
+    projection lease first (see request), so Android Auto lets go of the adapter before the radio stops.
+    """
+    lease = self.phone_lease
+    if lease is None or lease.released:
+      return None
+    if not self.session_valid(session):
+      raise BluetoothRejected('Galaxy session expired', code='session_expired')
+    if lease.session is not None:
+      raise BluetoothRejected('Finish Android Auto pairing first', code='busy')
+    if enabled:
+      return self.snapshot(session=session)
+    return self.request('power', enabled=False, session=session)
+
   def phone_window(self, operation: str, session: tuple, *, prompt_id: str | None = None,
-                   accepted: bool | None = None, value: str = '') -> dict | None:
+                   accepted: bool | None = None, value: str = '', address: str | None = None) -> dict | None:
     """Open, answer or read a phone pairing window inside the projection lease; None means no projection holds the adapter."""
-    if operation not in ('accept_pair', 'pairing_response', 'cancel_pair', 'status'):
+    if operation not in ('accept_pair', 'pair', 'scan', 'stop_scan', 'pairing_response', 'cancel_pair', 'status'):
       raise ValueError('Unsupported phone window operation')
     if not self.lock.acquire(blocking=False):
       raise BluetoothRejected('Bluetooth is busy', code='busy')
     try:
       lease = self.phone_lease
-      window = self.pairing if isinstance(self.pairing, OpenPairingSession) else None
+      window = self.pairing
       if lease is None or lease.released:
         return None
       if lease.session is not None:
         raise BluetoothRejected('Finish Android Auto pairing first', code='busy')
       if not self.session_valid(session):
         raise BluetoothRejected('Galaxy session expired', code='session_expired')
-      if operation != 'accept_pair' and (window is None or window.identity != session):
+      if operation in ('status', 'cancel_pair', 'pairing_response') and (window is None or window.identity != session):
         return None
-      if operation == 'accept_pair':
+      if operation != 'status' and not self.parked():
+        raise BluetoothRejected('Park before changing Bluetooth devices', code='park_required')
+      if operation in ('scan', 'stop_scan'):
+        return super().request(operation, session=session)
+      if operation == 'pair':
+        if address is None:
+          raise ValueError('Invalid Bluetooth address')
+        address = normalized_address(address)
+        if address == lease.receiver:
+          raise BluetoothRejected('Use Android Auto to pair its receiver', code='projection_active')
+        self._end_idle_window()
+        if self.pairing is not None and not self.pairing.done.is_set():
+          raise BluetoothRejected('Pairing is in progress', code='busy')
+        client = self._client()
+        path, _, sender = client.adapter_identity()
+        device = next((d for d in client._devices(client._objects()) if d['address'] == address), None)
+        if (path, sender) != (lease.adapter_path, lease.bluez_sender) or device is None or device['paired'] or not device['path'].startswith(path + '/'):
+          raise BluetoothRejected('Device changed before pairing', code='changed')
+        self._stop_scan()
+        window = PairingSession(session, address, device['path'],
+                                lambda: self.phone_lease is lease and not lease.released and self.parked() and self.session_valid(session), self.clock)
+        self.pairing = window
+        self.window_paired = None
+        threading.Thread(target=self._pair_worker, args=(window,), daemon=True).start()
+        threading.Thread(target=self._watch_pair, args=(window,), daemon=True).start()
+      elif operation == 'accept_pair':
         if not self.parked():
           raise BluetoothRejected('Park before pairing a phone', code='park_required')
+        # A window nobody has claimed yet gives way to a new one; a claimed one still blocks.
+        self._end_idle_window()
         if self.pairing is not None and not self.pairing.done.is_set():
           raise BluetoothRejected('Pairing is in progress', code='busy')
         window = OpenPairingSession(session, lambda: self.session_valid(session) and self.parked(), self.clock)

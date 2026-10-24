@@ -299,14 +299,14 @@ def exercise_bolt_cancel_recovery(self, identity, removed, *, critical=None, com
           events.add(getattr(EventName, communications))
         if regen or brake:
           events.add(EventName.pedalPressed)
-        if fault and critical in ('controlsMismatch', 'calibrationInvalid'):
+        if fault and critical in ('controlsMismatch', 'steerUnavailable'):
           events.add(getattr(EventName, critical))
         ctx['events'] = [int(event) for event in events.names]
         if communication_loss:
           self.assertTrue(events.contains(ET.NO_ENTRY), msg=ctx)
           self.assertTrue(events.contains(ET.SOFT_DISABLE), msg=ctx)
           self.assertEqual(events.contains(ET.IMMEDIATE_DISABLE),
-                           bool(fault and critical in ('controlsMismatch', 'permanentEPS')), msg=ctx)
+                           bool(fault and critical in ('controlsMismatch', 'steerUnavailable', 'permanentEPS')), msg=ctx)
         if regen or brake:
           self.assertIn(EventName.pedalPressed, events.names, msg=ctx)
           self.assertTrue(events.contains(ET.USER_DISABLE), msg=ctx)
@@ -333,7 +333,7 @@ def exercise_bolt_cancel_recovery(self, identity, removed, *, critical=None, com
           disarm = selected.aol_disarming_fault(cs, now, now)
         self.assertEqual(disarm, bool(fault and critical), ((tick, critical), ctx))
         selected.aol_card_intent.update(cs, fault_active=disarm, now_ns=now, standard_enabled=ordinary)
-        expected_latch = main and (critical is None or tick < 10 or tick >= 28)
+        expected_latch = main and not disarm
         self.assertEqual(selected.aol_card_intent.allowed_latch, expected_latch, ((tick, critical), ctx))
         allowed, pause_lat, pause_long = selected.aol_card_intent.output(cs)
         intent_state = IntentState('card', tick + 1, now, now, now + 30_000_000,
@@ -442,7 +442,8 @@ def exercise_bolt_cancel_recovery(self, identity, removed, *, critical=None, com
                        post_companion_samples=list(companion.samples),
                        post_companion_latest=(latest[0], latest[1], vars(latest[2]) if latest[2] is not None else None)
                        if latest is not None else None)
-        expected_lat = expected_latch and not no_entry and not events.contains(ET.IMMEDIATE_DISABLE) and tick != temporary_eps_tick and not brake
+        expected_lat = (expected_latch and bool(mask & 1) and not no_entry and
+                        not events.contains(ET.IMMEDIATE_DISABLE) and tick != temporary_eps_tick and not brake)
         self.assertEqual(sd.aol_axis_decision.lateral_active, expected_lat, ((tick, critical), ctx))
         self.assertEqual(sd.aol_axis_decision.longitudinal_active, ordinary, ((tick, critical), ctx))
         if tick >= pause_start:
@@ -563,10 +564,10 @@ def exercise_bolt_cancel_recovery(self, identity, removed, *, critical=None, com
               trajectory.add('mode_zero_cancel_native_admitted')
         if communications is not None:
           self.assertEqual(selected.aol_card_intent._main_cycle_required,
-                           critical is not None and 10 <= tick < 26, msg=ctx)
+                           disarm, msg=ctx)
           if communication_loss:
             self.assertFalse(command.latActive or command.longActive, msg=ctx)
-            self.assertEqual(selected.aol_card_intent.allowed_latch, critical is None, msg=ctx)
+            self.assertEqual(selected.aol_card_intent.allowed_latch, main and not disarm, msg=ctx)
           if critical is None and tick in (18, 22, 24):
             self.assertTrue(command.latActive, msg=ctx)
             self.assertFalse(command.longActive, msg=ctx)

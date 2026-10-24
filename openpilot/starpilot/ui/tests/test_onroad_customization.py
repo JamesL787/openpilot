@@ -534,7 +534,7 @@ def test_frozen_default_draw_geometry_and_neutral_colors():
     assert circle.call_args.args[:3] == (1684, 171, 96)
 
 
-@pytest.mark.parametrize("speed,size", [(65, 58), (105, 58)])
+@pytest.mark.parametrize("speed,size", [(65, 50), (105, 42)])
 def test_compact_us_sign_keeps_camera_visible_at_saved_position(speed, size):
   document = default_document()
   document["layouts"]["compact"]["speed_limit"].update(x=200, y=30)
@@ -547,12 +547,12 @@ def test_compact_us_sign_keeps_camera_visible_at_saved_position(speed, size):
   with patch.object(rl, "draw_rectangle_rounded") as fill, \
        patch.object(rl, "draw_rectangle_rounded_lines_ex") as outline:
     hud._speed_limit_sign(state)
-  fill.assert_called_once()
+  fill.assert_not_called()
   outline.assert_called_once()
   rect = outline.call_args.args[0]
-  assert (rect.x, rect.y, rect.width, rect.height) == (202, 32, 114, 128)
+  assert (rect.x, rect.y, rect.width, rect.height) == (210, 38, 100, 116)
   assert [(call.args[0], call.args[2]) for call in foreground_calls(fonts.draw)] == [("SPEED", 20), ('LIMIT', 20), (str(speed), size)]
-  assert foreground_calls(fonts.draw)[0].args[3:5] == (254, 41)
+  assert foreground_calls(fonts.draw)[0].args[3:5] == (255, 48)
 
 
 def test_compact_drag_keeps_animation_state_and_separate_origins():

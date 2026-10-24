@@ -84,6 +84,7 @@ class ToyotaFlags(IntFlag):
   AUTO_BRAKE_HOLD = 4096
   RADAR_CAN_FILTER = 1 << 18  # Exact radar adapter; includes four-byte 2FF, distinct from legacy SDSU status
   GAS_INTERCEPTOR = 1 << 17  # Exact paired pedal owner
+  DSU_BYPASS = 1 << 19  # Camera-bus DSU adapter; independent of smartDSU/filter
   ZSS = 1 << 16  # Detected Prius secondary steering sensor; host-only, no safetyParam allocation
 
   # deprecated flags

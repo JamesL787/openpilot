@@ -218,6 +218,7 @@ def test_actual_main_source_reader_reuses_lifecycle_for_cache_and_persistence():
       '__getitem__': lambda self, key: cal,
       'all_checks': lambda self, keys: True,
     })()
+    sm.seen = {'extrinsicsCalibration': True}
     sm.valid = {'extrinsicsCalibration': True}
     sm.logMonoTime = {'extrinsicsCalibration': BASE}
     sm.recv_time = {'extrinsicsCalibration': BASE / 1e9}
@@ -250,7 +251,8 @@ def test_actual_main_source_reader_reuses_lifecycle_for_cache_and_persistence():
       assert persistence.current_sources('fresh-identity', fresh.source_epoch)[0] == 'fresh-identity'
     for tick in range(100):
       gap = BASE + (tick + 1) * 1_000_000_000
-      assert not source_reader(gap).enabled
+      retained = source_reader(gap)
+      assert retained.enabled and retained.source_epoch == fresh.source_epoch
       sm.logMonoTime['extrinsicsCalibration'] = gap + 1
       sm.recv_time['extrinsicsCalibration'] = (gap + 1) / 1e9
       resumed = source_reader(gap + 1)

@@ -1,11 +1,12 @@
 """Legacy radar transaction with exact stock fallback before publication."""
 from copy import deepcopy
+from typing import cast
 import time
 
 from opendbc.car import Bus
 from opendbc.can.parser import MAX_BAD_COUNTER
 from opendbc.car.hyundai.values import HyundaiFlags
-from opendbc.car.hyundai.ecu_startup import Outcome
+from opendbc.car.hyundai.ecu_startup import Outcome, PreparedParams
 from opendbc.car.hyundai.ecu_continuity import ContinuousECUStartup
 from opendbc.car.hyundai.g90_startup import G90Startup
 from opendbc.car.hyundai.legacy_long_aol import candidate, qualified, CARS, ordinary_word, aol_word
@@ -37,7 +38,7 @@ class LegacyLongStartup(G90Startup):
     return self.cp
 
   def sources_current(self, ci, now_ns):
-    if self.outcome is not Outcome.SENT_UNCONFIRMED:
+    if self.outcome not in (Outcome.PENDING, Outcome.SENT_UNCONFIRMED):
       return True
     if not ci.CS.out.canValid or ci.CS.out.canTimeout:
       return False
@@ -51,22 +52,23 @@ class LegacyLongStartup(G90Startup):
         return False
     return True
 
-  def before_control(self, *, configured, sources_current, control_current):
+  def before_control(self, **context):
     self.check()
-    return self.outcome is not Outcome.SENT_UNCONFIRMED or (configured and sources_current and control_current)
+    return self.outcome is not Outcome.PENDING and (self.outcome is not Outcome.SENT_UNCONFIRMED or
+      (context['configured'] and context['sources_current'] and context['control_current']))
 
   def finalize_aol_configuration(self, ci):
     if self.published or self.closed or ci is not self.ci or not self.ready:
       raise RuntimeError('Legacy LONG AOL finalization requires configured startup')
     if self.prepared_for(ci.CP):
       return
-    if self.outcome is Outcome.SENT_UNCONFIRMED and qualified(ci.CP, marked_only=True):
+    if self.outcome in (Outcome.PENDING, Outcome.SENT_UNCONFIRMED) and qualified(ci.CP, marked_only=True):
       before_word, after_word = ordinary_word(ci.CP), aol_word(ci.CP)
     elif self.outcome in (Outcome.STOCK_UNTOUCHED, Outcome.STOCK_RESTORED) and stock_qualified(ci.CP, marked_only=True):
       before_word, after_word = stock_word(ci.CP), stock_aol_word(ci.CP)
     else:
       raise RuntimeError('Legacy startup does not admit this AOL configuration')
-    expected = deepcopy(self.prepared_cp)
+    expected = deepcopy(cast(PreparedParams, self.prepared_cp))
     config = expected['safetyConfigs'][0]
     if config['safetyModel'] != 'hyundaiLegacy' or config['safetyParam'] != before_word or expected['alternativeExperience'] != 0:
       raise RuntimeError('Legacy prepared profile cannot be finalized')

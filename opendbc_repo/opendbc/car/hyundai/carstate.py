@@ -541,11 +541,11 @@ class CarState(CarStateBase):
     from opendbc.car.hyundai.ev6_aol import qualified as ev6_aol_qualified
     self.ev6_aol_samples = ()
     self.ev6_aol_source_healthy = False
-    from opendbc.car.hyundai.canfd_stock_aol import LONG_EV_CARS, qualified_long
+    from opendbc.car.hyundai.canfd_stock_aol import INDEPENDENT_LONG_BUTTON_CARS, qualified_long
     from opendbc.car.hyundai.ev9_long_aol import qualified as ev9_long_aol_qualified
     from opendbc.car.hyundai.pe_long_aol import qualified as pe_long_aol_qualified
     if ev6_aol_qualified(self.CP) or ev9_long_aol_qualified(self.CP, marked_only=True) or pe_long_aol_qualified(self.CP, marked_only=True) or (
-        self.CP.carFingerprint in LONG_EV_CARS and qualified_long(self.CP, marked_only=True)):
+        self.CP.carFingerprint in INDEPENDENT_LONG_BUTTON_CARS and qualified_long(self.CP, marked_only=True)):
       from opendbc.can.parser import MAX_BAD_COUNTER
       source = cp.message_states.get(cp.dbc.name_to_msg[self.cruise_btns_msg_canfd].address)
       self.ev6_aol_sample_stamp_ns = int(source.timestamps[-1]) if source is not None and source.timestamps else 0

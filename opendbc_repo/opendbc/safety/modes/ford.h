@@ -239,6 +239,10 @@ static bool ford_tx_hook(const CANPacket_t *msg) {
 
   bool tx = true;
 
+  if ((msg->addr == FORD_ACCDATA_3) || (msg->addr == FORD_IPMA_Data)) {
+    tx = ford_aol_display_tx_allowed();
+  }
+
   // Safety check for ACCDATA accel and brake requests
   if (msg->addr == FORD_ACCDATA) {
     // Signal: AccPrpl_A_Rq
@@ -501,7 +505,14 @@ static void ford_aol_bind_tx(safety_config *ret, CanMsg workspace[7]) {
   }
 }
 
-static safety_config ford_init(uint16_t param) {
+static safety_config ford_init(uint16_t configured_param) {
+  const uint16_t bp_param = configured_param & ~256U;
+  const bool joint_angle = ((unsigned int)alternative_experience == 32U) &&
+    ((bp_param == 146U) || (bp_param == 147U) || (bp_param == 160U) || (bp_param == 161U) || (bp_param == 194U) || (bp_param == 195U));
+  const uint16_t param = joint_angle ? (bp_param & ~128U) : bp_param;
+  const bool manual = (configured_param & 256U) != 0U;
+  // Manual variants are only defined for the exact registered Ford profiles.
+  const bool manual_valid = !manual || ford_aol_param_valid(configured_param);
   // warning: quality flags are not yet checked in openpilot's CAN parser,
   // this may be the cause of blocked messages
   // Shared entries preserve all current checksum/counter/quality contracts.
@@ -534,13 +545,11 @@ static safety_config ford_init(uint16_t param) {
     {FORD_Lane_Assist_Data1, 0, 8, .check_relay = true},  \
     {FORD_IPMA_Data, 0, 8, .check_relay = true},          \
 
-#ifdef ALLOW_DEBUG
   static const CanMsg FORD_CANFD_LONG_TX_MSGS[] = {
     FORD_COMMON_TX_MSGS
     {FORD_ACCDATA, 0, 8, .check_relay = true},
     {FORD_LateralMotionControl2, 0, 8, .check_relay = true},
   };
-#endif
 
   static const CanMsg FORD_CANFD_STOCK_TX_MSGS[] = {
     FORD_COMMON_TX_MSGS
@@ -565,9 +574,7 @@ static safety_config ford_init(uint16_t param) {
   const uint16_t FORD_PARAM_GENERIC_CANFD_EXTENDED = 64U;
   const bool generic_canfd_namespace = GET_FLAG(param, FORD_PARAM_GENERIC_CANFD_EXTENDED);
   ford_generic_canfd_extended = (param == 66U) && (((unsigned int)alternative_experience == 0U) || (((unsigned int)alternative_experience == 32U) && ford_aol_param_valid(param)));
-#ifdef ALLOW_DEBUG
   ford_generic_canfd_extended |= (param == 67U) && (((unsigned int)alternative_experience == 0U) || (((unsigned int)alternative_experience == 32U) && ford_aol_param_valid(param)));
-#endif
   ford_generic_canfd_announced = false;
   const bool explorer_namespace = GET_FLAG(param, FORD_PARAM_EXPLORER_EXTENDED);
   ford_explorer_extended = ((param == 32U) || (param == 33U)) &&
@@ -575,10 +582,8 @@ static safety_config ford_init(uint16_t param) {
   ford_explorer_announced = false;
   const bool mach_e_namespace = GET_FLAG(param, FORD_PARAM_MACH_E_EXTENDED);
   ford_mach_e_extended = (param == 18U) && (((unsigned int)alternative_experience == 0U) || (((unsigned int)alternative_experience == 32U) && ford_aol_param_valid(param)));
-#ifdef ALLOW_DEBUG
   ford_mach_e_extended |= (param == 19U) && (((unsigned int)alternative_experience == 0U) || (((unsigned int)alternative_experience == 32U) && ford_aol_param_valid(param)));
-#endif
-  const bool bp_config_valid = ford_bp_configure(param);
+  const bool bp_config_valid = ford_bp_configure(bp_param);
   ford_stock_switch = ((((unsigned int)alternative_experience == 0U) || (((unsigned int)alternative_experience == 32U) && ford_aol_param_valid(param))) &&
                       ((param == 2U) || (param == 8U) || (param == 10U) || (param == 12U) ||
                        ((param == 18U) && ford_mach_e_extended) ||
@@ -605,12 +610,13 @@ static safety_config ford_init(uint16_t param) {
   safety_config ret;
   if (ford_canfd) {
     ret = BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_STOCK_TX_MSGS);
+    bool long_profile = (param == 11U) || (param == 19U) || (param == 67U);
 #ifdef ALLOW_DEBUG
-    const uint16_t FORD_PARAM_LONGITUDINAL = 1;
-    if (GET_FLAG(param, FORD_PARAM_LONGITUDINAL)) {
+    long_profile |= GET_FLAG(param, 1U);
+#endif
+    if (long_profile) {
       ret = BUILD_SAFETY_CFG(ford_rx_checks, FORD_CANFD_LONG_TX_MSGS);
     }
-#endif
   } else {
     ret = ford_new_port ? BUILD_SAFETY_CFG(ford_rx_checks, FORD_STOCK_TX_MSGS) :
                           BUILD_SAFETY_CFG(ford_rx_checks, FORD_LONG_TX_MSGS);
@@ -632,13 +638,13 @@ static safety_config ford_init(uint16_t param) {
       SET_RX_CHECKS(ford_stock_rx_checks, ret);
     }
   }
-  if (!bp_config_valid || (mach_e_namespace && !ford_mach_e_extended) ||
+  if (!manual_valid || !bp_config_valid || (mach_e_namespace && !ford_mach_e_extended) ||
       (explorer_namespace && !ford_explorer_extended) ||
       (generic_canfd_namespace && !ford_generic_canfd_extended)) {
     ret.tx_msgs = NULL;
     ret.tx_msgs_len = 0;
   }
-  ford_aol_configure(param);
+  ford_aol_configure(configured_param);
   if (ford_aol_enabled) {
     static const RxCheck ford_aol_default_rx[] = {
       FORD_COMMON_RX_CHECKS
@@ -687,6 +693,10 @@ static safety_config ford_init(uint16_t param) {
     for (int i = 0; i < 10; i++) {
       if (i < selected_len) {
         ford_aol_rx_workspace[i] = selected_rx[i];
+        const unsigned int addr = ford_aol_rx_workspace[i].msg[0].addr;
+        if (manual && ((addr == 0x176U) || (addr == 0x230U) || (addr == 0x5AU))) {
+          ford_aol_rx_workspace[i].msg[0].addr = 0x3C3U;
+        }
       } else {
         ford_aol_rx_workspace[i] = (RxCheck){0};
       }
@@ -698,9 +708,7 @@ static safety_config ford_init(uint16_t param) {
     _Static_assert(sizeof(FORD_CANFD_STOCK_TX_MSGS) <= sizeof(ford_aol_tx_msgs), "Ford CAN FD stock TX capacity");
     _Static_assert(sizeof(FORD_STOCK_TX_MSGS) <= sizeof(ford_aol_tx_msgs), "Ford stock TX capacity");
     _Static_assert(sizeof(FORD_LONG_TX_MSGS) <= sizeof(ford_aol_tx_msgs), "Ford long TX capacity");
-#ifdef ALLOW_DEBUG
     _Static_assert(sizeof(FORD_CANFD_LONG_TX_MSGS) <= sizeof(ford_aol_tx_msgs), "Ford CAN FD long TX capacity");
-#endif
     ford_aol_bind_tx(&ret, ford_aol_tx_msgs);
   }
   return ret;

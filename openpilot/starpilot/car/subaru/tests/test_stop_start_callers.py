@@ -24,8 +24,8 @@ from openpilot.starpilot.car.subaru.tests.native_fixture import subaru_native_pa
 @pytest.mark.parametrize('enabled', [False, True])
 @pytest.mark.parametrize('manual', [False, True])
 @pytest.mark.parametrize('aol', [False, True])
-def test_actual_startup_factory_card_controls_native(enabled, manual, aol, subaru_native_pair, tmp_path, configure_delay=0):
-  candidate = CAR.SUBARU_LEGACY_2025
+def test_actual_startup_factory_card_controls_native(enabled, manual, aol, subaru_native_pair, tmp_path, configure_delay=0,
+                                                   candidate=CAR.SUBARU_LEGACY_2025, base_ns=None):
   fw = firmware_records(candidate, FW_VERSIONS, 'subaru')
   rows = []
   with actual_factory(candidate, gen_empty_fingerprint(), fw, '0' * 17, manual=manual, aol=aol,
@@ -35,10 +35,11 @@ def test_actual_startup_factory_card_controls_native(enabled, manual, aol, subar
     safety = libsafety_py.libsafety
     assert cp.pcmCruise and not cp.openpilotLongitudinalControl and not cp.alphaLongitudinalAvailable
     assert cp.alternativeExperience == (32 if aol else 0) and not cp.dashcamOnly
-    assert cp.safetyConfigs[0].safetyParam == (401 if enabled else 145)
+    base_word = 209 if candidate == CAR.SUBARU_OUTBACK_2023 else 145
+    assert cp.safetyConfigs[0].safetyParam == base_word | (256 if enabled else 0)
     sd, controls = SelfdriveD(CP=cp), Controls()
     stream = CompleteCan(ci)
-    base = time.monotonic_ns() + 100_000_000
+    base = time.monotonic_ns() + 100_000_000 if base_ns is None else base_ns
     safety.init_tests()
     safety.set_timer((base // 1000) & 0xFFFFFFFF)
     safety.set_alternative_experience(cp.alternativeExperience)
@@ -53,7 +54,7 @@ def test_actual_startup_factory_card_controls_native(enabled, manual, aol, subar
     driven_new = {}
     receipt = None
     steering_name = 'ES_LKAS_ANGLE' if cp.steerControlType == structs.CarParams.SteerControlType.angle else 'ES_LKAS'
-    steering_bus = 0 if candidate in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_FORESTER, CAR.SUBARU_OUTBACK) else 1
+    steering_bus = 0 if candidate in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_FORESTER, CAR.SUBARU_OUTBACK, CAR.SUBARU_OUTBACK_2023) else 1
     decoder = CANParser(DBC[candidate][Bus.pt], [(steering_name, 0)], steering_bus)
     dash_decoder = CANParser(DBC[candidate][Bus.pt], [('ES_LKAS_State', 0)], 0)
     dash_emissions = 0
@@ -76,7 +77,7 @@ def test_actual_startup_factory_card_controls_native(enabled, manual, aol, subar
           'ES_DashStatus': {'Cruise_On': int(main), 'Cruise_Set_Speed': 100},
           'Transmission': {'Gear': 4},
         }
-        incoming = stream.frames(values, tick=tick)
+        incoming = stream.frames(values, tick=tick, omit=((Bus.pt, 'Dashlights'),) if candidate == CAR.SUBARU_OUTBACK_2023 else ())
         if tick % 10 == 0:
           for name, fields in (("Dashlights", {"COUNTER": (tick // 10) % 16}),
                                ("Engine_Stop_Start", {"Counter": (tick // 10) % 16, "STOP_START_STATE": 1})):
@@ -237,4 +238,4 @@ def test_startup_option_preserves_actual_stock_engage_aol_brake_reverse_recovery
 
 @pytest.mark.parametrize('aol', [False, True])
 def test_late_native_configuration_still_gets_one_qualified_request(aol, subaru_native_pair, tmp_path):
-  test_actual_startup_factory_card_controls_native(True, False, aol, subaru_native_pair, tmp_path, configure_delay=80)
+  test_actual_startup_factory_card_controls_native(True, False, aol, subaru_native_pair, tmp_path, configure_delay=80, base_ns=200_000_000_000_000)

@@ -4,10 +4,11 @@ This module DOES NOT verify CAN/native signatures, controller replay, profile
 admission or persisted authority. The real child must recompute those before
 constructing VerifiedCommandTape and again bind the result to its activation
 and current-admission proofs. A qualified result is only an affine plant test.
-No product imports, file I/O, controllers, executable callbacks or optimization
+Clock-budget helper only; no file I/O, controllers, executable callbacks or optimization
 against heldout data. Protocol constants cannot be passed as tuning arguments.
 """
 from bisect import bisect_right
+from openpilot.starpilot.flm.producer_clock_equivalence import clock_uncertainty_limit
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -239,7 +240,7 @@ def _validate(binding, tape, poses, windows):
     if (not _hash(p.pose_id) or p.pose_id in pose_ids or
         not all(_integer(v) for v in (p.mono_ns, p.received_ns, p.source_timestamp_ns)) or
         type(p.clock_offset_ns) is not int or not _integer(p.clock_uncertainty_ns, zero=True) or
-        p.clock_uncertainty_ns > 1_000_000 or p.source_timestamp_ns - p.clock_offset_ns != p.mono_ns or
+        p.clock_uncertainty_ns > clock_uncertainty_limit(p.source_clock_domain) or p.source_timestamp_ns - p.clock_offset_ns != p.mono_ns or
         p.source_clock_domain not in ('monotonic', 'boottime', 'unknown-equivalent-at-receipt', 'mono_boot_equivalent_interval_v1') or
         p.source_clock_domain != 'boottime' and p.clock_offset_ns != 0 or
         not all(_integer(v) for v in (p.source_lower_ns,p.source_upper_ns)) or
@@ -316,7 +317,7 @@ def _validate_physical(binding, tape, poses, windows):
     if (not _hash(p.pose_id) or p.pose_id in pose_ids or
         not all(_integer(v) for v in (p.mono_ns, p.received_ns, p.source_timestamp_ns)) or
         type(p.clock_offset_ns) is not int or not _integer(p.clock_uncertainty_ns, zero=True) or
-        p.clock_uncertainty_ns > 1_000_000 or p.source_timestamp_ns - p.clock_offset_ns != p.mono_ns or
+        p.clock_uncertainty_ns > clock_uncertainty_limit(p.source_clock_domain) or p.source_timestamp_ns - p.clock_offset_ns != p.mono_ns or
         p.source_clock_domain not in ('monotonic', 'boottime', 'unknown-equivalent-at-receipt', 'mono_boot_equivalent_interval_v1') or
         p.source_clock_domain != 'boottime' and p.clock_offset_ns != 0 or
         not all(_integer(v) for v in (p.source_lower_ns,p.source_upper_ns)) or

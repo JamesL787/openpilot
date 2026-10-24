@@ -4,6 +4,7 @@ import { GxSummary } from "./summary.js"
 import { GxNotice } from "./notice.js"
 import { connectionError } from "./polling.js"
 import { GalaxySelect } from "./galaxy-select.js"
+import { reportSave } from "./save-feedback.js"
 
 // Read-only model identity; a saved label never proves what modeld loaded.
 export class ModelStatusFeed {
@@ -429,7 +430,7 @@ export const ModelsPage = {
       this.pendingChoice = { action: "jetlink", value: mode }
       this.busy = "jetlink:"
       try {
-        const result = await this.manager.action("jetlink", null, { mode, chargePhone })
+        const result = await reportSave(() => this.manager.action("jetlink", null, { mode, chargePhone }))
         if (result) this.message = result.message
       } finally { this.pendingChoice = null; this.busy = "" }
     },
@@ -451,7 +452,8 @@ export const ModelsPage = {
           if (!allowGpuWithoutGpu) return
         }
         if (this.disposed) return
-        const result = await this.manager.action(action, model, { allowGpuWithoutGpu })
+        const perform = () => this.manager.action(action, model, { allowGpuWithoutGpu })
+        const result = await (["enable-randomizer", "disable-randomizer", "include", "exclude"].includes(action) ? reportSave(perform) : perform())
         if (!this.disposed && result) {
           this.trackingProgress = ["download", "downloadAll", "refresh"].includes(action)
           this.message = (this.trackingProgress && this.status.progress) || result.message ||
@@ -469,7 +471,7 @@ export const ModelsPage = {
       <template v-else>
         <header class="gx-settings__header gx-page-header"><div><h2>Model Manager</h2>
           <p>Manage models, downloads, and Jetlink connections.</p></div></header>
-        <GxNotice v-if="message" class="gx-settings__save-status" tone="info">{{ message }}</GxNotice>
+        <GxNotice v-if="message" tone="info">{{ message }}</GxNotice>
         <GxNotice v-if="error" tone="danger" title="Model Manager">{{ error }}</GxNotice>
         <GxNotice v-if="status.isOnroad" tone="warn">Park the vehicle before changing or downloading models.</GxNotice>
         <GxNotice v-if="status.downloading" :title="'Downloading ' + downloadTargetLabel">{{ status.progress || 'Keep the device connected until the download finishes.' }}</GxNotice>

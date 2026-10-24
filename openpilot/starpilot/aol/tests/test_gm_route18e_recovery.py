@@ -58,7 +58,8 @@ def test_cold_main_waits_for_host_readiness_but_keeps_real_faults(event):
     original_events = sd.update_events
     axis, state, command = drive(0, observed_state=cs, native_request_lat=False, native_request_long=False,
                                 allowed=False, long_allowed=False, critical_event=event)
-    temporary = event in (EventName.commIssue, EventName.commIssueAvgFreq, EventName.locationdTemporaryError)
+    temporary = event != EventName.controlsMismatch
+    assert any(e.name == event and (e.softDisable if temporary else e.immediateDisable) for e in sd.events.to_msg())
     assert str(axis.faultReason) == ('availabilityPause' if temporary else 'critical')
     assert not command.latActive and not command.longActive and not state.enabled
     deliver_card(card, sd, controls, cs, 0)

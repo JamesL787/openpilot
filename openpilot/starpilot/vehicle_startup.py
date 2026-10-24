@@ -8,7 +8,7 @@ class VehicleStartupOwner:
     self.owner = owner
     self.send_lock = threading.Lock()
 
-  def prepare(self, cp, interface, callbacks, *, requested, admission):
+  def prepare(self, cp, interface, callbacks, *, requested, admission, defer_until_controls=False):
     factory = getattr(interface, 'startup_owner', None)
     if factory is None:
       return cp
@@ -21,7 +21,8 @@ class VehicleStartupOwner:
       return cp
     # Register before any ECU request so a partially constructed Card can close.
     self.owner = owner
-    return owner.prepare(admission=admission)
+    prepare = getattr(owner, 'prepare_when_controls_ready', owner.prepare) if defer_until_controls else owner.prepare
+    return prepare(admission=admission)
 
   def configure(self, ci):
     required = getattr(type(ci), 'startup_required', None)

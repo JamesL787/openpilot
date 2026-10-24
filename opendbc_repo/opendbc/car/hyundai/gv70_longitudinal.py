@@ -39,3 +39,24 @@ def tracked_lead_scale(cp):
   eligible = (cp.carFingerprint == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN and cp.openpilotLongitudinalControl and
               not cp.passive and not cp.dashcamOnly and not cp.notCar)
   return 1.75 if eligible else 1.0
+
+
+def owns_stopping(cp):
+  return (is_gv70(cp) and cp.openpilotLongitudinalControl and not cp.pcmCruise and
+          not cp.passive and not cp.dashcamOnly and not cp.notCar)
+
+
+def stopping_decel_rate(cp):
+  return 0.4 if owns_stopping(cp) else None
+
+
+def forecast_should_stop(cp, speeds, time_indices, action_t):
+  """Original CANFD two-horizon stop intent; acceleration stays planner-owned."""
+  if not owns_stopping(cp):
+    return None
+  if len(speeds) != len(time_indices) or len(speeds) < 2:
+    return None
+  target = np.interp(action_t, time_indices, speeds)
+  target_one_second = np.interp(action_t + 1.0, time_indices, speeds)
+  threshold = float(np.float32(0.3))
+  return bool(target < threshold and target_one_second < threshold)

@@ -196,6 +196,36 @@ def test_owned_start_and_controls_bind_revision_and_client(playback):
   assert not owner.seek(float('nan'))
 
 
+@pytest.mark.parametrize('broken', [False, True])
+def test_timeline_is_optional_reused_on_seek_and_cleared_on_authority_loss(playback, broken):
+  from openpilot.starpilot.replay.timeline import LEGEND
+  owner, backend, _, _ = playback
+  original = owner.requester
+  def requester(payload):
+    if payload['op'] == 'timeline':
+      backend.calls.append(payload)
+      if broken:
+        return {'ok': False, 'error': {'message': 'history unavailable'}}
+      return {'ok': True, 'result': {'schemaVersion': 1, 'ownerId': owner.status['ownerId'], 'sessionId': owner.own_session,
+                                    'rowOffset': 0, 'totalRows': 1, 'source': 'qlog', 'rows': [[0, 1, 'chill']],
+                                    'nextCursor': None, 'legend': LEGEND}}
+    return original(payload)
+  owner.requester = requester
+  backend.status['timelineState'] = 'ready'
+  owner.next_status = 0
+  pump(owner, lambda: bool(owner.timeline_error) if broken else owner.timeline is not None and owner.timeline.rows is not None)
+  history = owner.timeline
+  assert owner.error == '' and owner.available
+  assert owner.seek(30)
+  pump(owner, lambda: owner.status['epoch'] == 2)
+  assert owner.timeline is history
+  assert len([call for call in backend.calls if call['op'] == 'timeline']) == 1
+  backend.status['offroad'] = False
+  owner.next_status = 0
+  pump(owner, lambda: not owner.available)
+  assert owner.timeline is None
+
+
 @pytest.mark.parametrize('bounds', [(None, 120), (0, None), (False, 120), (0, True), ('0', 120), (120, 0)])
 def test_seek_rejects_missing_or_invalid_bounds_without_sending_controls(playback, bounds):
   owner, backend, _, _ = playback
@@ -393,6 +423,77 @@ def page_for_input():
   return page, controller
 
 
+@pytest.mark.parametrize('profile,rail,tick,mark_width', [(Profile.LARGE, 28, 6, 4), (Profile.COMPACT, 16, 4, 3)])
+@pytest.mark.parametrize('scale', [1, 2])
+def test_timeline_cache_draws_alerts_last_and_keeps_existing_hit_area(monkeypatch, profile, rail, tick, mark_width, scale):
+  from openpilot.starpilot.ui import replay_settings as module
+  from openpilot.starpilot.replay.timeline import LEGEND
+  page, controller = page_for_input()
+  page.profile = profile
+  controller.timeline = NS(rows=[[0, 120, 'chill'], [30, 30.001, 'error'], [30, 30, 'bookmark']])
+  monkeypatch.setattr(module.gui_app, '_scale', scale)
+  target = NS(id=1)
+  upload, paint, unload = Mock(return_value=target), Mock(), Mock()
+  monkeypatch.setattr(rl, 'load_render_texture', upload)
+  monkeypatch.setattr(rl, 'draw_rectangle', paint)
+  monkeypatch.setattr(rl, 'unload_render_texture', unload)
+  for name in ('begin_texture_mode', 'end_texture_mode', 'clear_background'):
+    monkeypatch.setattr(rl, name, Mock())
+  page._prepare_rail()
+  assert page._transport()[0][-1] == 48
+  assert upload.call_args.args[1] == (rail + tick + 2) * scale
+  calls = paint.call_args_list
+  assert calls[-2].args[1:4:2] == ((tick + 2) * scale, rail * scale)
+  assert calls[-2].args[2] >= 1 and calls[-1].args[2] >= mark_width * scale
+  for call, kind in zip(calls[-3:], ('chill', 'error', 'bookmark'), strict=True):
+    color = call.args[-1]
+    assert [color.r, color.g, color.b] == LEGEND[kind]['rgb']
+  controller.status.update(position=60, epoch=2)
+  page._prepare_rail()
+  upload.assert_called_once()
+  controller.timeline = None
+  page._prepare_rail()
+  unload.assert_called_once_with(target)
+
+
+def test_timeline_texture_without_cache_key_uses_neutral_rail(monkeypatch):
+  page, controller = page_for_input()
+  controller.timeline = NS(rows=[])
+  page.rail_texture, page.rail_key = NS(id=1), None
+  paint, draw = Mock(), Mock()
+  monkeypatch.setattr(rl, 'draw_rectangle', paint)
+  monkeypatch.setattr(rl, 'draw_texture_pro', draw)
+  page._timeline_rail(100, 916, 1960, 48, 0, 120, [[0, 120]])
+  draw.assert_not_called()
+  paint.assert_called_once()
+
+
+@pytest.mark.parametrize('profile', [Profile.LARGE, Profile.COMPACT])
+@pytest.mark.parametrize('head_x', [16, 270, 2060])
+def test_scrub_preview_stays_above_touch_area_and_inside_screen(monkeypatch, profile, head_x):
+  from openpilot.starpilot.ui import replay_settings as module
+  from openpilot.starpilot.replay.timeline import LEGEND
+  page, _ = page_for_input()
+  page.profile = profile
+  page.fonts.measure.side_effect = lambda text, _role, size: NS(width=len(text) * size / 2, height=size)
+  fill, paint = Mock(), Mock()
+  monkeypatch.setattr(module, 'draw_rounded_fill', fill)
+  monkeypatch.setattr(module, 'draw_rounded_stroke', Mock())
+  monkeypatch.setattr(rl, 'draw_line', Mock())
+  monkeypatch.setattr(rl, 'draw_rectangle', paint)
+  page._scrub_preview(head_x, 90, 'Experimental', LEGEND['experimental'])
+  bounds = fill.call_args.args[0]
+  assert 0 <= bounds.x < bounds.x + bounds.width <= profile.size[0]
+  assert bounds.y + bounds.height < page._transport()[0][1] - (48 if profile == Profile.LARGE else 8)
+  color = paint.call_args.args[-1]
+  assert [color.r, color.g, color.b] == LEGEND['experimental']['rgb']
+  assert page.fonts.draw.call_args.args[0] == '1:30 - Experimental'
+  if profile == Profile.COMPACT:
+    assert (bounds.x, bounds.y, bounds.width, bounds.height) == (8, 8, 520, 42)
+  page._scrub_preview(head_x, 90, 'Unavailable gap', None)
+  assert paint.call_args.args[-1] is module.TEXT_MUTED
+
+
 @pytest.mark.parametrize('profile', [Profile.LARGE, Profile.COMPACT])
 def test_timeline_commits_only_on_release_and_epoch_change_cancels(profile):
   page, controller = page_for_input()
@@ -401,9 +502,9 @@ def test_timeline_commits_only_on_release_and_epoch_change_cancels(profile):
   x, top, width, height = page._transport()[0]
   y, destination = top + height / 2, x + width * .75
   page._handle_mouse_press(NS(x=x, y=y))
-  page._handle_mouse_event(mouse_event=NS(left_down=True, left_released=False, pos=NS(x=destination, y=y), t=1))
+  page._handle_mouse_event(mouse_event=NS(left_down=True, left_released=False, pos=NS(x=destination, y=y + 50), t=1))
   controller.seek.assert_not_called()
-  page._handle_mouse_release(NS(x=destination, y=y))
+  page._handle_mouse_release(NS(x=destination, y=y + 50))
   controller.seek.assert_called_once_with(90)
   controller.seek.reset_mock()
   page._handle_mouse_press(NS(x=x, y=y))
@@ -502,6 +603,7 @@ def test_transport_autohides_only_during_playback_and_tap_does_not_activate_hidd
   page.set_rect(rl.Rectangle(0, 0, *profile.size))
   page.fonts.measure.return_value = NS(width=20, height=20)
   page._button = Mock()
+  page._scrub_preview = Mock()
   monkeypatch.setattr(module, 'draw_rounded_fill', Mock())
   owner.available, owner.busy, owner.error = True, False, ''
   owner.frame = NS(session_id='b' * 32, epoch=1, frame_id=1, width=profile.size[0], height=profile.size[1], data=b'pixels')
@@ -759,7 +861,7 @@ def test_details_are_fixed_with_pinned_play_and_do_not_paginate(route_detail, mo
   monkeypatch.setattr(module, 'draw_settings_header', Mock())
   page._render_detail()
   buttons = page._button.call_args_list
-  assert len(buttons) == (2 if profile == Profile.LARGE else 3)
+  assert len(buttons) == (2 if profile == Profile.LARGE else 4)
   label, bounds, enabled = buttons[-1].args
   assert label == 'Play from beginning' and enabled
   assert bounds == ((744, 900, 1344, 144) if profile == Profile.LARGE else (224, 164, 300, 64))
@@ -809,7 +911,8 @@ def test_compact_long_message_is_readable_in_full_without_displacing_playback(ro
   owner.error = 'A long service error. ' * 30
   page._button = Mock()
   page._render_detail()
-  assert page.detail_message == owner.error
+  assert page.detail_message.startswith(owner.error.rstrip())
+  assert 'green Chill' in page.detail_message
   status = [call.args for call in page.fonts.draw.call_args_list if call.args[4] in (114, 135)]
   assert len(status) == 2
   assert status[1][0].endswith('...')
@@ -823,13 +926,13 @@ def test_compact_long_message_is_readable_in_full_without_displacing_playback(ro
   pos = NS(x=472, y=134)
   page._handle_mouse_press(pos)
   page._handle_mouse_release(pos)
-  factory.assert_called_once_with('replay', owner.error.strip())
+  factory.assert_called_once_with('replay', page.detail_message)
   assert dialog._scroller.items == ['message']
   module.gui_app.push_widget.assert_called_once_with(dialog)
   owner.error = 'Short message'
   page._render_detail()
-  assert page.detail_message == ''
-  assert page._target(pos.x, pos.y) is None
+  assert page.detail_message.startswith('Short message\n\nReplay timeline:')
+  assert page._target(pos.x, pos.y) == 'More'
 
 
 def test_compact_full_message_paginates_long_tokens_without_losing_content(route_detail, monkeypatch):
@@ -880,7 +983,7 @@ def test_compact_detail_status_and_counts_do_not_need_diagnostics(route_detail, 
   texts = [call.args[0] for call in page.fonts.draw.call_args_list]
   assert expected in texts
   assert ROUTE['routeId'] in texts
-  assert [button[0] for button in page._detail_buttons()] == ['< Back', 'Choose segment', 'Play from beginning']
+  assert [button[0] for button in page._detail_buttons()] == ['< Back', 'More', 'Choose segment', 'Play from beginning']
   assert not any('Warning' in text for text in texts)
 
 

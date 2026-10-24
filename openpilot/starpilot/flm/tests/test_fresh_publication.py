@@ -17,7 +17,7 @@ CP = 'b' * 64
 def publication(*, fresh, changes=None, snapshot_cost=0):
   now = [BASE + 330_000_000]  # Actual route: published source age reached330ms.
   old = SourceState(True, False, '0', 'a' * 64, BASE, BASE + 500_000_000, CP, (0., 0., 0.), 'c' * 32)
-  sm, publisher, fitter = mock.Mock(), mock.Mock(), mock.Mock(child=None)
+  sm, publisher, fitter = mock.Mock(updated={'deviceMotion': False}, logMonoTime={'deviceMotion': 0}), mock.Mock(), mock.Mock(child=None)
   fitter.poll.return_value = None
   sent = []
 

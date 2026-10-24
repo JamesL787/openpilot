@@ -196,7 +196,7 @@ export const RouteWorkspace = {
       <RecordingActions v-if="route" :recording="route" collapsed :unauthorized="unauthorized" @changed="managed" />
     </header>
     <GxState v-if="status === 'loading'" loading>Reading saved route…</GxState>
-    <GxNotice v-if="error" tone="danger">{{ error }}<button v-if="status === 'unavailable'" class="gx-btn gx-btn--tonal" @click="load">Retry route</button></GxNotice>
+    <GxNotice v-if="error" tone="danger">{{ error }}<template #actions v-if="status === 'unavailable'"><button class="gx-btn gx-btn--tonal" @click="load">Retry route</button></template></GxNotice>
     <template v-if="status === 'ready' && route">
       <GxNotice v-if="!route.inventoryComplete" tone="warn">{{ route.reason || 'Some route files could not be inspected.' }} Route downloads require a complete inventory.</GxNotice>
       <div class="gx-route-workspace__body">

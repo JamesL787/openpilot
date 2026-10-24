@@ -3,6 +3,7 @@ import { PollTimer, connectionError } from "./polling.js"
 import { GxNotice } from "./notice.js"
 import { reactive } from "../vendor/vue/vue.esm-browser.js"
 import { GalaxySelect } from "./galaxy-select.js"
+import { reportSave } from "./save-feedback.js"
 
 function validSpeedValue(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 5 && value <= 145
@@ -87,6 +88,7 @@ export class FavoritesFeed {
       if (!response.ok || !validFavorites(data)) throw new Error(saving ? "Quick Select could not be confirmed. Reload before editing again." : "Saved Quick Select are unavailable.")
       this.data = data; this.needsReload = false; this.error = ""
       this.publish({ status: "ready", data, needsReload: false, error: "", notice: saving ? "Quick Select saved." : "" })
+      return data
     } catch (error) {
       if (this.active && generation === this.generation) fail(connectionError(error))
     } finally {
@@ -117,10 +119,11 @@ export const FavoritesPage = {
   mounted() { if (this.mode === "local") this.feed.start() },
   beforeUnmount() { this.feed.stop() },
   methods: {
+    reportSave,
     select(index, event) { return this.feed.update(index, { key: event.target.value || null }) },
     toggle(index, field, event) {
       const checked = event.target.checked
-      return this.feed.update(index, { [field]: checked })
+      return reportSave(() => this.feed.update(index, { [field]: checked }))
     },
     speed(index, event) {
       const value = Number(event.target.value)

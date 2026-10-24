@@ -70,7 +70,7 @@ class TestFordAngleSettings(unittest.TestCase):
     for identity in (CAR.FORD_EDGE_MK2, CAR.FORD_MONDEO_MK5, CAR.FORD_TRANSIT_MK5):
       self.cp = ford_params(identity)
       self.assertFalse(any(r["label"] == "Ford steering controller" for r in self.page()["rows"]))
-    for field, value in (("alternativeExperience", 32), ("passive", True), ("dashcamOnly", True), ("notCar", True)):
+    for field, value in (("alternativeExperience", 16), ("passive", True), ("dashcamOnly", True), ("notCar", True)):
       self.cp = ford_params(CAR.FORD_BRONCO_SPORT_MK1)
       setattr(self.cp, field, value)
       self.assertFalse(any(r["label"] == "Ford steering controller" for r in self.page()["rows"]))

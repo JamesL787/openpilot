@@ -16,8 +16,17 @@ from openpilot.starpilot.vision_cpu import LITTLE_CORES, VISION_WITH_VASM
 
 UNAVAILABLE_RETRY_SECONDS = 1.0
 INFERENCE_INTERVAL_NS = 166_666_667
+FOLLOWUP_INFERENCE_INTERVAL_NS = 100_000_000
+FOLLOWUP_WINDOW_NS = 2_000_000_000
 # Retain a cooldown even when processing reaches the result-age budget.
 BUSY_INFERENCE_INTERVAL_NS = MAX_RESULT_AGE_NS * 3 // 2
+
+
+def _inference_interval_ns(processing_interval_ns: int, last_detection_ns: int, now_ns: int) -> int:
+  # Original Dom follow-up after a usable candidate, still bounded by measured
+  # processing cost. Holding a published sign alone does not renew this window.
+  followup = last_detection_ns > 0 and 0 <= now_ns - last_detection_ns < FOLLOWUP_WINDOW_NS
+  return max(processing_interval_ns, FOLLOWUP_INFERENCE_INTERVAL_NS if followup else INFERENCE_INTERVAL_NS)
 
 
 def _configure_process() -> None:
@@ -135,7 +144,12 @@ def main() -> None:
   except Exception as error:
     cloudlog.error('vision SLC model unavailable: %s', error)
   last_inference_ns = 0
-  inference_interval_ns = INFERENCE_INTERVAL_NS
+  last_publish_ns = 0
+  last_result = None
+  last_result_session = ''
+  last_result_observed_ns = 0
+  last_result_valid_until_ns = 0
+  processing_interval_ns = 0
   last_placement_check = -2.0
   last_clock_offset_ns = None
   model_paused = False
@@ -177,7 +191,7 @@ def main() -> None:
         core.reset()
         session = uuid.uuid4().hex
         last_inference_ns = 0
-        inference_interval_ns = INFERENCE_INTERVAL_NS
+        processing_interval_ns = 0
         last_clock_offset_ns = None
         client.connect(False)
         if not client.is_connected():
@@ -212,8 +226,39 @@ def main() -> None:
       admission_offset_ns = admission_pair[1] - admission_pair[0]
       offset_stable = (last_clock_offset_ns is None or
                        abs(admission_offset_ns - last_clock_offset_ns) <= MAX_PAIR_SKEW_NS)
+      inference_interval_ns = _inference_interval_ns(
+        processing_interval_ns, int(core.last_detection_at * 1e9), admission_pair[0])
       if offset_stable and admission_pair[0] - last_inference_ns < inference_interval_ns:
         del buffer_info
+        # Camera/model liveness is separate from costly sign inference. Keep
+        # the existing road-limit confirmation and its real support timestamp.
+        # No conversion or new detector evidence is needed for this heartbeat.
+        if (admission_pair[0] - last_publish_ns >= INFERENCE_INTERVAL_NS and
+            last_result is not None and session == last_result_session and
+            0 < last_result_observed_ns <= admission_pair[0] <= last_result_valid_until_ns):
+          sm.update(0)
+          heartbeat_pair = clock_pair_ns()
+          if (heartbeat_pair is None or
+              abs((heartbeat_pair[1] - heartbeat_pair[0]) - admission_offset_ns) > MAX_PAIR_SKEW_NS or
+              not 0 <= heartbeat_pair[1] - eof_boot_ns <= MAX_FRAME_AGE_NS):
+            core.reset()
+            session = uuid.uuid4().hex
+            last_clock_offset_ns = None
+            _send(pm, session=session, status='stale', stream=stream, eof_boot_ns=eof_boot_ns, frame_id=frame_id)
+            continue
+          if heartbeat_pair[0] > last_result_valid_until_ns:
+            continue
+          if not _driving_model_ready(sm, heartbeat_pair[0]):
+            core.reset()
+            session = uuid.uuid4().hex
+            model_paused = True
+            last_unavailable = heartbeat_pair[0] / 1e9
+            _send(pm, session=session, status='unavailable', stream=stream)
+            continue
+          _send(pm, session=session, status='valid', stream=stream,
+                observed_ns=last_result_observed_ns, eof_boot_ns=eof_boot_ns,
+                frame_id=frame_id, result=last_result, valid_until_ns=last_result_valid_until_ns)
+          last_publish_ns = heartbeat_pair[0]
         continue
       try:
         frame_info = _convert_camera_buffer(buffer_info)
@@ -231,11 +276,13 @@ def main() -> None:
         core.reset()
         session = uuid.uuid4().hex
         last_inference_ns = 0
-        inference_interval_ns = INFERENCE_INTERVAL_NS
+        processing_interval_ns = 0
       last_clock_offset_ns = offset_ns
+      inference_interval_ns = _inference_interval_ns(processing_interval_ns, int(core.last_detection_at * 1e9), pair[0])
       if pair[0] - last_inference_ns < inference_interval_ns:
         continue
-      last_inference_ns = pair[0]
+      # Budget camera conversion together with inference, as in the original Dom loop.
+      last_inference_ns = admission_pair[0]
       try:
         # The observation belongs to the original camera frame, not the end of
         # CPU inference. Completion never restamps an older camera observation.
@@ -254,8 +301,7 @@ def main() -> None:
         if processing_ns >= 0:
           # Original Dom processing-cost cooldown: keep slow CPU inference from
           # immediately starting another pass, including after stale rejection.
-          inference_interval_ns = max(INFERENCE_INTERVAL_NS,
-                                      min(BUSY_INFERENCE_INTERVAL_NS, processing_ns * 5 // 2))
+          processing_interval_ns = min(BUSY_INFERENCE_INTERVAL_NS, processing_ns * 5 // 2)
       if (observed_pair is None or
           abs((observed_pair[1] - observed_pair[0]) - offset_ns) > MAX_PAIR_SKEW_NS or
           not 0 <= observed_pair[1] - eof_boot_ns <= MAX_RESULT_AGE_NS):
@@ -277,6 +323,11 @@ def main() -> None:
       _send(pm, session=session, status='valid' if result is not None else 'unknown', stream=stream,
             observed_ns=sign_observed_ns, eof_boot_ns=eof_boot_ns, frame_id=frame_id, result=result,
             valid_until_ns=source_observed_ns + MAX_RESULT_AGE_NS)
+      last_publish_ns = observed_pair[0]
+      last_result = result
+      last_result_session = session
+      last_result_observed_ns = sign_observed_ns
+      last_result_valid_until_ns = source_observed_ns + MAX_RESULT_AGE_NS if result is not None else 0
     except Exception as error:
       cloudlog.error('vision SLC camera unavailable: %s', error)
       _send(pm, session=session, status='unavailable', stream=stream)

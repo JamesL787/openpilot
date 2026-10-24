@@ -72,6 +72,7 @@ def test_shadow_secants_are_scoped_and_final_rollout_has_no_sticky_mode():
 
 def test_forged_identification_token_rejects_before_controller_execution():
   value = object.__new__(EventControllerReplay)
+  value.engine = SimpleNamespace()  # Explicit empty delegate; no native/controller admission.
   value._EventControllerReplay__identification_token = object()
   value.activation_plan = SimpleNamespace(identification_policy=NATIVE_SHADOW_IDENTIFICATION)
   with pytest.raises(ValueError, match='scope/policy'):

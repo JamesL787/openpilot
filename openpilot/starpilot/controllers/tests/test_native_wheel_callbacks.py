@@ -137,7 +137,7 @@ def test_toyota_default_gap_callback_saves_personality_once(native_session, monk
   runtime, session, ui, _, _ = native_session
   rack = structs.CarParams.CarFw.new_message(ecu=structs.CarParams.Ecu.eps,
                                             fwVersion=b'8965B47070\x00\x00\x00\x00\x00\x00')
-  ui.CP = CarInterface.get_params(getattr(CAR, vehicle), {0: {0x2FF: 4} if filtered else {}, 1: {}, 2: {}},
+  ui.CP = CarInterface.get_params(getattr(CAR, vehicle), {0: {0x2FF: 8} if filtered else {}, 1: {}, 2: {}},
                                   [rack] if filtered else [], False, False, False)
   ui.has_longitudinal_control = ui.CP.openpilotLongitudinalControl
   ui.personality = 1

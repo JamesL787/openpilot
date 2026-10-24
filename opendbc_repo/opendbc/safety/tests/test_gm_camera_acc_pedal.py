@@ -12,7 +12,10 @@ from opendbc.safety.tests.libsafety import libsafety_py
 
 class TestGmCameraAccPedal(unittest.TestCase):
   def setUp(self):
-    self.safety = libsafety_py.libsafety
+    self.configure_native(libsafety_py.libsafety)
+
+  def configure_native(self, native):
+    self.safety = native
     self.release = self.safety.set_safety_hooks(CarParams.SafetyModel.allOutput, 0) != 0
     self.packer = CANPacker(DBC[CAR.CHEVROLET_SILVERADO][Bus.pt])
     self.cp = SimpleNamespace(carFingerprint=CAR.CHEVROLET_SILVERADO)

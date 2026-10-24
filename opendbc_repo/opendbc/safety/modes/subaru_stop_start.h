@@ -1,6 +1,7 @@
 #pragma once
 
 static bool subaru_stop_start_enabled = false;
+static uint8_t subaru_stop_start_gear_bus;
 static uint8_t subaru_stop_start_data[4][8];
 static bool subaru_stop_start_seen[4];
 static bool subaru_stop_start_seq[4];
@@ -12,8 +13,9 @@ static uint8_t subaru_stop_start_count = 0U;
 static uint8_t subaru_stop_start_template_counter = 0U;
 static bool subaru_stop_start_done;
 
-static void subaru_stop_start_init(bool enabled) {
+static void subaru_stop_start_init(bool enabled, uint8_t gear_bus) {
   subaru_stop_start_enabled = enabled;
+  subaru_stop_start_gear_bus = gear_bus;
   subaru_stop_start_start = microsecond_timer_get();
   subaru_stop_start_first = 0U;
   subaru_stop_start_last = 0U;
@@ -32,14 +34,13 @@ static void subaru_stop_start_init(bool enabled) {
 
 static void subaru_stop_start_rx(const CANPacket_t *msg) {
   static const unsigned int SUBARU_STOP_START_INPUTS[] = {0x390U, 0x48U, 0x174U, 0x221U};
-  static const uint8_t SUBARU_STOP_START_BUSES[] = {1U, 0U, 1U, 1U};
 
   if (subaru_stop_start_enabled && (controls_allowed || lateral_controls_allowed() || vehicle_moving || gas_pressed || subaru_software_fault)) {
     subaru_stop_start_done = true;
   }
   if (subaru_stop_start_enabled && !subaru_stop_start_done) {
     for (int i = 0; i < 4; i++) {
-      if ((msg->addr == SUBARU_STOP_START_INPUTS[i]) && (msg->bus == SUBARU_STOP_START_BUSES[i])) {
+      if ((msg->addr == SUBARU_STOP_START_INPUTS[i]) && (msg->bus == ((i == 1) ? subaru_stop_start_gear_bus : 1U))) {
         uint8_t checksum = (uint8_t)(msg->addr) + (uint8_t)(msg->addr >> 8U);
         for (int j = 1; j < 8; j++) {checksum += msg->data[j];}
         if ((GET_LEN(msg) != 8U) || (msg->data[0] != checksum)) {

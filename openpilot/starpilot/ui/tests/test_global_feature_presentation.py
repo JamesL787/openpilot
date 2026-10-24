@@ -1,5 +1,6 @@
 """Generic feature displays follow actual capability and fresh owner receipts."""
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
 import tempfile
@@ -176,40 +177,50 @@ class TestGlobalFeaturePresentation(unittest.TestCase):
     for cp, options in ((nissan, ('Bookmark', 'Switchback Mode')),
                         (volkswagen, ('Bookmark', 'Cycle personality', 'Experimental override', 'Traffic mode', 'Switchback Mode'))):
       with self.subTest(candidate=cp.carFingerprint):
-        self.assertFalse(policy_for(cp).settings_supported)
-        owner = FeatureSettingsOwner(self.params, lambda _group: True,
-          vehicle_fingerprint=lambda cp=cp: cp.carFingerprint, vehicle_params=lambda cp=cp: cp)
-        wheel = WheelFeature(owner)
-        choices = wheel.choices('DistanceButtonControl')
-        self.assertTrue(set(options).issubset(choices))
-        self.assertTrue({'Pause steering', 'Pause longitudinal', 'Toggle AOL'}.isdisjoint(choices))
-        self.assertEqual(wheel.choices('LKASButtonControl'), ())
-        self.assertEqual(wheel.choices('MainCruiseButtonControl'), ())
-        self.assertEqual(wheel.choices('ModeButtonControl'), ())
-        self.assertEqual(wheel.choices('StarButtonControl'), ())
-        for option in options:
-          with self.subTest(option=option):
-            row = next(row for row in wheel.rows() if row.key == 'wheel:DistanceButtonControl')
-            request = FeatureSettingsRequest(row.key, row.source, option, capability=row.capability)
-            self.assertTrue(wheel.apply(request))
-            publisher = WheelPublisher(self.params)
-            publisher.observe(self.params, cp, state(), now_ns=NOW, drive_id=DRIVE)
-            publisher.observe(self.params, cp, state(True), now_ns=NOW + 10_000_000, drive_id=DRIVE)
-            when = NOW + 20_000_000
-            commands = publisher.observe(self.params, cp, state(False), now_ns=when, drive_id=DRIVE)
-            self.assertEqual(commands, (('DistanceButtonControl', ACTIONS[option]),))
-            output = Publisher()
-            publisher.publish(commands, cp, output, now_ns=when, drive_id=DRIVE,
-                              source_car_ns=when, source_control_ns=when)
-            event = messaging.log_from_bytes(output.events[0][1])
-            sm = services(cp, now=when)
-            # Use this test's drive identifier in the exact original wire checks.
-            sm['deviceState'].startedMonoTime = DRIVE
-            command = WheelConsumer().accept(event, self.params, cp, sm, now_ns=when)
-            self.assertIsNotNone(command)
-            self.assertEqual((command.key, command.action), ('DistanceButtonControl', ACTIONS[option]))
-            self.params.put('DistanceButtonControl', 0, block=True)
-            self.assertIsNone(WheelConsumer().accept(event, self.params, cp, sm, now_ns=when))
+        actual_policy = policy_for(cp)
+        self.assertTrue(actual_policy.settings_supported)
+        for settings_supported in (False, True):
+          with self.subTest(settings_supported=settings_supported), mock.patch(
+              "openpilot.starpilot.ui.wheel_feature.policy_for",
+              return_value=replace(actual_policy, settings_supported=settings_supported)):
+
+            owner = FeatureSettingsOwner(self.params, lambda _group: True,
+              vehicle_fingerprint=lambda cp=cp: cp.carFingerprint, vehicle_params=lambda cp=cp: cp)
+            wheel = WheelFeature(owner)
+            choices = wheel.choices('DistanceButtonControl')
+            self.assertTrue(set(options).issubset(choices))
+            aol_actions = {'Pause steering', 'Pause longitudinal', 'Toggle AOL'}
+            if settings_supported:
+              self.assertTrue(aol_actions.issubset(choices))
+            else:
+              self.assertTrue(aol_actions.isdisjoint(choices))
+            self.assertEqual(wheel.choices('LKASButtonControl'), ())
+            self.assertEqual(wheel.choices('MainCruiseButtonControl'), ())
+            self.assertEqual(wheel.choices('ModeButtonControl'), ())
+            self.assertEqual(wheel.choices('StarButtonControl'), ())
+            for option in options:
+              with self.subTest(option=option):
+                row = next(row for row in wheel.rows() if row.key == 'wheel:DistanceButtonControl')
+                request = FeatureSettingsRequest(row.key, row.source, option, capability=row.capability)
+                self.assertTrue(wheel.apply(request))
+                publisher = WheelPublisher(self.params)
+                publisher.observe(self.params, cp, state(), now_ns=NOW, drive_id=DRIVE)
+                publisher.observe(self.params, cp, state(True), now_ns=NOW + 10_000_000, drive_id=DRIVE)
+                when = NOW + 20_000_000
+                commands = publisher.observe(self.params, cp, state(False), now_ns=when, drive_id=DRIVE)
+                self.assertEqual(commands, (('DistanceButtonControl', ACTIONS[option]),))
+                output = Publisher()
+                publisher.publish(commands, cp, output, now_ns=when, drive_id=DRIVE,
+                                  source_car_ns=when, source_control_ns=when)
+                event = messaging.log_from_bytes(output.events[0][1])
+                sm = services(cp, now=when)
+                # Use this test's drive identifier in the exact original wire checks.
+                sm['deviceState'].startedMonoTime = DRIVE
+                command = WheelConsumer().accept(event, self.params, cp, sm, now_ns=when)
+                self.assertIsNotNone(command)
+                self.assertEqual((command.key, command.action), ('DistanceButtonControl', ACTIONS[option]))
+                self.params.put('DistanceButtonControl', 0, block=True)
+                self.assertIsNone(WheelConsumer().accept(event, self.params, cp, sm, now_ns=when))
 
   def test_toyota_lkas_generic_bookmark_still_preserves_fixed_main_and_absent_cancel(self):
     cp = params_for(ToyotaCar.TOYOTA_RAV4_TSS2)

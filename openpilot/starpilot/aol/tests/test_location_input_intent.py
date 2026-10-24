@@ -81,7 +81,7 @@ def test_stock_pcm_location_input_pause_retains_intent_without_output(identity, 
 @pytest.mark.parametrize('identity', [CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9])
 @pytest.mark.parametrize('fault', ['native_denial', 'native_invalid', 'panda_rx', 'relay', 'permanent_eps',
   'invalid_can', 'can_timeout', 'door', 'seatbelt', 'brake', 'regen', 'physical_cancel', 'reverse', 'unknown_gear',
-  'extra_user', 'hard_event', 'epoch', 'session', 'expired', 'future_source', 'no_baseline'])
+  'extra_user', 'hard_event', 'epoch', 'session', 'expired', 'future_source', 'no_baseline', 'configured_cancel'])
 def test_stock_location_input_retention_refuses_independent_faults(identity, fault):
   case = fixture.IoniqAvailabilityTests(methodName='runTest')
   with ExitStack() as cleanup:
@@ -107,7 +107,10 @@ def test_stock_location_input_retention_refuses_independent_faults(identity, fau
     state.seatbeltUnlatched = fault == 'seatbelt'
     state.brakePressed = fault == 'brake'
     state.regenBraking = fault == 'regen'
-    if fault == 'physical_cancel':
+    if fault == 'configured_cancel':
+      from dataclasses import replace
+      card.aol_card_intent.settings = replace(card.aol_card_intent.settings, cancel_actions=(9, 0, 0))
+    if fault in ('physical_cancel', 'configured_cancel'):
       state.buttonEvents = [structs.CarState.ButtonEvent(type='cancel', pressed=True)]
     if fault in ('reverse', 'unknown_gear'):
       state.gearShifter = 'reverse' if fault == 'reverse' else 'unknown'
@@ -124,7 +127,18 @@ def test_stock_location_input_retention_refuses_independent_faults(identity, fau
     if fault == 'future_source':
       proof.aolAxisState.sourceCarStateMonoTime = 10_030_000_000
     if fault == 'no_baseline':
-      from openpilot.starpilot.aol.transport_pause import TransportPauseFeedback
-      card.aol_transport_feedback = TransportPauseFeedback(card.CP)
-    assert not receive(10_020_000_000, state=state, axis=proof.as_reader(), event=event.as_reader())
-    assert not card.aol_card_intent.allowed_latch
+      # Remove the established baseline without erasing its session/history.
+      card.aol_transport_feedback.lateral_baseline_ns = 0
+    # A physical pause is independent of the location SOFT warning. Current
+    # native proof and zero host commands remain mandatory; unassigned CANCEL
+    # preserves intent, whereas the explicitly configured CANCEL still clears.
+    baseline = (card.aol_transport_feedback.lateral_baseline_ns, card.aol_transport_feedback.lateral_native_ns)
+    retained = receive(10_020_000_000, state=state, axis=proof.as_reader(), event=event.as_reader())
+    expected = fault in ('seatbelt', 'brake', 'regen')
+    assert retained == expected, fault
+    assert card.aol_card_intent.allowed_latch == expected
+    assert not axis.lateralActive and not axis.longitudinalActive
+    assert not command.latActive and not command.longActive
+    if expected:
+      assert baseline == (card.aol_transport_feedback.lateral_baseline_ns, card.aol_transport_feedback.lateral_native_ns)
+

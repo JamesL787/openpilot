@@ -4,6 +4,7 @@ The reused BluePilot-derived strategy retains its original attribution in
 lateral_strategy.py, CREDITS.md and THIRD_PARTY_NOTICES.md.
 """
 from opendbc.car import structs
+from opendbc.car.ford.aol import base_safety_param
 from opendbc.car.ford.explorer_lateral import bounded_command as shared_bound
 from opendbc.car.ford.lateral_strategy import FordLateralController
 from opendbc.car.ford.values import CAR, FordFlags, FordSafetyFlags
@@ -14,8 +15,6 @@ SOURCE_ACCEL_CAP = 3.0 - 9.81 * .06
 
 
 def qualified(cp):
-  if cp.alternativeExperience == 32 and len(cp.safetyConfigs) != 1:
-    return False
   if (cp.brand != "ford" or cp.carFingerprint not in GENERIC_CANFD_CARS or
       not cp.flags & FordFlags.CANFD or cp.flags & ~int(FordFlags.CANFD | FordFlags.HAS_BSM) or
       cp.passive or cp.dashcamOnly or cp.notCar or cp.alternativeExperience not in (0, 32) or
@@ -27,7 +26,7 @@ def qualified(cp):
   s = cp.safetyConfigs[-1]
   expected = int(FordSafetyFlags.GENERIC_CANFD_EXTENDED | FordSafetyFlags.CANFD |
                  (FordSafetyFlags.LONG_CONTROL if cp.openpilotLongitudinalControl else 0))
-  return s.safetyModel == structs.CarParams.SafetyModel.ford and s.safetyParam == expected
+  return s.safetyModel == structs.CarParams.SafetyModel.ford and base_safety_param(cp) == expected
 
 
 class GenericCanfdLateralController(FordLateralController):

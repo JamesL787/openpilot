@@ -183,11 +183,28 @@ def test_actual_card_publisher_keeps_sibling_diagnostics_until_sent(identity, pa
 
 @pytest.mark.parametrize('identity', [CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_KONA_EV_2ND_GEN])
 def test_existing_keeper_owners_close_after_real_thread_launch_failure(identity):
-  from opendbc.car.hyundai.tests.test_ioniq5pe_stock import params as ev9_params
   from openpilot.starpilot.vehicle_startup import VehicleStartupOwner
 
   if identity == CAR.KIA_EV9:
-    cp = ev9_params(candidate=identity)
+    import threading
+    from opendbc.car.hyundai.tests.test_ev9_pending_startup import pending_startup_fixture
+
+    with pending_startup_fixture() as (fixture, owner, ci, packer):
+      fixture.warm(owner, ci, packer)
+      published = ci.CP.to_dict()
+      owner.thread_factory = threading.Thread
+      with patch('threading.Thread.start', side_effect=OSError('launch failed')):
+        with pytest.raises(OSError, match='launch failed'):
+          try:
+            fixture.commit(owner, ci)
+          finally:
+            owner.close()
+      assert owner.closed and owner.restored and owner.close_completed
+      assert owner.thread is None and owner.stop_event.is_set()
+      assert owner.fault and not owner.owner.active() and not owner.can_emit(ci.CC)
+      assert owner.owner.published and ci.CP.to_dict() == published
+      assert [request for request, _ in fixture.queries[-3:]] == [b'\x10\x03', b'\x28\x00\x01', b'\x10\x01']
+    return
   else:
     fp = gen_empty_fingerprint()
     fp[2].update({0x50: 16, 0x2A4: 24})
@@ -197,8 +214,6 @@ def test_existing_keeper_owners_close_after_real_thread_launch_failure(identity)
   sent = []
   owner = CarInterface.startup_owner(cp, (list, sent.extend), requested=True)
   assert owner is not None
-  if identity == CAR.KIA_EV9:
-    owner._ready = lambda: False
   requests = []
 
   def query(send, recv, bus, addresses, commands, responses):

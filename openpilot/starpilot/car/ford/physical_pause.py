@@ -113,7 +113,8 @@ def retain_physical_pause_intent(feedback, sm, cp, cs, axis, now_ns, *, latched,
       or bool(native.longitudinalAllowed) != (eps and long_active)
       or native.observedMonoTime < feedback.healthy_native_ns
       or (native.pandaSerial, tuple(p.hardwareSerial for p in native.pandaInventory)) != feedback.healthy_inventory
-      or any(bool(p.controlsAllowed) != ordinary for p in native.pandaInventory)
+      or any(bool(p.controlsAllowed) != (ordinary and p.safetyModel == int(structs.CarParams.SafetyModel.ford))
+             for p in native.pandaInventory)
       or not sm.seen['pandaStates']
       or not sm.valid['pandaStates']
       or not sm.alive['pandaStates']
@@ -125,7 +126,7 @@ def retain_physical_pause_intent(feedback, sm, cp, cs, axis, now_ns, *, latched,
       int(p.safetyModel.raw) == int(c.safetyModel.raw)
       and p.safetyParam == c.safetyParam
       and p.alternativeExperience == cp.alternativeExperience
-      and bool(p.controlsAllowed) == ordinary
+      and bool(p.controlsAllowed) == (ordinary and c.safetyModel == structs.CarParams.SafetyModel.ford)
       and not p.safetyRxChecksInvalid
       and not p.heartbeatLost
       and not p.faults

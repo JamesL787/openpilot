@@ -22,7 +22,7 @@ def test_avalon_sdsu_preserves_factory_tunes_and_speed_minima():
   assert configured(cp) and qualified(cp) and not toyota_auto_hold_supported(cp)
 
 
-@pytest.mark.parametrize('bad',['length','wrong_bus','pedal_mix','radar_filter_mix','camera_bypass_mix','unknown_firmware'])
+@pytest.mark.parametrize('bad',['length','wrong_bus','pedal_mix','radar_filter_mix','malformed_camera_copy','unknown_firmware'])
 def test_avalon_sdsu_rejects_unqualified_hardware(bad):
   fp=gen_empty_fingerprint()
   fp[0][0x2FF]=8
@@ -35,8 +35,8 @@ def test_avalon_sdsu_rejects_unqualified_hardware(bad):
     fp[0][0x201]=6
   elif bad=='radar_filter_mix':
     fp[0][0x2AA]=8
-  elif bad=='camera_bypass_mix':
-    fp[2][0x343]=8
+  elif bad=='malformed_camera_copy':
+    fp[2][0x343]=7
   elif bad=='unknown_firmware':
     fw=[]
   assert not hardware_supported(CAR.TOYOTA_AVALON,fp,fw)

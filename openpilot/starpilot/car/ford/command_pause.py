@@ -1,4 +1,4 @@
-"""Keep stock-Ford intent during a short command lease withdrawal; no grant."""
+"""Keep Ford lateral-only intent during a short command lease withdrawal; no grant."""
 from opendbc.car import structs
 from opendbc.car.ford.aol import qualified
 from openpilot.cereal import log
@@ -9,7 +9,7 @@ from openpilot.starpilot.aol.transport_pause import cp_identity
 def retain_command_pause_intent(feedback, sm, cp, cs, axis, now_ns, *, latched, producer):
   """Retain only the original fresh LAT-only proof, without renewing any lease."""
   try:
-    if (not qualified(cp, marked_only=True) or cp.openpilotLongitudinalControl or not latched or
+    if (not qualified(cp, marked_only=True) or not latched or
         feedback.cp != cp_identity(cp) or feedback.failed or feedback.paused or feedback.pending_event or
         feedback.awaiting or feedback.retention_started_ns or feedback.retention_pending or feedback.retention_qualified or
         feedback.source_retention_started_ns or not feedback.lateral_only_baseline or not feedback.lateral_inventory or

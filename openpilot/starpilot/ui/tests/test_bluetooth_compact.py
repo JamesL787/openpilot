@@ -23,18 +23,18 @@ class TestBluetoothCompact(unittest.TestCase):
       page._open_device("AA:BB:CC:DD:EE:FF")
     request.assert_called_once_with("pair", address="AA:BB:CC:DD:EE:FF")
 
-  def test_forget_falls_back_to_galaxy_when_android_auto_holds_the_adapter(self):
-    from openpilot.starpilot.bluetooth.owner import BluetoothRejected
+  def test_connected_unpaired_phone_app_is_forgotten_not_paired(self):
     page = BluetoothCompact.__new__(BluetoothCompact)
-    page.owner = NS(request=Mock(side_effect=BluetoothRejected("busy elsewhere", code="busy")))  # ty: ignore[invalid-assignment]  # test double
-    call = Mock(return_value=(200, {"devices": []}))
-    with patch("openpilot.starpilot.galaxy_bluetooth.phone_ui.galaxy_call", return_value=call):
-      self.assertEqual(page._device_request("forget", "AA:BB:CC:DD:EE:FF"), {"devices": []})
-    call.assert_called_once_with("POST", "/api/bluetooth/action", {"operation": "forget", "address": "AA:BB:CC:DD:EE:FF"})
-    page.owner.request.side_effect = BluetoothRejected("changed")
-    with patch("openpilot.starpilot.galaxy_bluetooth.phone_ui.galaxy_call") as galaxy, self.assertRaises(BluetoothRejected):
-      page._device_request("forget", "AA:BB:CC:DD:EE:FF")
-    galaxy.assert_not_called()
+    page.icon = object()
+    page.status = {"devices": [{"address": "AA:BB:CC:DD:EE:FF", "name": "iPhone", "paired": False, "connected": True}]}
+    with patch.object(page, "_request") as request, \
+         patch("openpilot.starpilot.ui.bluetooth_compact.gui_app.push_widget") as push, \
+         patch("openpilot.starpilot.ui.bluetooth_compact.BigConfirmationDialog") as dialog:
+      page._open_device("AA:BB:CC:DD:EE:FF")
+      request.assert_not_called()
+      push.assert_called_once()
+      dialog.call_args.args[2]()
+    request.assert_called_once_with("forget", address="AA:BB:CC:DD:EE:FF", return_to_root=True)
 
   def pair_page(self, kind="confirmation", value="123456"):
     class Button:
@@ -165,7 +165,7 @@ class TestBluetoothCompact(unittest.TestCase):
     page.return_to_root = False
     with patch.object(BluetoothCompact, "_rebuild") as rebuild:
       page._request("power", enabled=True)
-      page.executor.submit.assert_called_once_with(owner.request, "power", address=None, enabled=True)
+      page.executor.submit.assert_called_once_with(page._power_request, True)
       owner.request.assert_not_called()
       self.assertIs(page.pending, future)
       result = {"available": True, "parked": True, "powered": True, "devices": []}

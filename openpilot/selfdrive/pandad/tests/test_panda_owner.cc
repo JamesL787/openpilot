@@ -1,4 +1,5 @@
 #include <cstring>
+#include "openpilot/starpilot/car/ford/aol_policy.h"
 #include <unistd.h>
 #include <cstdlib>
 #include <filesystem>
@@ -44,7 +45,7 @@ public:
   OwnerPanda(std::unique_ptr<OwnerHandle> h, uint32_t offset) : Panda(std::move(h), cereal::PandaState::PandaType::RED_PANDA, offset) {}
 };
 
-void test_actual_config_slots_and_owner_handle() {
+void test_actual_config_slots_and_owner_handle(cereal::CarParams::SafetyModel mode, uint16_t word) {
   using Mode = cereal::CarParams::SafetyModel;
   const std::string prefix = "test-panda-owner-" + std::to_string(getpid());
   const char *old = getenv("OPENPILOT_PREFIX");
@@ -72,15 +73,15 @@ void test_actual_config_slots_and_owner_handle() {
   cp.setAlternativeExperience(32);
   auto slots = cp.initSafetyConfigs(2);
   slots[0].setSafetyModel(Mode::NO_OUTPUT); slots[0].setSafetyParam(0);
-  slots[1].setSafetyModel(Mode::HYUNDAI_CANFD); slots[1].setSafetyParam(0x809);
+  slots[1].setSafetyModel(mode); slots[1].setSafetyParam(word);
   auto words = capnp::messageToFlatArray(message);
   auto bytes = words.asBytes();
   params.put("CarParams", reinterpret_cast<const char *>(bytes.begin()), bytes.size());
   params.putBool("FirmwareQueryDone", true); params.putBool("ControlsReady", true);
   safety.configureSafetyMode(true);
   CHECK(aux->health.safety_mode_pkt == (uint8_t)Mode::NO_OUTPUT);
-  CHECK(owner->health.safety_mode_pkt == (uint8_t)Mode::HYUNDAI_CANFD);
-  CHECK(owner->health.safety_param_pkt == 0x809);
+  CHECK(owner->health.safety_mode_pkt == (uint8_t)mode);
+  CHECK(owner->health.safety_param_pkt == word);
   CHECK(extra->health.safety_mode_pkt == (uint8_t)Mode::SILENT);
   CHECK(aux->health.alternative_experience_pkt == 32 && owner->health.alternative_experience_pkt == 32);
   CHECK(safety.aolOwner() == nullptr);
@@ -96,7 +97,7 @@ void test_actual_config_slots_and_owner_handle() {
     peer->health.flags_pkt |= HEALTH_FLAG_CONTROLS_ALLOWED;
     CHECK(owner_safety.aolOwner() == nullptr);
     peer->health.flags_pkt = 0;
-    peer->health.safety_param_pkt = 0x809;
+    peer->health.safety_param_pkt = word;
     CHECK(owner_safety.aolOwner() == nullptr);
     peer->health.safety_param_pkt = 0;
     peer->comms_healthy = false;
@@ -106,8 +107,8 @@ void test_actual_config_slots_and_owner_handle() {
     CHECK(owner_safety.aolOwner() == nullptr);
     peer->connected = true;
   }
-  owner->health.safety_param_pkt = 0x808; CHECK(owner_safety.aolOwner() == nullptr);
-  owner->health.safety_param_pkt = 0x809;
+  owner->health.safety_param_pkt = (word ^ 1U); CHECK(owner_safety.aolOwner() == nullptr);
+  owner->health.safety_param_pkt = word;
   owner->health.alternative_experience_pkt = 0; CHECK(owner_safety.aolOwner() == nullptr);
   owner->health.alternative_experience_pkt = 32;
   slots[0].setSafetyParam(1);
@@ -121,8 +122,8 @@ void test_actual_config_slots_and_owner_handle() {
     params.put("CarParams", reinterpret_cast<const char *>(data.begin()), data.size()); }
   owner_safety.configureSafetyMode(false); owner_safety.configureSafetyMode(true);
   CHECK(owner_safety.aolOwner() == &primary);
-  const AolSafetyProfile profiles[] = {{(uint8_t)Mode::HYUNDAI_CANFD, [](uint16_t p) { return p == 0x809; }, true}};
-  AolProfileRegistry registry{profiles, 1}; AolAxisNegotiator negotiator(registry);
+  const AolSafetyProfile profiles[] = {{(uint8_t)Mode::HYUNDAI_CANFD, [](uint16_t p) { return p == 0x809; }, true}, FORD_AOL_PROFILE};
+  AolProfileRegistry registry{profiles, 2}; AolAxisNegotiator negotiator(registry);
   owner->aol.capability_flags = 1;
   aux->aol = owner->aol; aux->aol.permission_mask = 3; aux->aol.request_mask = 3;
   AolAxisInput axis{true, true, "session", 1, 200000001, 1, true, false};
@@ -142,4 +143,12 @@ void test_actual_config_slots_and_owner_handle() {
   PandaSafety single({&primary}); CHECK(single.aolOwner() == &primary);
 }
 
-int main() { return run_native_test(test_actual_config_slots_and_owner_handle); }
+void test_registered_owners() {
+  test_actual_config_slots_and_owner_handle(cereal::CarParams::SafetyModel::HYUNDAI_CANFD, 0x809);
+  for (uint16_t word : {8U, 9U, 10U, 11U, 12U, 13U, 18U, 19U, 32U, 33U, 66U, 67U}) {
+    test_actual_config_slots_and_owner_handle(cereal::CarParams::SafetyModel::FORD, word);
+    test_actual_config_slots_and_owner_handle(cereal::CarParams::SafetyModel::FORD, word | 256U);
+  }
+}
+
+int main() { return run_native_test(test_registered_owners); }

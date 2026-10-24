@@ -2,7 +2,7 @@ from openpilot.common.test import OpenpilotTestCase
 from openpilot.cereal import log
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.selfdrived.state import StateMachine, SOFT_DISABLE_TIME
-from openpilot.selfdrive.selfdrived.events import Events, ET, EVENTS, NormalPermanentAlert
+from openpilot.selfdrive.selfdrived.events import Events, ET, NormalPermanentAlert
 
 State = log.SelfdriveState.OpenpilotState
 
@@ -14,24 +14,24 @@ ALL_STATES = tuple(State.schema.enumerants.values())
 ENABLE_EVENT_TYPES = (ET.ENABLE, ET.PRE_ENABLE, ET.OVERRIDE_LATERAL, ET.OVERRIDE_LONGITUDINAL)
 
 
-def make_event(event_types: list[str | None]):
-  EVENTS[0] = {}
+def make_event(events: Events, event_types: list[str | None]):
+  events.event_rules[0] = {}
   for ev in event_types:
     if ev is not None:
-      EVENTS[0][ev] = NormalPermanentAlert("alert")
+      events.event_rules[0][ev] = NormalPermanentAlert("alert")
   return 0
 
 
 class TestStateMachine(OpenpilotTestCase):
   def setup_method(self):
-    self.events = Events()
+    self.events = Events({0: {}})
     self.state_machine = StateMachine()
     self.state_machine.soft_disable_timer = int(SOFT_DISABLE_TIME / DT_CTRL)
 
   def test_immediate_disable(self):
     for state in ALL_STATES:
       for et in MAINTAIN_STATES[state]:
-        self.events.add(make_event([et, ET.IMMEDIATE_DISABLE]))
+        self.events.add(make_event(self.events, [et, ET.IMMEDIATE_DISABLE]))
         self.state_machine.state = state
         self.state_machine.update(self.events)
         assert State.disabled == self.state_machine.state
@@ -40,7 +40,7 @@ class TestStateMachine(OpenpilotTestCase):
   def test_user_disable(self):
     for state in ALL_STATES:
       for et in MAINTAIN_STATES[state]:
-        self.events.add(make_event([et, ET.USER_DISABLE]))
+        self.events.add(make_event(self.events, [et, ET.USER_DISABLE]))
         self.state_machine.state = state
         self.state_machine.update(self.events)
         assert State.disabled == self.state_machine.state
@@ -51,7 +51,7 @@ class TestStateMachine(OpenpilotTestCase):
       if state == State.preEnabled:  # preEnabled considers NO_ENTRY instead
         continue
       for et in MAINTAIN_STATES[state]:
-        self.events.add(make_event([et, ET.SOFT_DISABLE]))
+        self.events.add(make_event(self.events, [et, ET.SOFT_DISABLE]))
         self.state_machine.state = state
         self.state_machine.update(self.events)
         assert self.state_machine.state == State.disabled if state == State.disabled else State.softDisabling
@@ -59,7 +59,7 @@ class TestStateMachine(OpenpilotTestCase):
 
   def test_soft_disable_timer(self):
     self.state_machine.state = State.enabled
-    self.events.add(make_event([ET.SOFT_DISABLE]))
+    self.events.add(make_event(self.events, [ET.SOFT_DISABLE]))
     self.state_machine.update(self.events)
     for _ in range(int(SOFT_DISABLE_TIME / DT_CTRL)):
       assert self.state_machine.state == State.softDisabling
@@ -70,7 +70,7 @@ class TestStateMachine(OpenpilotTestCase):
   def test_no_entry(self):
     # Make sure noEntry keeps us disabled
     for et in ENABLE_EVENT_TYPES:
-      self.events.add(make_event([ET.NO_ENTRY, et]))
+      self.events.add(make_event(self.events, [ET.NO_ENTRY, et]))
       self.state_machine.update(self.events)
       assert self.state_machine.state == State.disabled
       self.events.clear()
@@ -78,7 +78,7 @@ class TestStateMachine(OpenpilotTestCase):
   def test_no_entry_pre_enable(self):
     # preEnabled with noEntry event
     self.state_machine.state = State.preEnabled
-    self.events.add(make_event([ET.NO_ENTRY, ET.PRE_ENABLE]))
+    self.events.add(make_event(self.events, [ET.NO_ENTRY, ET.PRE_ENABLE]))
     self.state_machine.update(self.events)
     assert self.state_machine.state == State.preEnabled
 
@@ -87,7 +87,18 @@ class TestStateMachine(OpenpilotTestCase):
     for state in ALL_STATES:
       for et in MAINTAIN_STATES[state]:
         self.state_machine.state = state
-        self.events.add(make_event([et]))
+        self.events.add(make_event(self.events, [et]))
         self.state_machine.update(self.events)
         assert self.state_machine.state == state
         self.events.clear()
+
+  def test_synthetic_event_rules_do_not_replace_can_error(self):
+    from openpilot.selfdrive.selfdrived.events import EVENTS, EventName
+
+    can_rules = EVENTS[EventName.canError]
+    self.events.add(make_event(self.events, [ET.OVERRIDE_LONGITUDINAL]))
+    assert EVENTS[EventName.canError] is can_rules
+    assert ET.IMMEDIATE_DISABLE in can_rules
+    assert ET.NO_ENTRY in can_rules
+    assert self.events.contains(ET.OVERRIDE_LONGITUDINAL)
+    assert not self.events.contains(ET.IMMEDIATE_DISABLE)

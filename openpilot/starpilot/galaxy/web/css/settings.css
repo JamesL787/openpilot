@@ -216,6 +216,11 @@ input[type="range"].gx-slider {
   border: 1px solid rgba(120, 73, 232, 0.3);
 }
 
+input[type="range"].gx-slider.gx-slider--galaxy {
+  border: none;
+  background: linear-gradient(90deg, var(--secondary), var(--primary)) 0 0 / var(--fill, 0%) 100% no-repeat, var(--surface-container-high);
+}
+
 input[type="range"].gx-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   background: #ffffff;

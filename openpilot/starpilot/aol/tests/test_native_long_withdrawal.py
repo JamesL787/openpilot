@@ -89,5 +89,18 @@ def test_other_native_denials_and_faults_remain_immediate(fault):
     else:
       options['panda_controls_allowed'] = True
     axis, state, command = drive(2, **options)
-    assert log.OnroadEvent.EventName.controlsMismatch in sd.events.names
-    assert not state.enabled and not axis.lateralActive and not command.latActive and not command.longActive
+    assert not axis.longitudinalActive and not command.longActive
+    if fault == 'inconsistent_long_receipt':
+      # controlsAllowed is an independent Panda observation. A healthy LAT
+      # grant with denied LONG is not itself an immediate integrity fault.
+      from openpilot.starpilot.aol.runtime import current_native
+      native = current_native(sd.sm, sd.CP, now_ns=axis.observedMonoTime,
+                              axis_session_id=sd.aol_session_id)
+      assert native is not None and native.requestedLongitudinal and not native.longitudinalAllowed
+      assert native.requestedLateral and native.lateralAllowed
+      assert all(p.controlsAllowed for p in native.pandaInventory)
+      assert state.enabled and axis.lateralActive and command.latActive
+      assert log.OnroadEvent.EventName.controlsMismatch not in sd.events.names
+    else:
+      assert log.OnroadEvent.EventName.controlsMismatch in sd.events.names
+      assert not state.enabled and not axis.lateralActive and not command.latActive

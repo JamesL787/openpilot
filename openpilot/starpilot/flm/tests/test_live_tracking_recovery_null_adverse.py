@@ -10,7 +10,9 @@ import json
 import pytest
 
 from openpilot.starpilot.flm.live_tracking import LiveTrackingOptimizer, TrackingEpisode
-from openpilot.starpilot.flm.tests.test_live_tracking_rollout import rollout
+from openpilot.starpilot.flm.tests.test_live_tracking_rollout import (
+  rollout, wrong_causal_corrections, assert_causal_confirmations,
+)
 
 SEEDS = range(64)  # Same fixed size/range as the original stationary null sweep.
 INTERRUPT_EVERY = 11  # Same cadence as the original interrupted progress test.
@@ -29,8 +31,8 @@ def interrupted_case(monkeypatch: pytest.MonkeyPatch, *, seed: int, gain: float)
   original_observe = LiveTrackingOptimizer.observe_episode
 
   def allocation(owner: LiveTrackingOptimizer, episode: TrackingEpisode, expected: float,
-                 target: dict[str, float]) -> tuple[int, int] | None:
-    result = original_allocation(owner, episode, expected, target)
+                 target: dict[str, float], *, minimum_episodes: int | None = None) -> tuple[int, int] | None:
+    result = original_allocation(owner, episode, expected, target, minimum_episodes=minimum_episodes)
     coverage.allocation_calls += 1
     if result is not None:
       coverage.allocations.append(result)
@@ -59,7 +61,7 @@ def sweep(monkeypatch: pytest.MonkeyPatch, *, gain: float):
   cases = [interrupted_case(monkeypatch, seed=seed, gain=gain) for seed in SEEDS]
   results = [result for result, _ in cases]
   coverage = [item for _, item in cases]
-  failures = [row for row in results if row['confirmations'] or row['accepted_coordinate'] != 0.]
+  failures = [row for row in results if wrong_causal_corrections(row)]
   summary = {'gain': gain, 'seeds': [SEEDS.start, SEEDS.stop], 'routes': len(results),
     'interrupt_every': INTERRUPT_EVERY, 'false_acceptance_routes': len(failures),
     'attempts': sum(len(row['attempts']) for row in results),
@@ -86,4 +88,9 @@ def test_interrupted_correlated_null_preserves_original_family_false_acceptance_
 
 def test_interrupted_correlated_adverse_trials_never_accumulate_wrong_correction(monkeypatch: pytest.MonkeyPatch):
   results, summary = sweep(monkeypatch, gain=-5.)
-  assert all(row['confirmations'] == 0 and row['accepted_coordinate'] == 0. for row in results), summary
+  assert any(row['confirmed_steps'] for row in results), summary  # Actual beneficial direction-search is exercised.
+  for row in results:
+    assert_causal_confirmations(row)
+    assert row['accepted_coordinate'] <= 0., summary
+    assert row['final_expected_normalized_error'] <= row['initial_expected_normalized_error'], summary
+  assert summary['false_acceptance_routes'] == 0, summary

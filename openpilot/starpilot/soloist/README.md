@@ -4,7 +4,8 @@ Galaxy → Spotify and Phone Audio supports two mutually exclusive music sources
 Spotify Connect (Soloist) and a paired phone's Bluetooth A2DP audio. Both use the
 private PulseAudio output, either Android Auto's PCM media channel or an existing
 BlueALSA Bluetooth output. Phone mode needs neither Soloist nor a Spotify API key.
-The feature's existing enable flag starts `spotifyd` for either source.
+The feature's existing enable flag starts `spotifyd` for either source; with the phone source it
+never launches Soloist, and switching to it stops a running Soloist.
 
 ## Phone setup
 
@@ -42,17 +43,13 @@ page only after they are updated.
 
 ## Runtime behavior
 
-The cached AGNOS image's BlueALSA service starts `/usr/bin/bluealsa -p a2dp-source`.
-`phone_profile.py`, invoked through noninteractive sudo on the device, temporarily
-adds `a2dp-sink` using its own drop-in under `/run/systemd/system/bluealsa.service.d`.
-Only BlueALSA is restarted, once on entry and once on exit; Bluetooth bonds,
-bluetoothd, adapter power/identity and HFP registration are not changed. Unknown
-service commands and externally modified drop-ins are rejected. The override is
-removed on orderly shutdown/source change, recovered at the next supervisor start
-after an abrupt shutdown, and disappears at reboot. If the supervisor is killed
-without restarting, the receiving profile can remain advertised until reboot;
-its capture worker exits on parent death. Bluetooth music may briefly disconnect
-while BlueALSA restarts. Radio-off is respected; this feature never powers it on.
+The checkout bundles BlueALSA 5.0.0's daemon and matching PCM/CTL plugins for
+phone reception and Bluetooth output. `phone_profile.py` uses temporary `/run`
+overrides; the system's BlueALSA 4.1.1 installation stays intact. Phone capture
+uses `hwcompat "silence"` for continuity across input interruptions. Private ALSA
+configs select the matching plugins and explicitly preserve software volume.
+See [the bundle documentation](bluealsa/README.md) for build inputs, tests, and
+the old-commit rollback contract (restart music/openpilot or reboot after checkout).
 
 Only the selected paired phone is captured. The existing trusted pairing policy
 still determines which phones may establish Bluetooth connections; this feature
@@ -60,7 +57,7 @@ does not alter trust or erase bonds. `arecord` opens an ALSA plug PCM for that
 phone, converting to signed 16-bit 48 kHz stereo. A separate Python worker writes
 to the private server using AGNOS's `libpulse-simple.so.0`, with bounded buffers.
 The supervisor retries disconnects without repeatedly restarting Bluetooth.
-No extra native binaries are bundled or built for this feature.
+The versioned BlueALSA bundle and private PulseAudio server are included with the checkout.
 
 ## Validation
 
@@ -82,3 +79,30 @@ artist and progress of Spotify or of the phone's Bluetooth player, with a backgr
 supervisor publishes the snapshot in its status file; the car screen reads it once a second only while the
 card is enabled, and the card stays hidden when nothing is playing or an alert is up. Phone metadata comes
 from the phone's Bluetooth media player (BlueZ `MediaPlayer1`), so it depends on the phone sharing it.
+
+## Spotify Connect recovery
+
+Pair once from Spotify's device picker on a shared Wi-Fi network or hotspot that
+allows device-to-device traffic. Both devices need internet access; the Galaxy
+hotspot and wireless Android Auto alone do not provide it. After pairing, use the
+same Spotify account and turn off **Local device visibility** in Spotify to control
+the comma across networks. On iPhone, allow Spotify **Local Network** access.
+
+Soloist retains its account across restarts, network handoffs, output changes and
+cache clearing. Startup waits for an IPv4 or IPv6 default route. A disconnected
+Bluetooth speaker uses a private silent sink; two consecutive background checks,
+twenty seconds apart, trigger an output switch without restarting Soloist. A failed
+switch restarts playback with the saved account. Recovery never requests playback
+transfer from another Spotify device.
+
+The local API checks authentication every fifteen seconds and reconnects after
+forty-five seconds without a response. Two minutes without a working API or a
+previously observed login restarts Soloist; loss of login while playing allows ten
+minutes for cached music. First-time pairing has no timeout. Repeated starts that
+never answer the API can roll back the Soloist package. A route or API response
+does not prove internet access; Spotify off/on retries without clearing the account.
+
+Device acceptance remains necessary: Android/iPhone pairing on Wi-Fi and hotspots,
+Wi-Fi/cellular handoffs, saved-account recovery, speaker reconnects, and control
+across networks. See [Spotify Connect](https://support.spotify.com/us/article/spotify-connect/)
+and the [Soloist API](https://developer.spotify.com/documentation/soloist/reference/websocket-api).

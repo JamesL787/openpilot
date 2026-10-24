@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vendor"))
@@ -15,7 +16,7 @@ from Crypto.PublicKey import ECC
 from dbus_next import DBusError, Variant
 
 import claim
-from pairing import ensure_store, load_keys, load_phones
+from pairing import ensure_store, load_keys, load_phones, remove_phone
 from protocol import Assembler, packets, seal
 from server import Gateway
 
@@ -159,6 +160,39 @@ class ClaimGatewayTests(unittest.IsolatedAsyncioTestCase):
     state2 = await self.send(second)
     self.assertFalse(state2.response)
     self.assertEqual(len(load_phones(self.keys)), 1)
+
+  async def test_key_refresh_during_claim_keeps_reply_session(self):
+    claim.arm("AA:BB:CC:DD:EE:FF", "comma", self.claim)
+    private, data = phone_request()
+
+    async def interleaved_work(function, *args):
+      result = function(*args)
+      self.gateway.refresh_key()
+      return result
+
+    with patch("server.asyncio.to_thread", side_effect=interleaved_work):
+      state = await self.send(data)
+    self.assertFalse(state.closed)
+    self.assertIs(self.gateway.sessions[self.options["device"].value], state)
+    reply = phone_open(private, self.read_reply(state), state.challenge)
+    self.assertEqual(load_keys(self.keys)[reply["id"]].hex(), reply["key"])
+
+  async def test_key_removed_during_claim_is_not_delivered(self):
+    claim.arm("AA:BB:CC:DD:EE:FF", "comma", self.claim)
+    _, data = phone_request()
+
+    async def interleaved_work(function, *args):
+      result = function(*args)
+      if function.__name__ == "add_phone":
+        remove_phone(result[0], self.keys)
+        self.gateway.refresh_key()
+      return result
+
+    with patch("server.asyncio.to_thread", side_effect=interleaved_work):
+      state = await self.send(data)
+    self.assertTrue(state.closed)
+    self.assertIsNone(state.phone)
+    self.assertFalse(state.response)
 
   async def test_music_bond_made_first_links_the_claimed_phone(self):
     claim.arm("AA:BB:CC:DD:EE:FF", "comma", self.claim)

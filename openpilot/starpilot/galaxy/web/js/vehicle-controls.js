@@ -6,6 +6,7 @@ import { reactive } from "../vendor/vue/vue.esm-browser.js"
 import { SettingsPage } from "./settings.js"
 import { GalaxySelect } from "./galaxy-select.js"
 import { ToyotaToolsPage } from "./toyota-tools.js"
+import { beginSave, finishSave } from "./save-feedback.js"
 
 export function validVehiclePage(data) {
   return data?.version === 1 && typeof data.parked === "boolean" && typeof data.readable === "boolean" &&
@@ -149,10 +150,12 @@ export class VehicleSelectionFeed {
 
   async confirm() {
     if (!this.active || this.busy || !this.pending?.intent) return
+    const feedback = beginSave()
     const intent = this.pending.intent
     this.pending = null
     this.data = null
     const result = await this.run("./api/vehicle-selection/confirm", { intent, confirmed: true })
+    finishSave(feedback, result?.saved === true)
     if (!this.active) return
     if (result?.saved !== true) {
       if (!this.error) this.emit("unavailable", "Save could not be confirmed. Refresh saved values before trying again.")

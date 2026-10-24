@@ -32,15 +32,17 @@ from openpilot.starpilot.aol.tests.honda_can import HondaCan
 from openpilot.starpilot.aol.tests.honda_pandad_order import PandadOrder
 from openpilot.starpilot.aol.tests.honda_selfdrive_step import selfdrive_step
 
-import pytest
-
 from openpilot.starpilot.aol.tests.honda_native_fixture import honda_native_pair as honda_native_pair
 
 TRACE = []
 
 
-@pytest.mark.usefixtures("honda_native_pair")
 class TestHondaCurrentCaller(unittest.TestCase):
+  @classmethod
+  def setUpClass(cls):
+    super().setUpClass()
+    cls.honda_native_origins = cls.enterClassContext(honda_native_pair())
+
   def test_classic_civic_temporary_eps_reverse_return(self):
     self.run_current_caller(candidate=CAR.HONDA_CIVIC_BOSCH, word=0)
 
@@ -56,7 +58,8 @@ class TestHondaCurrentCaller(unittest.TestCase):
   def test_relay_fault_during_recovered_reverse(self):
     self.run_current_caller(candidate=CAR.HONDA_CIVIC_BOSCH, word=0, fault='relay')
 
-  def run_current_caller(self, *, candidate, word, fault=None, alternate_brake=False, alpha=False, speed_mps=12.5, pedal=False):
+  def run_current_caller(self, *, candidate, word, fault=None, alternate_brake=False, alpha=False, speed_mps=12.5,
+                         pedal=False, host_scenario=None, serialized=False):
     safety = libsafety_py.libsafety
     with (
       OpenpilotPrefix(),
@@ -104,6 +107,7 @@ class TestHondaCurrentCaller(unittest.TestCase):
         io.enter_context(patch.object(car_helpers, 'can_fingerprint', return_value=(None, fp)))
         card = Car()
       cp, ci = card.CP, card.CI
+      assert card.aol_card_intent is not None
       self.assertEqual(cp.fingerprintSource, structs.CarParams.FingerprintSource.fw)
       self.assertFalse(cp.fuzzyFingerprint)
       self.assertEqual(cp.carVin, vin)
@@ -117,7 +121,9 @@ class TestHondaCurrentCaller(unittest.TestCase):
       self.assertEqual(alt_brake, alternate_brake or bool(candidate.config.flags & HondaFlags.BOSCH_ALT_BRAKE))
       with structs.CarParams.from_bytes(saved.get('CarParams')) as published:
         self.assertEqual(published.to_dict(), cp.to_dict())
-      sd, controls = SelfdriveD(CP=cp), Controls()
+      sd, controls = SelfdriveD() if serialized else SelfdriveD(CP=cp), Controls()
+      self.assertEqual(sd.CP.to_dict(), cp.to_dict())
+      self.assertEqual(controls.CP.to_dict(), cp.to_dict())
       stream = HondaCan(ci)
       safety.init_tests()
       safety.set_alternative_experience(32)
@@ -143,10 +149,16 @@ class TestHondaCurrentCaller(unittest.TestCase):
       try:
         for tick in range(145):
           now = base + tick * 10_000_000
+          reengage = host_scenario == 'long_reengage' and tick >= 131
+          if host_scenario == 'settings_off' and tick == 135:
+            from openpilot.starpilot.aol.intent import read_settings
+            saved.put_bool('AlwaysOnLateral', False, block=True)
+            card.aol_card_intent.settings = read_settings(saved)
+            sd.aol_settings = read_settings(saved)
           # SET press/release is the real first ordinary native grant, preceding engaged HB.
           incoming = stream.frames(
-            cruise_button=3 if tick == 20 else 0,
-            cruise=int(21 <= tick < 50),
+            cruise_button=3 if tick == 20 or host_scenario == 'long_reengage' and tick == 130 else 0,
+            cruise=int(21 <= tick < 50 or reengage),
             brake=50 <= tick < 55,
             eps=6 if 80 <= tick < 95 else 0,
             gear=2 if 110 <= tick < 125 else None,
@@ -175,7 +187,7 @@ class TestHondaCurrentCaller(unittest.TestCase):
           panda.pandaStates[0].safetyModel = cp.safetyConfigs[0].safetyModel
           panda.pandaStates[0].safetyParam, panda.pandaStates[0].alternativeExperience = word, 32
           panda.pandaStates[0].ignitionLine = True
-          if tick >= 110 and fault:
+          if tick >= 110 and fault in ('relay', 'diagnostic'):
             panda.pandaStates[0].faults = ['relayMalfunction' if fault == 'relay' else 'interruptRateCan2']
           panda.pandaStates[0].controlsAllowed = bool(safety.get_controls_allowed())
           panda.pandaStates[0].safetyRxChecksInvalid = not bool(safety.safety_config_valid())
@@ -245,13 +257,16 @@ class TestHondaCurrentCaller(unittest.TestCase):
           self.assertEqual(cs.gearShifter, structs.CarState.GearShifter.reverse if 110 <= tick < 125 else structs.CarState.GearShifter.drive)
           self.assertEqual(cs.brakePressed, 50 <= tick < 55)
           self.assertTrue(cs.cruiseState.available)
-          self.assertEqual(cs.cruiseState.enabled, 21 <= tick < 50)
+          self.assertEqual(cs.cruiseState.enabled, 21 <= tick < 50 or reengage)
           intent = decode_intent(published['aolIntentWire'].aolIntentWire)
           self.assertIsNotNone(intent)
           # Initial receipt is unavailable until actual negotiator completes its zero acknowledgment.
           absent = messaging.new_message('aolSafetyWire', 0, valid=False, logMonoTime=now)
           current_receipt = receipt if receipt is not None else absent
-          driven_new = selfdrive_step(sd, published, current_receipt, controls_published, cp, safety, now, calibration='calibrated')
+          driven_new = selfdrive_step(
+            sd, published, current_receipt, controls_published, cp, safety, now, calibration='calibrated',
+            driver_lockout=host_scenario == 'driver_lockout' and tick >= 135,
+            driver_monitoring_valid=not (host_scenario == 'driver_lockout' and tick >= 140))
           retained = dict(driven)
           driven.update(driven_new)
           for service, event in retained.items():
@@ -355,7 +370,7 @@ class TestHondaCurrentCaller(unittest.TestCase):
                 self.assertFalse(command.longActive or row['controls'] or row['permission'] & 2, row)
               else:
                 self.assertTrue(accepted or fault == "relay" and tick >= 110, row)
-              if alpha and address == 0x1DF and tick >= 52:
+              if alpha and address == 0x1DF and tick >= 52 and not reengage:
                 gas = int.from_bytes(data[:2], 'big', signed=True)
                 accel = (data[3] << 3) | (data[4] >> 5)
                 accel = accel - 0x800 if accel & 0x400 else accel
@@ -363,7 +378,7 @@ class TestHondaCurrentCaller(unittest.TestCase):
             row['TX'].append(tx)
           row['events'] = [str(e.name) for e in driven['onroadEvents'].onroadEvents]
           row['fault_reason'] = str(driven['aolAxisState'].aolAxisState.faultReason)
-          if tick in (45, 79, 105) or tick == 135 and fault != "relay":
+          if tick in (45, 79, 105) or tick == 135 and fault != "relay" and host_scenario not in ("driver_lockout", "settings_off"):
             self.assertTrue(command.latActive, row)
             self.assertTrue(any(t.get('accepted') and t.get('request') and t.get('torque') for t in row['TX']), row)
             self.assertTrue(intent.allowedLatch, row)
@@ -372,7 +387,36 @@ class TestHondaCurrentCaller(unittest.TestCase):
             self.assertTrue(intent.lateralArmed, row)
             self.assertFalse(command.latActive or command.longActive, row)
             self.assertFalse(row['permission'] & 1, row)
-          if tick >= 55:
+          if tick < 20:
+            self.assertFalse(intent.allowedLatch or command.latActive or command.longActive, row)
+          if host_scenario == "driver_lockout" and 135 <= tick < 140:
+            # Current shared policy retains an already active, source-bound LAT
+            # owner during fresh DM lockout, with LONG inhibited.
+            self.assertTrue(sd.sm['driverMonitoringState'].lockout, row)
+            self.assertTrue(sd.aol_availability_long_inhibit, row)
+            self.assertTrue(command.latActive and row['permission'] & 1, row)
+            self.assertFalse(command.longActive or row['permission'] & 2, row)
+          withdraw = host_scenario == "settings_off" and tick >= 137 or host_scenario == "driver_lockout" and tick >= 142
+          if withdraw:
+            self.assertFalse(command.latActive or command.longActive, row)
+            if tick == 144:
+              if host_scenario == "settings_off":
+                self.assertFalse(row["permission"] & 3, row)
+              else:
+                # A short availability pause retains the native LAT owner.
+                # Host commands still withdraw, including the actual CAN TX.
+                self.assertEqual(row["fault_reason"], "availabilityPause", row)
+                self.assertEqual(row["permission"], 1, row)
+                steer = [tx for tx in row['TX'] if 'torque' in tx]
+                self.assertTrue(steer, row)
+                self.assertTrue(all(tx['accepted'] and tx['torque'] == 0 and not tx['request'] for tx in steer), row)
+          if host_scenario == "long_reengage" and tick == 135:
+            self.assertTrue(command.latActive, row)
+            self.assertFalse(command.longActive or row["permission"] & 2, row)
+          if host_scenario == "long_reengage" and tick == 144:
+            self.assertTrue(command.latActive and command.longActive, row)
+            self.assertEqual(row["permission"], 3, row)
+          if tick >= 55 and not reengage:
             self.assertFalse(command.longActive, row)
           if fault == 'relay' and tick >= 120:
             self.assertFalse(card.aol_card_intent.allowed_latch or intent.lateralArmed, row)

@@ -153,7 +153,7 @@ class GlobalRuntime:
     try:
       if (type(now_ns) is int and now_ns > 0 and self.descriptor is not None and
           sm.seen[receipt_service] and sm.alive[receipt_service] and sm.valid[receipt_service] and sm.freq_ok[receipt_service] and
-          0 <= now_ns - int(sm.recv_time[receipt_service] * 1e9) <= SOURCE_LEASE_NS):
+          0 <= now_ns - int(round(sm.recv_time[receipt_service] * 1e9)) <= SOURCE_LEASE_NS):
         envelope = sm[receipt_service]
         receipt = envelope.sourceReceipt if live_delivery else envelope.learning.sourceReceipt
         if receipt.version in (2, 3):
@@ -164,7 +164,7 @@ class GlobalRuntime:
             early_source = read_source_receipt(SimpleNamespace(valid=True, autoSteeringLearning=envelope),
               now_ns=now_ns, cp_sha256=self.descriptor.cp_sha256)
       stamp = int(sm.logMonoTime['extrinsicsCalibration'])
-      receipt = int(sm.recv_time['extrinsicsCalibration'] * 1e9)
+      receipt = int(round(sm.recv_time['extrinsicsCalibration'] * 1e9))
       current_calibration = bool(type(now_ns) is int and now_ns > 0 and
         sm.all_checks(['extrinsicsCalibration']) and
         0 < stamp <= now_ns <= stamp + 500_000_000 and
@@ -268,7 +268,7 @@ class GlobalRuntime:
       )
       for service, maximum in age_limits:
         stamp = int(sm.logMonoTime[service])
-        receipt = int(sm.recv_time[service] * 1e9)
+        receipt = int(round(sm.recv_time[service] * 1e9))
         if not (sm.seen[service] and 0 < stamp <= now_ns <= stamp + maximum and 0 < receipt <= now_ns <= receipt + maximum):
           if service == 'extrinsicsCalibration' and hasattr(self, '_calibration_lifecycle'):
             self._calibration_lifecycle.unavailable(now_ns=now_ns)
@@ -277,7 +277,7 @@ class GlobalRuntime:
         raise ValueError('controller_saturation')
       if not (sm.seen[receipt_service] and sm.alive[receipt_service] and sm.valid[receipt_service] and sm.freq_ok[receipt_service]):
         raise ValueError('source_unavailable')
-      received = int(sm.recv_time[receipt_service] * 1e9)
+      received = int(round(sm.recv_time[receipt_service] * 1e9))
       if not 0 <= now_ns - received <= SOURCE_LEASE_NS:
         raise ValueError('stale_receipt')
       envelope = sm[receipt_service]

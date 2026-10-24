@@ -114,7 +114,7 @@ def test_physical_tracking_error_uses_force_goal_while_geometry_keeps_original_s
     rows.append(SimpleNamespace(control_ns=stamp,desired_kinematic_accel=goal,desired_physical_accel=force,
       inputs=(('vEgo',20.),),healthy=True))
     if index%5==0:
-      points.append({'control_ns':stamp,'control':{'stage_values':(('setpoint',goal),)},
+      points.append({'control_ns':stamp,'apply_ns':stamp+20_000_000,'control':{'stage_values':(('setpoint',goal),)},
         'physical':{'lateral_accel':force,'roll_rad':-.2}})
   engine=SimpleNamespace(records=rows,replay_windows=((first,rows[-1].control_ns),),
     _frame_context=lambda frame:True,identity='a'*64,baseline_revision='b'*64)

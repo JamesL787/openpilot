@@ -1,4 +1,4 @@
-"""Fresh successful ordinary engagement rearms GM intent after resolved faults."""
+"""Healthy GM MAIN restores independent LAT without requiring ordinary engagement."""
 import os
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -23,7 +23,7 @@ NOW = 10_000_000_000
 
 @pytest.mark.parametrize('alpha', (False, True))
 @pytest.mark.parametrize('veto', (None, 'fault', 'stale', 'native', 'main_off', 'pre_enabled', 'startup_active', 'held'))
-def test_actual_card_resolved_fault_requires_fresh_successful_engagement(alpha, veto):
+def test_actual_card_resolved_fault_restores_main_without_ordinary_engagement(alpha, veto):
   with OpenpilotPrefix(), patch.dict(os.environ, {'SIMULATION': '1', 'AOL_REPLAY_RUNTIME': '0'}):
     saved = Params()
     saved.put_bool('AlwaysOnLateral', True, block=True)
@@ -91,13 +91,13 @@ def test_actual_card_resolved_fault_requires_fresh_successful_engagement(alpha, 
       cycle(1, enabled=veto == 'startup_active', active=veto == 'startup_active', fault=True)
       assert card.aol_card_intent._main_cycle_required and not card.aol_card_intent.allowed_latch
       cycle(2, enabled=veto == 'startup_active', active=veto == 'startup_active')
-      assert not card.aol_card_intent.allowed_latch  # Steady MAIN alone never revives a faulted intent.
+      assert card.aol_card_intent.allowed_latch  # Fresh healthy feedback restores the persistent MAIN level.
       if veto == 'held':
         card.aol_card_intent._main_held = True
       cs = cycle(3, enabled=True, active=veto != 'pre_enabled', fault=veto == 'fault',
             main=veto != 'main_off', stale=veto == 'stale', native_rejection=veto == 'native')
       if veto == 'native':
-        assert card.aol_card_intent.allowed_latch
+        assert not card.aol_card_intent.allowed_latch  # An inconsistent native request still refuses MAIN arming.
         intent = SimpleNamespace(allowedLatch=True, pauseLateral=False, pauseLongitudinal=False)
         denied = decode_safety(card.sm['aolSafetyWire'])
         decision = decide_axes(standard_lateral=False, standard_longitudinal=False, intent=intent, native=denied,
@@ -106,7 +106,7 @@ def test_actual_card_resolved_fault_requires_fresh_successful_engagement(alpha, 
         assert decision.desired_lateral and not decision.lateral_active and not decision.longitudinal_active
         cycle(4, fault=True)
         assert not card.aol_card_intent.allowed_latch and card.aol_card_intent._main_cycle_required
-      elif veto is not None:
+      elif veto in ('fault', 'main_off'):
         assert not card.aol_card_intent.allowed_latch
       else:
         assert card.aol_card_intent.allowed_latch and not card.aol_card_intent._main_cycle_required

@@ -97,18 +97,23 @@ def qualified(cp, *, marked_only=False):
 
 LONG_AOL_WORDS = frozenset((0x0815, 0x0895))
 LONG_EV_CARS = frozenset((CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_KONA_EV_2ND_GEN))
+INDEPENDENT_LONG_BUTTON_CARS = LONG_EV_CARS | {CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN}
 
 
 def qualified_long(cp, *, marked_only=False):
   if cp.carFingerprint == CAR.KIA_EV6:
     from opendbc.car.hyundai.ev6_aol import qualified as ev6_qualified
     return ev6_qualified(cp, marked_only=marked_only)
-  if cp.carFingerprint not in LONG_EV_CARS or not cp.openpilotLongitudinalControl or cp.pcmCruise:
+  if cp.carFingerprint not in INDEPENDENT_LONG_BUTTON_CARS or not cp.openpilotLongitudinalControl or cp.pcmCruise:
     return False
+  if cp.carFingerprint == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN:
+    from opendbc.car.hyundai.gv70_startup import eligible
+    if not eligible(cp):
+      return False
   word = _base_word(cp, experiences=(0, 32))
   if word not in (0x11, 0x91):
     return False
-  raw = int(cp.safetyConfigs[0].safetyParam)
+  raw = int(cp.safetyConfigs[config_index(cp)].safetyParam)
   return (raw == (word | 0x804) and cp.alternativeExperience == 32) or (
     not marked_only and raw == (word | 4) and cp.alternativeExperience == 0
   )

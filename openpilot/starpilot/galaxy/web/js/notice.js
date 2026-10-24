@@ -19,6 +19,8 @@ export const GxNotice = {
   template: `<div class="gx-alert" :class="toneClass" :role="tone === 'danger' ? 'alert' : 'status'">
     <span v-if="busy" class="gx-spinner gx-alert__icon" aria-hidden="true"></span>
     <i v-else class="bi gx-alert__icon" :class="iconClass" aria-hidden="true"></i>
-    <div class="gx-alert__body"><strong v-if="title">{{ title }}</strong><div class="gx-alert__text"><slot /></div></div>
+    <div class="gx-alert__body"><strong v-if="title">{{ title }}</strong><div class="gx-alert__text"><slot /></div>
+      <div v-if="$slots.actions" class="gx-actions gx-alert__actions"><slot name="actions" /></div>
+    </div>
   </div>`,
 }

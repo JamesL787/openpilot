@@ -35,13 +35,17 @@ class DisplayCompact:
       if not row.available:
         cards.append(GreyBigButton(row.label.lower(), description.lower()))
         continue
-      label = row.label.lower() + (" set " + row.repair_value.lower() if row.repair_value else "")
-      button = BigButton(label, description.lower())
-      def clicked(source=row) -> None:
-        request = row_change(source)
-        if request is not None and self.session.display_request(request):
-          self._populate(page)
-      button.set_click_callback(clicked)
-      cards.append(button)
+      numeric = row.step > 0 and row.value != "Auto" and not row.repair_value
+      for direction in ((-1, 1) if numeric else (1,)):
+        label = row.label.lower() + (" set " + row.repair_value.lower() if row.repair_value else
+                                    " -" if numeric and direction < 0 else " +" if numeric else "")
+        button = BigButton(label, description.lower())
+        button.set_enabled(row_change(row, direction) is not None)
+        def clicked(source=row, step=direction) -> None:
+          request = row_change(source, step)
+          if request is not None and self.session.display_request(request):
+            self._populate(page)
+        button.set_click_callback(clicked)
+        cards.append(button)
     page._scroller.items.clear()
     page._scroller.add_widgets(cards)

@@ -59,14 +59,14 @@ def test_only_actual_binding_change_clears_current_history_quarantine():
   assert history.priors == ()
 
 
-def test_fresh_incoming_control_rechecks_native_instead_of_inheriting_expired_previous(monkeypatch):
+def test_fresh_incoming_control_rechecks_native_instead_of_inheriting_denied_previous(monkeypatch):
   from openpilot.starpilot.flm.steerlearnerd import _collect_source_control
   from openpilot.starpilot.flm import runtime_adapter_registry as registry
   from openpilot.starpilot.flm.native_health import current_native_health
   identity = '8'*64
   monkeypatch.setattr(registry, 'current_authority', lambda sm, cp, **kwargs: (True, object(), identity))
   now = 300_000_000
-  old = SimpleNamespace(native_required=True, native_allowed=True, native_identity=identity,
+  old = SimpleNamespace(native_required=True, native_allowed=False, native_identity=identity,
     native_observed_ns=1, control_ns=100_000_000, native_expires_ns=200_000_001)
   fresh = SimpleNamespace(native_required=True, native_allowed=True, native_identity=identity,
     native_observed_ns=200_000_000, control_ns=290_000_000, native_expires_ns=400_000_000)
@@ -76,7 +76,7 @@ def test_fresh_incoming_control_rechecks_native_instead_of_inheriting_expired_pr
   collector.control=lambda control, stamp: observed.append((control,stamp,collector._learning_current_native_allowed))
   _collect_source_control(collector,fresh,None,None,now)
   assert observed==[(fresh,now,True)]
-  # Reusing this same current grant cannot renew the old record's lease.
+  # A current grant cannot authorize a record denied at its original issuance.
   _collect_source_control(collector,old,None,None,now)
   assert observed[-1]==(old,now,False)
   fresh.native_identity='9'*64

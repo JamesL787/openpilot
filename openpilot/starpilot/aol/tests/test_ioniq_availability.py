@@ -508,8 +508,8 @@ class IoniqAvailabilityTests(unittest.TestCase):
         self.assertFalse(axis.lateralActive or axis.longitudinalActive or command.latActive or command.longActive)
         self.assertEqual(state.alertType, 'commIssue/softDisable')
         self.assertEqual(state.alertText2, 'Communication Issue Between Processes')
-        # On the unmodified release this is 'critical', and actual Card clears
-        # the latch. These expectations require the qualified availability path.
+        # The shared SOFT owner retains armed intent while both output axes
+        # are withdrawn; source/event joins still have their original deadline.
         proof, event = sd.pm.messages['aolAxisState'], sd.pm.messages['onroadEvents']
         self.assertEqual(proof.aolAxisState.faultEventMonoTime, event.logMonoTime)
         now = 10_020_000_000
@@ -523,7 +523,8 @@ class IoniqAvailabilityTests(unittest.TestCase):
           self.assertTrue(receive(now, axis=proof, event=event))
         self.assertEqual(str(axis.faultReason), 'availabilityPause')
         self.assertFalse(sd.aol_authority_lost)
-        self.assertTrue(card.aol_transport_feedback.retention_qualified)
+        self.assertTrue(card.aol_transport_feedback.ordinary_warning_qualified)
+        self.assertFalse(card.aol_transport_feedback.retention_qualified)
         self.assertFalse(card.aol_transport_feedback.qualified)
         self.assertEqual(proof.aolAxisState.intentProducerSessionId, card.slc_producer_session)
         self.assertEqual(proof.aolAxisState.intentIntegrityEpoch, sd.aol_intent_companion.integrity_epoch)
@@ -599,35 +600,35 @@ class IoniqAvailabilityTests(unittest.TestCase):
       sd, controls, step, card, receive = self._ioniq_availability_callers(full_op=False)
       axis, state, command = step(2, car_output_valid=False)
       self.assertEqual(str(axis.faultReason), 'availabilityPause')
-      self.assertEqual(state.alertType, 'aolAvailability/warning')
-      self.assertEqual((state.alertText1, state.alertText2), ('Steering Paused', 'Communication Issue'))
-      self.assertEqual(str(state.alertSound), 'prompt')
+      self.assertEqual(state.alertType, 'commIssue/softDisable')
+      self.assertEqual((state.alertText1, state.alertText2), ('TAKE CONTROL IMMEDIATELY', 'Communication Issue Between Processes'))
+      self.assertEqual(str(state.alertSound), 'warningImmediate')
       delivered = controls.sm['selfdriveState']
       self.assertEqual(delivered.alertType, state.alertType)
-      self.assertEqual(str(delivered.alertSound), 'prompt')
+      self.assertEqual(str(delivered.alertSound), 'warningImmediate')
       self.assertFalse(sd.enabled or sd.active or state.enabled or state.active or
                        axis.lateralActive or axis.longitudinalActive or command.latActive or command.longActive)
       self.assertTrue(receive(10_020_000_000, axis=sd.pm.messages['aolAxisState'],
                               event=sd.pm.messages['onroadEvents']))
       for tick in range(3, 45):
         axis, state, command = step(tick, car_output_valid=False)
-        self.assertEqual(state.alertType, 'aolAvailability/warning')
+        self.assertEqual(state.alertType, 'commIssue/softDisable')
         self.assertFalse(sd.enabled or sd.active or state.enabled or state.active)
         self.assertFalse(axis.lateralActive or axis.longitudinalActive or command.latActive or command.longActive)
         self.assertTrue(receive(10_000_000_000 + tick * 10_000_000, axis=sd.pm.messages['aolAxisState']))
-      # The initial prompt has the candidate's bounded 0.4 s duration; visual
-      # pause warning remains current after audio expires.
-      self.assertEqual(str(state.alertSound), 'none')
-      self.assertEqual(str(controls.sm['selfdriveState'].alertSound), 'none')
-      for tick in range(45, 48):
+      # The normal takeover alert has its original four-second lifetime;
+      # it outranks the optional 0.4-second availability prompt.
+      self.assertEqual(str(state.alertSound), 'warningImmediate')
+      self.assertEqual(str(controls.sm['selfdriveState'].alertSound), 'warningImmediate')
+      for tick in range(45, 408):
         recovered, state, command = step(tick, native_request_long=False)
         self.assertTrue(recovered.lateralActive and command.latActive)
         self.assertFalse(sd.enabled or sd.active or state.enabled or state.active or recovered.desiredLongitudinal or
                          recovered.longitudinalActive or command.longActive)
         self.assertTrue(receive(10_000_000_000 + tick * 10_000_000, axis=sd.pm.messages['aolAxisState'],
                                 event=sd.pm.messages['onroadEvents']))
-      self.assertNotEqual(state.alertType, 'aolAvailability/warning')
-      self.assertNotEqual(controls.sm['selfdriveState'].alertType, 'aolAvailability/warning')
+      self.assertNotEqual(state.alertType, 'commIssue/softDisable')
+      self.assertNotEqual(controls.sm['selfdriveState'].alertType, 'commIssue/softDisable')
       self.assertEqual(str(state.alertSound), 'none')
       self.assertEqual(str(controls.sm['selfdriveState'].alertSound), 'none')
 
@@ -648,7 +649,8 @@ class IoniqAvailabilityTests(unittest.TestCase):
         advanced = axis.faultEventMonoTime not in occurrences
         occurrences.add(axis.faultEventMonoTime)
         self.assertTrue(receive(now, axis=proof, event=event if advanced else None))
-        self.assertTrue(card.aol_transport_feedback.retention_qualified)
+        self.assertTrue(card.aol_transport_feedback.ordinary_warning_qualified)
+        self.assertFalse(card.aol_transport_feedback.retention_qualified)
       # Real periodic SD publications advance the matched occurrence beyond the
       # initial 30 ms pairing window; they do not extend an unmatched occurrence.
       self.assertGreaterEqual(len(occurrences), 4)
@@ -706,12 +708,27 @@ class IoniqAvailabilityTests(unittest.TestCase):
             'restarted-card' if fault == 'producer_restart' else card.slc_producer_session,
             1, stamp, stamp, stamp + 200_000_000, True, False, False, True, True))
           kwargs['intent_message'] = intent
+        epoch_before = sd.aol_intent_companion.integrity_epoch
         axis, _, command = step(3, observed_state=observed, **kwargs)
         self.assertFalse(axis.lateralActive or axis.longitudinalActive or command.latActive or command.longActive)
-        self.assertEqual(str(axis.faultReason), 'critical')
-        self.assertFalse(receive(10_030_000_000, axis=sd.pm.messages['aolAxisState'],
+        if fault == 'native_denied':
+          native = current_native(sd.sm, sd.CP, now_ns=10_030_000_000, axis_session_id=sd.aol_session_id)
+          self.assertIsNotNone(native)
+          self.assertTrue(native.requestedLateral)
+          self.assertFalse(native.lateralAllowed)
+          self.assertEqual(str(axis.faultReason), 'availabilityPause')
+          self.assertFalse(receive(10_030_000_000, axis=sd.pm.messages['aolAxisState'],
                                  event=sd.pm.messages['onroadEvents'], state=observed))
-        self.assertFalse(card.aol_card_intent.allowed_latch)
+          self.assertFalse(card.aol_card_intent.allowed_latch)
+        else:
+          if fault in ('intent_invalid', 'producer_restart'):
+            self.assertGreater(sd.aol_intent_companion.integrity_epoch, epoch_before)
+            self.assertEqual(str(axis.faultReason), 'availabilityPause')
+          else:
+            self.assertEqual(str(axis.faultReason), 'critical')
+          self.assertFalse(receive(10_030_000_000, axis=sd.pm.messages['aolAxisState'],
+                                   event=sd.pm.messages['onroadEvents'], state=observed))
+          self.assertFalse(card.aol_card_intent.allowed_latch)
 
   def test_neutral_reverse_neutral_drive_preserves_actual_card_latch(self):
     from openpilot.starpilot.aol.wire import decode_intent

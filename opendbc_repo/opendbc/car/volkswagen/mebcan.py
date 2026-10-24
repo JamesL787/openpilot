@@ -59,6 +59,24 @@ def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_p
   return packer.make_can_msg("LDW_02", bus, values)
 
 
+def create_acc_buttons_control(packer, bus, gra_stock_values, cancel=False, resume=False, up=False, down=False):
+  values = {s: gra_stock_values[s] for s in [
+    "GRA_Hauptschalter",           # ACC button, on/off
+    "GRA_Typ_Hauptschalter",       # ACC main button type
+    "GRA_Codierung",               # ACC button configuration/coding
+    "GRA_Tip_Stufe_2",             # unknown related to stalk type
+    "GRA_ButtonTypeInfo",          # unknown related to stalk type
+  ]}
+
+  values.update({
+    "COUNTER": (gra_stock_values["COUNTER"] + 1) % 16,
+    "GRA_Abbrechen": cancel,
+    "GRA_Tip_Wiederaufnahme": resume or up,
+    "GRA_Tip_Setzen": down,
+  })
+  return packer.make_can_msg("GRA_ACC_01", bus, values)
+
+
 ACC_HUD_ERROR    = 6
 ACC_HUD_OVERRIDE = 4
 ACC_HUD_ACTIVE   = 3
@@ -71,6 +89,7 @@ class MebLongStateMachine:
 
   def __init__(self, CP, CCP):
     self.CCP = CCP
+    self.CP = CP
     self.RAMP_FRAMES = 10 // CCP.ACC_CONTROL_STEP  # 100 ms
 
     self.disengage_ramp_counter = 0  # always ramp when disengaging
@@ -82,12 +101,20 @@ class MebLongStateMachine:
     self.prev_acc_hold_type = self.acc_hold_type_vals['KEINE_ANFORDERUNG']  # no request
     self.acc_status = self.acc_status_vals['ACC_OFF_HAUPTSCHALTER_AUS']  # last acc status, read by HUD msg
 
+  def _independent_axes(self):
+    from opendbc.car.volkswagen.meb_modes import qualified
+    return qualified(self.CP, marked_only=True)
+
+  def _long_active(self, CS, CC):
+    return (CC.longActive and not CS.out.gasPressed and not CS.out.brakePressed
+            if self._independent_axes() else CC.enabled)
+
   def _get_acc_status(self, CS, CC) -> int:
     # stateless
     # NOTE: stock TSK and camera goes to 5 on disengage independently which we don't model, but hasn't been shown to fault without it
     if CS.out.accFaulted:
       return self.acc_status_vals['REVERSIBLER_FEHLER_IM_ACC_SYSTEM']
-    elif CC.enabled:
+    elif self._long_active(CS, CC):
       return self.acc_status_vals['ACC_OVERRIDE' if CC.cruiseControl.override else 'ACC_AKTIV_REGELT']
     elif CS.out.cruiseState.available:
       return self.acc_status_vals['ACC_STANDBY']
@@ -104,7 +131,7 @@ class MebLongStateMachine:
     # HMS_Status leaves holding as soon as we send anfahren, so keep driving off until we leave standstill
     driving_off = self.prev_acc_hold_type == self.acc_hold_type_vals['ANFAHREN'] and CS.esp_standstill
     starting = CC.actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or driving_off)
-    long_active = CC.longActive and not CS.out.accFaulted  # catches it one frame earlier, not sure if needed
+    long_active = (self._long_active(CS, CC) if self._independent_axes() else CC.longActive) and not CS.out.accFaulted
 
     if not long_active:
       # Stock goes to RAMP for as long as TSK_Status is 5 usually, 100ms seems fine to mimic that behavior.
@@ -144,7 +171,7 @@ class MebLongStateMachine:
     # transition to inactive accel and jerks as soon as we enter ESP standstill
     requesting_hold = acc_hold_type == self.acc_hold_type_vals['HALTEN']
     held = requesting_hold and CS.esp_hold_confirmation
-    if not CC.enabled or held:
+    if not self._long_active(CS, CC) or held:
       accel = self.CCP.ACCEL_INACTIVE
 
     # hold requested but the car hasn't reached standstill yet

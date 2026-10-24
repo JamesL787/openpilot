@@ -31,7 +31,7 @@ class TestSubaruStopStartNative(unittest.TestCase):
                ('Wheel_Speeds', dict.fromkeys(('FL', 'FR', 'RL', 'RR'), 1 if moving else 0), 1),
                ('ES_Distance', {}, 1), ('Brake_Status', {}, 1), ('ES_Status', {'Cruise_Activated': int(cruise)}, 1), ('ES_DashStatus', {'Cruise_On': 1}, 2),
                ('Dashlights', {'COUNTER': self.count % 16}, 1),
-               ('Transmission', {'COUNTER': self.count % 16, 'Gear': gear}, 0),
+               ('Transmission', {'COUNTER': self.count % 16, 'Gear': gear}, main),
                ('Engine_Stop_Start', {'Counter': self.count % 16, 'STOP_START_STATE': state}, 1)]
     for name, fields, bus in sources:
       if name in omit:
@@ -53,7 +53,7 @@ class TestSubaruStopStartNative(unittest.TestCase):
     return libsafety_py.make_CANPacket(0x390, bus, bytes(data))
 
   def test_real_native_profile_positive_wrong_bus_payload_and_already_off(self):
-    for word in (401,):
+    for word in (401, 465):
       self.configure(word)
       for _ in range(12):
         self.feed()
@@ -80,7 +80,7 @@ class TestSubaruStopStartNative(unittest.TestCase):
     for experience in (0, 32):
       self.ready(experience=experience)
       self.assertTrue(self.safety.safety_tx_hook(self.command()))
-    for word in (0, 17, 145, 177, 256, 400, 402, 403, 465, 657, 2225, 65535):
+    for word in (0, 17, 145, 177, 256, 400, 402, 403, 464, 466, 467, 657, 2225, 65535):
       self.ready(word)
       self.assertFalse(self.safety.safety_tx_hook(self.command()), word)
     for experience in (1, 64):

@@ -2,7 +2,9 @@ import copy
 import math
 
 from opendbc.can import CANDefine, CANParser
-from opendbc.car.toyota import pedal
+from opendbc.car.toyota import (
+  prius_longitudinal, dsu_bypass, pedal_composite, pedal, legacy_sdsu, advert_filter, legacy_advert_filter, prius_sdsu, prius_advert_filter
+)
 from opendbc.car.toyota.lexus_is import LexusIsCANParser
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
@@ -33,7 +35,9 @@ class CarState(CarStateBase):
   def __init__(self, CP):
     super().__init__(CP)
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
-    self.eps_torque_scale = (.73 if prius_filter_configured(CP) else EPS_SCALE[CP.carFingerprint] / 100.)
+    original_prius = prius_sdsu.configured(CP) or prius_advert_filter.configured(CP)
+    self.eps_torque_scale = ((CP.safetyConfigs[0].safetyParam & 0xFF) / 100. if prius_advert_filter.configured(CP) else
+                             .73 if prius_filter_configured(CP) and not original_prius else EPS_SCALE[CP.carFingerprint] / 100.)
     self.cluster_speed_hyst_gap = CV.KPH_TO_MS / 2.
     self.cluster_min_speed = CV.KPH_TO_MS / 2.
 
@@ -76,7 +80,8 @@ class CarState(CarStateBase):
       self.pre_collision_2 = copy.copy(cp_cam.vl["PRE_COLLISION_2"])
 
     ret = structs.CarState()
-    cp_acc = cp_cam if (self.CP.flags & ToyotaFlags.TSS2) and not (self.CP.flags & ToyotaFlags.RADAR_ACC) else cp
+    bypass = dsu_bypass.configured(self.CP)
+    cp_acc = cp_cam if bypass or (self.CP.flags & ToyotaFlags.TSS2) and not (self.CP.flags & ToyotaFlags.RADAR_ACC) else cp
 
     if not self.CP.flags & ToyotaFlags.SECOC.value:
       self.gvc = cp.vl["VSC1S07"]["GVC"]
@@ -142,6 +147,11 @@ class CarState(CarStateBase):
     ret.steerFaultTemporary = cp.vl["EPS_STATUS"]["LKA_STATE"] in TEMP_STEER_FAULTS
     ret.steerFaultPermanent = cp.vl["EPS_STATUS"]["LKA_STATE"] in PERM_STEER_FAULTS
 
+    if advert_filter.configured(self.CP):
+      stamp, expiry = parser_expiry(cp, 'EPS_STATUS', 'LKA_STATE')
+      expiry = min(expiry, stamp + 400_000_000)
+      ret.steerFaultTemporary |= not (cp.eps_valid and stamp > 0 and stamp <= cp._last_update_nanos <= expiry)
+
     if self.CP.steerControlType == SteerControlType.angle:
       ret.steerFaultTemporary = ret.steerFaultTemporary or cp.vl["EPS_STATUS"]["LTA_STATE"] in TEMP_STEER_FAULTS
       ret.steerFaultPermanent = ret.steerFaultPermanent or cp.vl["EPS_STATUS"]["LTA_STATE"] in PERM_STEER_FAULTS
@@ -154,7 +164,8 @@ class CarState(CarStateBase):
     if self.CP.flags & ToyotaFlags.UNSUPPORTED_DSU:
       # TODO: find the bit likely in DSU_CRUISE that describes an ACC fault. one may also exist in CLUTCH
       ret.cruiseState.available = cp.vl["DSU_CRUISE"]["MAIN_ON"] != 0
-      if self.CP.carFingerprint == CAR.LEXUS_IS:
+      if (self.CP.carFingerprint == CAR.LEXUS_IS or
+          (legacy_sdsu.configured(self.CP) or legacy_advert_filter.configured(self.CP)) and self.CP.carFingerprint in legacy_sdsu.ALT_MAIN_CARS):
         stamp = cp.ts_nanos["DSU_CRUISE"]["MAIN_ON"]
         ret.cruiseState.available &= bool(cp.main_valid and stamp > 0 and 0 <= cp._last_update_nanos - stamp <= 303_031_000)
       ret.cruiseState.speed = cp.vl["DSU_CRUISE"]["SET_SPEED"] * CV.KPH_TO_MS
@@ -163,11 +174,23 @@ class CarState(CarStateBase):
       ret.accFaulted = cp.vl["PCM_CRUISE_2"]["ACC_FAULTED"] != 0
       ret.carFaultedNonCritical = cp.vl["PCM_CRUISE_SM"]["TEMP_ACC_FAULTED"] != 0
       ret.cruiseState.available = cp.vl["PCM_CRUISE_2"]["MAIN_ON"] != 0
-      if pedal.configured(self.CP):
+      if (pedal.configured(self.CP) and not pedal_composite.configured(self.CP)) or advert_filter.configured(self.CP):
         stamp = cp.ts_nanos["PCM_CRUISE_2"]["MAIN_ON"]
         ret.cruiseState.available &= bool(cp.main_valid and stamp > 0 and 0 <= cp._last_update_nanos - stamp <= 303_031_000)
       ret.cruiseState.speed = cp.vl["PCM_CRUISE_2"]["SET_SPEED"] * CV.KPH_TO_MS
       cluster_set_speed = cp.vl["PCM_CRUISE_SM"]["UI_SET_SPEED"]
+
+    if bypass:
+      main = 'DSU_CRUISE' if self.CP.carFingerprint in dsu_bypass.ALT_MAIN_CARS else 'PCM_CRUISE_2'
+      stamp = cp.ts_nanos[main]['MAIN_ON']
+      ret.cruiseState.available &= bool(cp.main_valid and stamp > 0 and 0 <= cp._last_update_nanos - stamp <= 303_031_000)
+      stamp = cp.ts_nanos['EPS_STATUS']['LKA_STATE']
+      ret.steerFaultTemporary |= not (cp.eps_valid and stamp > 0 and 0 <= cp._last_update_nanos - stamp <= 400_000_000)
+      stamp = cp_cam.ts_nanos['ACC_CONTROL']['ACC_TYPE']
+      ret.accFaulted |= not (cp_cam.acc_valid and stamp > 0 and 0 <= cp_cam._last_update_nanos - stamp <= 303_031_000)
+      ret.accFaulted |= bool(cp_acc.vl['ACC_CONTROL']['ACC_MALFUNCTION'] or cp_acc.vl['ACC_CONTROL']['RADAR_DIRTY'] or cp.ambiguous or cp_cam.ambiguous)
+      self.acc_type = cp_acc.vl['ACC_CONTROL']['ACC_TYPE']
+      ret.stockFcw = bool(cp_acc.vl['PCS_HUD']['FCW'])
 
     # UI_SET_SPEED is always non-zero when main is on, hide until first enable
     is_metric = cp.vl["BODY_CONTROL_STATE_2"]["UNITS"] in (1, 2)
@@ -216,7 +239,8 @@ class CarState(CarStateBase):
     buttonEvents = create_button_events(int(pcm_acc_status) if pcm_acc_status in (9, 10) else 0,
                                        int(previous_pcm_acc_status) if previous_pcm_acc_status in (9, 10) else 0,
                                        {9: ButtonType.accelCruise, 10: ButtonType.decelCruise})
-    if self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT:
+    if (self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
+        self.CP.flags & ToyotaFlags.RADAR_CAN_FILTER and legacy_advert_filter.configured(self.CP)):
       # lkas button is wired to the camera
       prev_lkas_button = self.lkas_button
       self.lkas_button = cp_cam.vl["LKAS_HUD"]["LDA_ON_MESSAGE"]
@@ -226,17 +250,23 @@ class CarState(CarStateBase):
         buttonEvents.extend(create_button_events(1, 0, {1: ButtonType.lkas}) +
                             create_button_events(0, 1, {1: ButtonType.lkas}))
 
-      if self.CP.flags & ToyotaFlags.TSS2 and not (self.CP.flags & (ToyotaFlags.RADAR_ACC | ToyotaFlags.SECOC | ToyotaFlags.LONG_FILTER)):
+      if (self.CP.flags & ToyotaFlags.TSS2 and not advert_filter.configured(self.CP) and
+          not (self.CP.flags & (ToyotaFlags.RADAR_ACC | ToyotaFlags.SECOC | ToyotaFlags.LONG_FILTER))):
         # distance button is wired to the ACC module (camera or radar)
         prev_distance_button = self.distance_button
         self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
 
         buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
-    if self.CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) or self.CP.flags & ToyotaFlags.LONG_FILTER:
+    if (self.CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) or
+        self.CP.flags & ToyotaFlags.LONG_FILTER or advert_filter.configured(self.CP)):
       prev_distance_button = self.distance_button
-      self.distance_button = (cp.vl["SDSU"]["FD_BUTTON"] if self.CP.flags & ToyotaFlags.LONG_FILTER
-                              else cp_acc.vl["ACC_CONTROL"]["DISTANCE"])
+      if advert_filter.configured(self.CP) or prius_advert_filter.configured(self.CP):
+        fresh = cp.advert_button_ns > 0 and 0 <= cp._last_update_nanos - cp.advert_button_ns <= 200_000_000
+        self.distance_button = cp.advert_distance_button if fresh else 0
+      else:
+        self.distance_button = (cp.vl["SDSU"]["FD_BUTTON"] if self.CP.flags & ToyotaFlags.LONG_FILTER
+                                else cp_acc.vl["ACC_CONTROL"]["DISTANCE"])
       buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
     if self.CP.carFingerprint == CAR.TOYOTA_SIENNA_4TH_GEN:
@@ -263,7 +293,8 @@ class CarState(CarStateBase):
           elif abs(ret.steeringAngleDeg - (zorro - self.zss_offset)) < 4.0:
             ret.steeringAngleDeg = zorro - self.zss_offset
 
-    if rav4h_filter_configured(self.CP):
+    original_prius_sdsu = prius_sdsu.configured(self.CP) or prius_longitudinal.eps73_status_configured(self.CP)
+    if rav4h_filter_configured(self.CP) or original_prius_sdsu:
       self.sdsu_state = int(cp.vl["SDSU"]["STATE"])
       source_ns, valid_until_ns = parser_expiry(cp, "SDSU", "STATE")
       # The shared parser debounces canValid. Withdraw this command owner at
@@ -271,11 +302,19 @@ class CarState(CarStateBase):
       sdsu_fresh = source_ns > 0 and source_ns <= cp._last_update_nanos <= valid_until_ns
       ret.accFaulted = ret.accFaulted or not sdsu_fresh or self.sdsu_state not in (0, 7)
       ret.stockAeb = ret.stockAeb or self.sdsu_state == 7
+    if original_prius_sdsu or prius_advert_filter.configured(self.CP):
+      main_current = cp.main_valid and prius_sdsu.source_current(cp, 'PCM_CRUISE_2', 'MAIN_ON')
+      eps_current = cp.eps_valid and prius_sdsu.source_current(cp, 'EPS_STATUS', 'LKA_STATE')
+      ret.cruiseState.available = ret.cruiseState.available and main_current and not cp.hardware_ambiguous
+      ret.steerFaultTemporary = ret.steerFaultTemporary or not eps_current or cp.hardware_ambiguous
+      ret.accFaulted = ret.accFaulted or cp.hardware_ambiguous
 
     if pedal.configured(self.CP):
-      stamp = cp.ts_nanos.get("GAS_SENSOR", {}).get("STATE", 0)
-      self.pedal_ready = bool(cp.pedal_valid and stamp > 0 and 0 <= cp._last_update_nanos - stamp <= 200_000_000)
-      ret.gasPressed = (cp.vl['GAS_SENSOR']['INTERCEPTOR_GAS'] + cp.vl['GAS_SENSOR']['INTERCEPTOR_GAS2']) / 2 > 805
+      cp_pedal = can_parsers[Bus.alt] if pedal_composite.configured(self.CP) else cp
+      stamp = cp_pedal.ts_nanos.get("GAS_SENSOR", {}).get("STATE", 0)
+      self.pedal_ready = bool(cp_pedal.pedal_valid and stamp > 0 and 0 <= cp_pedal._last_update_nanos - stamp <= 200_000_000)
+      pedal_gas = (cp_pedal.vl['GAS_SENSOR']['INTERCEPTOR_GAS'] + cp_pedal.vl['GAS_SENSOR']['INTERCEPTOR_GAS2']) / 2 > 805
+      ret.gasPressed = (ret.gasPressed or pedal_gas) if pedal_composite.configured(self.CP) else pedal_gas
       ret.accFaulted = ret.accFaulted or not self.pedal_ready
     ret.buttonEvents = buttonEvents
     timestamp, expiry = parser_expiry(cp_cam, "RSA1", "TSGN1")
@@ -288,6 +327,21 @@ class CarState(CarStateBase):
 
   @staticmethod
   def get_can_parsers(CP):
+    if pedal_composite.configured(CP):
+      parent = CarState.get_can_parsers(pedal_composite.parent_cp(CP))
+      for bus in parent:
+        parent[bus] = pedal_composite.ParentPedalParser(parent[bus])
+      parent[Bus.alt] = pedal.PedalCANParser(DBC[CP.carFingerprint][Bus.pt], [('GAS_SENSOR', 50)], 0)
+      return parent
+    if dsu_bypass.configured(CP):
+      alternate = CP.carFingerprint in dsu_bypass.ALT_MAIN_CARS
+      main = 'DSU_CRUISE' if alternate else 'PCM_CRUISE_2'
+      kwargs = {'eps_length': 8 if CP.carFingerprint in dsu_bypass.EPS8_CARS or CP.carFingerprint == CAR.TOYOTA_PRIUS else 5,
+                'alternate_main': alternate}
+      return {
+        Bus.pt: dsu_bypass.BypassCANParser(DBC[CP.carFingerprint][Bus.pt], [(main, 10), ('EPS_STATUS', 25)], 0, **kwargs),
+        Bus.cam: dsu_bypass.BypassCANParser(DBC[CP.carFingerprint][Bus.pt], [('ACC_CONTROL', 33)], 2, **kwargs),
+      }
     dbc_name = DBC[CP.carFingerprint][Bus.pt]
     cam_messages = [("RSA1", math.nan)] if "RSA1" in CANDBC(dbc_name).name_to_msg else []
     if CP.flags & ToyotaFlags.AUTO_BRAKE_HOLD and uses_toyota_auto_hold_aeb(CP):
@@ -298,19 +352,34 @@ class CarState(CarStateBase):
 
     if CP.carFingerprint == CAR.TOYOTA_SIENNA_4TH_GEN:
       pt_messages.append(("PCM_CRUISE_4", 1))
-    if CP.carFingerprint == CAR.LEXUS_IS:
+    from opendbc.car.toyota import camera_2aa_filter
+    camera_twoaa = camera_2aa_filter.configured(CP)
+    legacy_advert = legacy_advert_filter.configured(CP)
+    alternate_sdsu_main = (legacy_sdsu.configured(CP) or legacy_advert) and CP.carFingerprint in legacy_sdsu.ALT_MAIN_CARS
+    if CP.carFingerprint == CAR.LEXUS_IS or alternate_sdsu_main:
       pt_messages.append(("DSU_CRUISE", 10))
 
-    if CP.flags & ToyotaFlags.LONG_FILTER:
+    if ((advert_filter.configured(CP) and not alternate_sdsu_main) or prius_sdsu.configured(CP) or
+        prius_longitudinal.eps73_status_configured(CP) or prius_advert_filter.configured(CP)):
+      pt_messages.append(("PCM_CRUISE_2", 10))
+    if prius_sdsu.configured(CP) or prius_longitudinal.eps73_status_configured(CP) or prius_advert_filter.configured(CP):
+      pt_messages.append(("EPS_STATUS", 25))
+    if CP.flags & ToyotaFlags.LONG_FILTER and not prius_advert_filter.configured(CP):
       pt_messages.append(("SDSU", 50))
     if CP.flags & ToyotaFlags.ZSS:
       pt_messages.append(("SECONDARY_STEER_ANGLE", math.nan))
 
     if pedal.configured(CP):
       pt_messages.append(("GAS_SENSOR", 50))
-    pt_parser = (LexusIsCANParser if CP.carFingerprint == CAR.LEXUS_IS else pedal.PedalCANParser if pedal.configured(CP) else
+    pt_parser = (prius_advert_filter.PriusAdvertCANParser if prius_advert_filter.configured(CP) else
+                 prius_sdsu.PriusSDSUCANParser if prius_sdsu.configured(CP) or prius_longitudinal.eps73_status_configured(CP) else
+                 camera_2aa_filter.CameraTwoAACANParser if camera_twoaa else
+                 legacy_advert_filter.LegacyAdvertCANParser if legacy_advert else
+                 legacy_sdsu.AlternateMainSDSUCANParser if alternate_sdsu_main else
+                 LexusIsCANParser if CP.carFingerprint == CAR.LEXUS_IS else pedal.PedalCANParser if pedal.configured(CP) else
+                 advert_filter.AdvertFilterCANParser if advert_filter.configured(CP) else
                  Rav4hCANParser if rav4h_filter_configured(CP) else CANParser)
     return {
-      Bus.pt: pt_parser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
+      Bus.pt: pt_parser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0, **({"alternate_main": alternate_sdsu_main} if legacy_advert else {})),
       Bus.cam: CANParser(dbc_name, cam_messages, 2),
     }

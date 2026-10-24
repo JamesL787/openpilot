@@ -1,4 +1,4 @@
-"""Dom pedal protocol for the qualified TSS2 camera-longitudinal owners."""
+"""Dom pedal protocol for qualified TSS2 camera and radar longitudinal owners."""
 import numpy as np
 from opendbc.can import CANParser
 from opendbc.car.toyota.toyotacan import toyota_checksum
@@ -25,6 +25,13 @@ CAMERA_PEDAL_CARS = frozenset((
 ))
 
 
+RADAR_PEDAL_CARS = frozenset((CAR.TOYOTA_CHR_TSS2, CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_TSS2_2023))
+ANGLE_PEDAL_CARS = frozenset((CAR.TOYOTA_RAV4_TSS2_2023,))
+
+def long_word(candidate):
+  return 0x2449 if candidate in ANGLE_PEDAL_CARS else LONG_WORD
+
+
 def checksum(data):
   crc = 0xFF
   for value in reversed(data[:-1]):
@@ -35,7 +42,7 @@ def checksum(data):
 
 
 def hardware_supported(candidate, fingerprint, car_fw):
-  if candidate not in CAMERA_PEDAL_CARS or fingerprint.get(0, {}).get(0x201) != 6:
+  if candidate not in CAMERA_PEDAL_CARS | RADAR_PEDAL_CARS or fingerprint.get(0, {}).get(0x201) != 6:
     return False
   if any(0x201 in fingerprint.get(bus, {}) for bus in (1, 2)) or any(
       addr in messages for messages in fingerprint.values() for addr in (0x2FF, 0x2AA)):
@@ -51,24 +58,49 @@ def hardware_supported(candidate, fingerprint, car_fw):
 
 
 def configured(cp):
-  if cp is None or cp.brand != 'toyota' or cp.carFingerprint not in CAMERA_PEDAL_CARS or (
+  from opendbc.car.toyota.pedal_composite import hold_base_cp
+  cp = hold_base_cp(cp)
+  from opendbc.car.toyota import pedal_composite
+  if pedal_composite.configured(cp):
+    return True
+  if cp is None or cp.brand != 'toyota' or cp.carFingerprint not in CAMERA_PEDAL_CARS | RADAR_PEDAL_CARS or (
       cp.notCar or cp.passive or cp.dashcamOnly or not cp.pcmCruise or
-      cp.steerControlType != structs.CarParams.SteerControlType.torque or len(cp.safetyConfigs) != 1):
+      cp.secOcRequired or len(cp.safetyConfigs) != 1):
     return False
   required = ToyotaFlags.TSS2 | ToyotaFlags.NO_DSU | ToyotaFlags.RAISED_ACCEL_LIMIT | ToyotaFlags.GAS_INTERCEPTOR
   allowed = required | ToyotaFlags.HYBRID | ToyotaFlags.HAS_BSM
+  if cp.carFingerprint in RADAR_PEDAL_CARS:
+    required |= ToyotaFlags.RADAR_ACC
+    if cp.openpilotLongitudinalControl:
+      required |= ToyotaFlags.DISABLE_RADAR
+    allowed |= required
+  angle = cp.carFingerprint in ANGLE_PEDAL_CARS
+  if angle:
+    required |= ToyotaFlags.ANGLE_CONTROL
+    allowed |= ToyotaFlags.ANGLE_CONTROL
+  if cp.carFingerprint in (CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_TSS2_2023):
+    allowed |= ToyotaFlags.ARS510_RADAR | ToyotaFlags.ARS510_FUSED
+  if cp.flags & ToyotaFlags.ARS510_FUSED and not cp.flags & ToyotaFlags.ARS510_RADAR:
+    return False
+  expected_steer = structs.CarParams.SteerControlType.angle if angle else structs.CarParams.SteerControlType.torque
+  if cp.steerControlType != expected_steer:
+    return False
   config = cp.safetyConfigs[0]
   return (cp.flags & required == required and not int(cp.flags) & ~int(allowed) and
           config.safetyModel == structs.CarParams.SafetyModel.toyota and
-          config.safetyParam in (LONG_WORD, STOCK_WORD) and
-          cp.openpilotLongitudinalControl == (config.safetyParam == LONG_WORD))
+          config.safetyParam == (long_word(cp.carFingerprint) | (0 if cp.openpilotLongitudinalControl else 0x200)))
 
 
 def prepare_stock(cp):
+  from opendbc.car.toyota import pedal_composite
+  if pedal_composite.marked(cp):
+    return pedal_composite.prepare_stock(cp)
   if not configured(cp):
     return False
   cp.openpilotLongitudinalControl = False
-  cp.safetyConfigs[0].safetyParam = STOCK_WORD
+  cp.safetyConfigs[0].safetyParam = long_word(cp.carFingerprint) | 0x200
+  if cp.carFingerprint in RADAR_PEDAL_CARS:
+    cp.flags &= ~int(ToyotaFlags.DISABLE_RADAR)
   cp.autoResumeSng = False
   return True
 

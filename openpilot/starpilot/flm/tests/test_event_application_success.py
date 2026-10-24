@@ -100,7 +100,7 @@ def exercise(*, no_new_pose=False):
       self.child = None
 
   csock, osock = object(), object()
-  fitter, sm, persistence = Fitter(), mock.Mock(), mock.Mock()
+  fitter, sm, persistence = Fitter(), mock.Mock(updated={'deviceMotion': False}, logMonoTime={'deviceMotion': 0}), mock.Mock()
   def update(timeout=None):
     if timeout == 0:
       return

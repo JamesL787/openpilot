@@ -127,11 +127,13 @@ def test_long_only_wait_keeps_original_deadline_and_restrictions(timing):
         axis, _, command = step(5, timeout=True, offset_ns=338_798, intent_message=latest,
                                 latched=False, pause=True, native_request_lat=False, allowed=False,
                                 long_allowed=timing != 'native_denied', native_valid=timing != 'native_invalid', panda_fault=timing == 'panda_fault')
-      if timing == 'pre_refresh_cutoff':
+      if timing in ('pre_refresh_cutoff', 'missing'):
         # The source expires after the normal refresh cutoff. One early deferral
         # retains exactly the old packet, without another state transition.
         assert sd.aol_axis_publication_deferred and transition.call_count == 0
-        assert axis.to_dict() == original.to_dict() and poller.poll.call_count == 0
+        assert axis.to_dict() == original.to_dict()
+        assert poller.poll.call_count == (1 if timing == 'missing' else 0)
+        assert now[0] < deadline and axis.validUntilMonoTime == deadline
         with mock.patch('openpilot.selfdrive.controls.controlsd.time.monotonic_ns', return_value=deadline + 1):
           expired, _ = controls.state_control()
         assert not expired.latActive and not expired.longActive
@@ -139,9 +141,17 @@ def test_long_only_wait_keeps_original_deadline_and_restrictions(timing):
           latched=False, pause=True, native_request_lat=False, allowed=False)
         assert not missing.longitudinalActive and not missing_command.longActive
         assert not missing.lateralActive and not missing_command.latActive
-        fixture.assert_ordinary_source_pause(sd)
-        recovered, _, recovered_command = step(7, latched=False, pause=True, native_request_lat=False, allowed=False)
-        fixture.assert_fresh_ordinary_recovery(sd, recovered, recovered_command, BASE + 50_000_000)
+        if timing == 'missing':
+          # A second missing input ended the actual ordinary engagement. Its
+          # original proof expired; fresh input cannot silently enable LONG.
+          assert not sd.enabled and not sd.active
+          recovered, _, recovered_command = step(7, latched=False, pause=True, native_request_lat=False, allowed=False)
+          assert not recovered.longitudinalActive and not recovered_command.longActive
+          assert not sd.enabled and not sd.active and not sd.events.contains('enable')
+        else:
+          fixture.assert_ordinary_source_pause(sd)
+          recovered, _, recovered_command = step(7, latched=False, pause=True, native_request_lat=False, allowed=False)
+          fixture.assert_fresh_ordinary_recovery(sd, recovered, recovered_command, BASE + 50_000_000)
         assert original.validUntilMonoTime == deadline
         return
       assert transition.call_count == 1

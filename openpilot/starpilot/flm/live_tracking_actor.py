@@ -371,6 +371,7 @@ class LiveTrackingActor:
     if self.process is not None and self.process.child is not None:
       return  # At most one optional reconstruction/identification child.
     optimizer = self.ingress.optimizer
+    self.reason = optimizer.reason
     accepted = tuple((name, optimizer.accepted[name]) for name in NAMES)
     profile_hash = full_profile_sha256(self.certificate.binding.baseline_revision, dict(accepted))
     token = (self.token, self.certificate.model_revision, profile_hash)
@@ -613,17 +614,20 @@ class LiveTrackingActor:
           pass  # Pending/invalid bytes still fail their exact verification.
 
   def _retire_identified_history(self, collector):
-    """Retain live prefixes after independent identification has completed.
+    """Retain recent prefixes for an exact source or identified response.
+
+    Source tracking has no plant-bootstrap job requiring the pre-ingress tape.
+    Retiring old history never admits a response, command or numerical trial.
 
     Pending workers own fork-frozen originals. Live endpoints are at most2s
     old with at most1s checkpoint history; retain4s plus its preceding original
     checkpoint. No decoder state, unconsumed CAN, certificate or episode score
     is replaced. Release at most32 rows per structure per tick.
     """
-    if self.ingress is None or self.certificate is None:
+    binding = self.certificate.binding if self.certificate is not None else self.seed if self.source_tracking else None
+    if binding is None or not self.source_tracking and self.ingress is None:
       return
     replay = collector.adapter.replay
-    binding = self.certificate.binding
     if (
       replay.raw_mode is not True
       or replay.identity != binding.identity
@@ -705,7 +709,7 @@ class LiveTrackingActor:
       == (self.seed.cp_sha256, self.seed.source_epoch, self.seed.reset_generation, self.seed.calibration_generation, self.seed.persistent_source_epoch)
     )
 
-  def tick(self, collector, source, *, now_ns, current_native, native_key=(), hardware_inventory=(), allow_bootstrap=True):
+  def tick(self, collector, source, *, now_ns, current_native, native_key=(), hardware_inventory=(), allow_bootstrap=True, evidence_delay_only=False):
     self.native_key, self.hardware_inventory = native_key, hardware_inventory
     snapshot_result = self.snapshot_process.poll(token=self.token if self._same_bootstrap_source(source, now_ns) else None, now_ns=now_ns)
     if self.probe_process is not None and self.ingress is None:
@@ -745,7 +749,8 @@ class LiveTrackingActor:
       self.probe_queue.clear()
       self.probe_queue_key = None
       if self.ingress is not None:
-        self.ingress.interrupt('current_source_or_native_permission_unavailable', preserve_completed=retain_probe)
+        self.ingress.interrupt('current_evidence_delayed' if evidence_delay_only else 'current_source_or_native_permission_unavailable',
+          preserve_completed=retain_probe)
       return None
     try:
       seed = self.binding_for(collector, source)
@@ -859,7 +864,13 @@ class LiveTrackingActor:
       offer.validate()
       old = response_witness_value(offer.response_witness)
       optimizer = self.ingress.optimizer
-      current = validate_response_witness(optimizer.response_witness, self.certificate.binding, now_ns)
+      try:
+        current = validate_response_witness(optimizer.response_witness, self.certificate.binding, now_ns)
+      except (TypeError, ValueError):
+        self.ingress.interrupt('expired_response_witness' if optimizer._witness_expired(now_ns)
+          and offer.binding == self.certificate.binding and old.certificate == self.certificate
+          else 'fresh_response_witness_unavailable')
+        return None
       state = optimizer.offer_state
       if offer.binding != self.certificate.binding or old.certificate != self.certificate or state is None:
         raise ValueError('trial publication identity changed')

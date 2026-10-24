@@ -27,6 +27,7 @@ import uuid
 
 from openpilot.starpilot.replay.client import MAX_REQUEST, MAX_RESPONSE, MAX_WORKER_STATUS, encode, parse, receive, replay_root
 from openpilot.starpilot.replay.export import BITRATE_KBPS, EXPORT_TTL, MAX_EXPORT_BYTES, disk_budget
+from openpilot.starpilot.replay.timeline import file_identity, read_page
 from openpilot.tools.replay.display_clock import RECORD
 
 
@@ -176,13 +177,15 @@ class ReplayOwner:
     self.export = None
     self.export_client = None
     self.view_display = None
+    self.timeline_identity = None
+    self.timeline_checked = False
     self.status = self._idle()
 
   def _idle(self, error=None):
     return {'schemaVersion': 1, 'ownerId': self.owner_id, 'sessionId': None, 'state': 'idle', 'routeId': None,
             'profile': self.profile, 'revision': 0, 'epoch': 0, 'position': 0.0, 'start': 0.0, 'end': 0.0,
             'rate': 1.0, 'paused': True, 'errorCode': error, 'sourceWarnings': [], 'seekRanges': [], 'segmentRanges': [],
-            'frameReady': False, 'mediaReady': False}
+            'frameReady': False, 'mediaReady': False, 'timelineState': 'unavailable'}
 
   def _snapshot(self, client=None):
     result = dict(self.status)
@@ -276,6 +279,21 @@ class ReplayOwner:
     with self.lock:
       if op == 'status' and set(request) <= {'op', 'clientId'}:
         return self._snapshot(self._touch(request))
+      if op == 'timeline':
+        if set(request) != {'op', 'sessionId', 'clientId', 'cursor'}:
+          raise Rejected('invalid_request')
+        self._owned(request)
+        if (self.cancel.is_set() or self.status['state'] in ('idle', 'stopping', 'failed') or
+            self.status.get('timelineState') != 'ready' or self.timeline_identity is None or self.session_dir is None):
+          raise Rejected('timeline_unavailable')
+        try:
+          page = read_page(self.session_dir / 'cache/timeline.jsonl', request['cursor'], self.timeline_identity,
+                           self.status['seekRanges'])
+        except (OSError, ValueError, TypeError, RecursionError):
+          self.timeline_identity = None
+          self.status['timelineState'] = 'unavailable'
+          raise Rejected('timeline_unavailable') from None
+        return {**page, 'ownerId': self.owner_id, 'sessionId': self.status['sessionId']}
       if op == 'start':
         return self._start(request)
       if op == 'export-start':
@@ -349,7 +367,10 @@ class ReplayOwner:
     self.pending = None
     self.base_warnings = list(route.get('warnings', []))[:32]
     self.status = self._idle()
+    self.timeline_identity = None
+    self.timeline_checked = False
     self.status.update(sessionId=sid, state='preparing', routeId=route['routeId'], revision=1,
+                       timelineState='loading',
                        target=target, purpose='export' if exporting else 'view',
                        sourceWarnings=self.base_warnings, lastRequestId=request['requestId'])
     if exporting:
@@ -422,6 +443,9 @@ class ReplayOwner:
     return media_descriptor(web_media_dir(directory.name), request['epoch'], request['sequence'], count)
 
   def _stop(self, reason):
+    self.timeline_identity = None
+    self.timeline_checked = True
+    self.status['timelineState'] = 'unavailable'
     if self.worker is not None:
       self.cancel.set()
       self.status.update(state='stopping', errorCode=None if reason == 'stopped' else reason,
@@ -489,6 +513,15 @@ class ReplayOwner:
           segments and (len(segments) != len(ranges) or len({item[0] for item in segments}) != len(segments))):
         raise Rejected('worker_failed')
       self.status['segmentRanges'] = segments
+      if not self.timeline_checked:
+        phase = value.get('timelineState', 'unavailable')
+        self.status['timelineState'] = phase if phase in ('loading', 'ready', 'unavailable') else 'unavailable'
+        if phase == 'ready':
+          self.timeline_checked = True
+          try:
+            self.timeline_identity = file_identity(directory / 'cache/timeline.jsonl')
+          except (OSError, ValueError):
+            self.status['timelineState'] = 'unavailable'
       if self.status.get('purpose') == 'export':
         phase, progress = value.get('exportState'), value.get('exportProgress')
         if phase is not None:

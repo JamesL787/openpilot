@@ -10,6 +10,10 @@ print(json.dumps(dict(document=default_document(), defaults=default_document(), 
                      revision="native", editable=True, valid=True, activeProfile="large", supportedProfiles=["large"])))
 `], { encoding: "utf8" }))
 assert.equal(validSnapshot(data), true)
+for (const version of [9, 11]) {
+  assert.equal(validSnapshot({ ...data, document: { ...data.document, version } }), false)
+  assert.equal(validSnapshot({ ...data, defaults: { ...data.defaults, version } }), false)
+}
 const vm = { ...OnroadLayoutPage.setup({ mode: "local", unauthorized() {} }), $emit() {}, $refs: {} }
 for (const [key, getter] of Object.entries(OnroadLayoutPage.computed)) Object.defineProperty(vm, key, { get: () => getter.call(vm) })
 for (const [key, method] of Object.entries(OnroadLayoutPage.methods)) vm[key] = method.bind(vm)

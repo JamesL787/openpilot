@@ -27,7 +27,7 @@ def test_sdsu_factory_changes_only_owned_hardware_fields(candidate):
 
 
 @pytest.mark.parametrize('candidate',MODELS)
-@pytest.mark.parametrize('bad',['length','wrong_bus','pedal_mix','radar_filter_mix','camera_bypass_mix','unknown_firmware'])
+@pytest.mark.parametrize('bad',['length','wrong_bus','pedal_mix','radar_filter_mix','malformed_camera_copy','unknown_firmware'])
 def test_sdsu_rejects_unqualified_topologies(candidate,bad):
   fp=gen_empty_fingerprint()
   fp[0][0x2FF]=8
@@ -40,8 +40,8 @@ def test_sdsu_rejects_unqualified_topologies(candidate,bad):
     fp[0][0x201]=6
   elif bad=='radar_filter_mix':
     fp[0][0x2AA]=8
-  elif bad=='camera_bypass_mix':
-    fp[2][0x343]=8
+  elif bad=='malformed_camera_copy':
+    fp[2][0x343]=7
   elif bad=='unknown_firmware':
     fw=[]
   assert not hardware_supported(candidate,fp,fw)

@@ -71,6 +71,9 @@ def rollout(*, seed, gain=5., noise_sd=.008, correlation=.65, demand_change=Fals
   noise = 0.
   attempts = []
   decisions = []
+  confirmed_steps = []
+  interrupted_ids = set()
+  last_interrupt_ns = None
   rolled_back = set()
   scores = []
   for index in range(1, 151):
@@ -88,6 +91,8 @@ def rollout(*, seed, gain=5., noise_sd=.008, correlation=.65, demand_change=Fals
     scores.append(score)
     row = _episode(owner, index, now, profile, goal, score, speed)
     if active and interrupt_every and index % interrupt_every == 0:
+      interrupted_ids.update(item.episode_id for item in (*owner.before, *owner.future, row))
+      last_interrupt_ns = now
       owner.interrupt('numerical_driver_override')
       interruptions += 1
     else:
@@ -105,6 +110,25 @@ def rollout(*, seed, gain=5., noise_sd=.008, correlation=.65, demand_change=Fals
       # simulated receipt time, never a claim of actual owner application.
       _ack(owner, offer, now+NS)
     elif offer.phase == 'confirmed' and not owner.offer_state.get('accepted', False):
+      state = owner.offer_state
+      baseline_coordinate, target_coordinate = state['baseline'][HOOK], state['target'][HOOK]
+      confirmed_steps.append({
+        'baseline_coordinate': baseline_coordinate, 'target_coordinate': target_coordinate,
+        'baseline_full30': tuple((name, state['baseline'][name]) for name in NAMES),
+        'target_full30': tuple((name, state['target'][name]) for name in NAMES),
+        'baseline_expected_error': max(.025, .35-gain*round(baseline_coordinate/.0001)*.0001),
+        'target_expected_error': max(.025, .35-gain*round(target_coordinate/.0001)*.0001),
+        'before_scores': tuple(item.error_rms/item.goal_rms for item in owner.before),
+        'future_scores': tuple(item.error_rms/item.goal_rms for item in owner.future),
+        'before_ids': tuple(item.episode_id for item in owner.before),
+        'future_ids': tuple(item.episode_id for item in owner.future),
+        'before_start_ns': tuple(item.start_ns for item in owner.before),
+        'future_start_ns': tuple(item.start_ns for item in owner.future),
+        'interrupted_ids': tuple(sorted(interrupted_ids)), 'last_interrupt_ns': last_interrupt_ns,
+        'started_ns': state['started_ns'], 'settled_ns': owner.settled_ns, 'lag_ns': owner.lag_ns,
+        'target_sequence': state['target_sequence'], 'alpha': state['alpha'],
+        'required_episodes': state['required_episodes'], 'look_quotas': state['look_quotas'],
+      })
       decisions.append({'seconds': now/NS, 'phase': offer.phase, 'reason': owner.reason,
         'future_count': len(owner.future), 'elapsed_seconds': (now-offer.started_ns)/NS})
       _ack(owner, offer, now+10_000_000)
@@ -119,10 +143,35 @@ def rollout(*, seed, gain=5., noise_sd=.008, correlation=.65, demand_change=Fals
   result = {'seed': seed, 'seconds': 1200, 'first_trial_seconds': first_trial,
     'first_confirmation_seconds': first_confirmation, 'confirmations': confirmations,
     'rollbacks': rollbacks, 'interruptions': interruptions, 'attempts': attempts, 'decisions': decisions,
+    'confirmed_steps': confirmed_steps,
     'accepted_coordinate': owner.accepted[HOOK], 'initial_expected_normalized_error': .35,
     'final_expected_normalized_error': max(.025, .35-gain*round(owner.accepted[HOOK]/.0001)*.0001),
     'last_10_episode_mean_normalized_error': sum(scores[-10:])/10}
   return result
+
+
+def wrong_causal_corrections(result):
+  # The declared plant can have either sign. A beneficial reversal is not a
+  # false acceptance; a null-gain confirmation remains a false acceptance.
+  return [step for step in result['confirmed_steps']
+    if not step['target_expected_error'] < step['baseline_expected_error']]
+
+
+def assert_causal_confirmations(result):
+  steps = result['confirmed_steps']
+  assert result['confirmations'] == len(steps), result
+  assert not wrong_causal_corrections(result), result
+  for step in steps:
+    baseline, target = dict(step['baseline_full30']), dict(step['target_full30'])
+    assert tuple(baseline) == tuple(target) == NAMES, step
+    assert {name for name in NAMES if baseline[name] != target[name]} == {HOOK}, step
+    assert statistics.mean(step['future_scores']) < statistics.mean(step['before_scores']), step
+    assert set(step['before_ids']).isdisjoint(step['future_ids']), step
+    assert (set(step['before_ids']) | set(step['future_ids'])).isdisjoint(step['interrupted_ids']), step
+    assert len(step['future_ids']) == step['required_episodes'], step
+    assert step['required_episodes'] in step['look_quotas'], step
+    assert step['alpha'] == .05/(step['target_sequence']*(step['target_sequence']+1)), step
+    assert min(step['future_start_ns']) > step['settled_ns']+step['lag_ns'], step
 
 
 def test_student_critical_matches_independent_published_reference_values():
@@ -173,13 +222,25 @@ def test_subtle_proportional_demand_change_below_score_floor_never_confirms():
 def test_repeated_noisy_adverse_trials_revert_without_accumulating_wrong_correction():
   result = rollout(seed=20261020, gain=-5.)
   assert len(result['attempts']) >= 3 and result['rollbacks'] >= 3, result
-  assert result['confirmations'] == 0 and result['accepted_coordinate'] == 0., result
+  assert result['confirmed_steps'], result  # Exercise actual beneficial reversal, never a vacuous no-trial pass.
+  assert_causal_confirmations(result)
+  assert result['accepted_coordinate'] < 0., result
+  assert result['final_expected_normalized_error'] < result['initial_expected_normalized_error'], result
 
 
 def test_driver_interruptions_do_not_prevent_later_independent_useful_trials():
   result = rollout(seed=20261021, interrupt_every=11)
   assert result['interruptions'] >= 1 and result['rollbacks'] >= 1, result
-  assert result['confirmations'] >= 2 and result['accepted_coordinate'] > 0., result
+  # The shipped stricter independent quotas leave only one completed correction
+  # in this unchanged20min/88s-interruption case. Prove causal recovery and
+  # spent-alpha/fresh-row boundaries instead of an obsolete correction count.
+  assert result['confirmed_steps'] and result['accepted_coordinate'] > 0., result
+  assert_causal_confirmations(result)
+  for step in result['confirmed_steps']:
+    assert step['last_interrupt_ns'] is not None, step
+    assert step['started_ns'] > step['last_interrupt_ns'], step
+    assert min(step['before_start_ns']) > step['last_interrupt_ns'], step
+  assert result['final_expected_normalized_error'] < result['initial_expected_normalized_error'], result
 
 
 def test_correlated_null_seed_sweep_reports_family_false_acceptances():

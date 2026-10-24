@@ -26,7 +26,8 @@ def test_actual_isolated_lag_keeps_only_existing_card_intent(full_op, gas, order
       axis, state, command = drive(2, gas=gas, native_request_long=full_op)
     # Already engaged ordinary axes follow the normal SOFT countdown with
     # fresh inputs/native grants; independent AOL still withdraws commands.
-    assert str(axis.faultReason) == ('none' if full_op else 'critical')
+    assert str(axis.faultReason) == ('none' if full_op else 'availabilityPause')
+    assert sd.aol_published_fault_proof is None
     assert axis.lateralActive == axis.longitudinalActive == full_op
     assert command.latActive == command.longActive == full_op
     assert axis.desiredLateral == axis.desiredLongitudinal == axis.nativeAcknowledged == full_op
@@ -41,13 +42,16 @@ def test_actual_isolated_lag_keeps_only_existing_card_intent(full_op, gas, order
     assert proof.aolAxisState.faultEventMonoTime == event.logMonoTime
     deliveries = [{'axis': proof}, {'event': event}] if order == 'axis_first' else \
                  [{'event': event}, {'axis': proof}] if order == 'event_first' else [{'axis': proof, 'event': event}]
-    # Independent critical joins retain only intent under the fixed join.
+    # Independent warning joins retain only intent under the fixed join.
     # Ordinary fresh proofs retain their actual current acknowledged axes.
     for index, delivery in enumerate(deliveries):
       latched = receive(10_020_000_000 + index * 100_000, **delivery)
       if not full_op and order == 'axis_first' and index == 0:
         assert feedback.pending_event == proof.aolAxisState.faultEventMonoTime
         assert feedback.awaiting
+        anchor = feedback.pending_event
+        assert receive(10_020_050_000, axis=proof)
+        assert feedback.pending_event == anchor and proof.aolAxisState.validUntilMonoTime == 10_050_000_000
       assert latched and not feedback.failed
     observed = (feedback.lateral_baseline_ns, feedback.lateral_source_ns,
                 feedback.lateral_native_ns, feedback.healthy_feedback_ns, feedback.healthy_native_ns)
@@ -122,8 +126,14 @@ def test_temporary_lag_never_masks_real_fault_or_invalid_proof(fault):
       card.aol_card_intent.settings = replace(card.aol_card_intent.settings, enabled=False)
     now = 10_020_000_000 if fault != 'axis_deadline' else 10_050_000_001
     assert not command.latActive and not command.longActive
-    assert not receive(now, axis=proof.as_reader(), event=event.as_reader(), state=state)
-    assert not card.aol_card_intent.allowed_latch
+    retained = receive(now, axis=proof.as_reader(), event=event.as_reader(), state=state)
+    soft_only = fault in ('process_failure', 'overheat')
+    assert retained == soft_only and card.aol_card_intent.allowed_latch == soft_only
+    if soft_only:
+      assert str(proof.aolAxisState.faultReason) == 'availabilityPause'
+      assert not axis.lateralActive and not axis.longitudinalActive and not axis.nativeAcknowledged
+      assert not sd.aol_authority_lost and sd.aol_published_fault_proof is None
+      assert card.aol_transport_feedback.ordinary_warning_qualified
 
 
 def test_persistent_lag_keeps_latch_but_ordinary_countdown_still_disables():
@@ -144,7 +154,8 @@ def test_persistent_lag_keeps_latch_but_ordinary_countdown_still_disables():
         ordinary_active = tick < 302
         assert state.enabled == state.active == ordinary_active
         assert sd.state_machine.soft_disable_timer == max(0, 302 - tick)
-        assert str(axis.faultReason) == ('none' if ordinary_active else 'critical')
+        assert str(axis.faultReason) == ('none' if ordinary_active else 'availabilityPause')
+        assert sd.aol_published_fault_proof is None
         assert axis.desiredLateral == axis.desiredLongitudinal == axis.nativeAcknowledged == ordinary_active
         assert axis.lateralActive == command.latActive == ordinary_active
         # LONG never activates: this fixture deliberately keeps native's
@@ -194,7 +205,8 @@ def test_persistent_lag_does_not_mask_native_controls_mismatch():
     assert not card.aol_card_intent.allowed_latch
 
 
-@pytest.mark.parametrize('failure', ['missing_event', 'hard_event', 'wrong_event', 'session', 'inventory'])
+@pytest.mark.parametrize('failure', ['missing_event', 'hard_event', 'wrong_event', 'session', 'inventory',
+                                     'producer', 'epoch', 'source_stale', 'new_occurrence'])
 def test_axis_first_critical_join_never_masks_missing_or_hard_occurrence(failure):
   case = fixture.IoniqAvailabilityTests(methodName='runTest')
   with ExitStack() as cleanup:
@@ -204,6 +216,8 @@ def test_axis_first_critical_join_never_masks_missing_or_hard_occurrence(failure
     with mock.patch.object(type(sd.rk), 'lagging', new_callable=mock.PropertyMock, return_value=True):
       axis, _, command = drive(2, native_request_long=False)
     proof = sd.pm.messages['aolAxisState'].as_builder()
+    assert str(proof.aolAxisState.faultReason) == 'availabilityPause'
+    assert sd.aol_published_fault_proof is None
     assert receive(10_020_000_000, axis=proof.as_reader())
     anchor = card.aol_transport_feedback.pending_event
     assert anchor == proof.aolAxisState.faultEventMonoTime
@@ -223,6 +237,16 @@ def test_axis_first_critical_join_never_masks_missing_or_hard_occurrence(failure
       delivery = {'event': event.as_reader()}
     elif failure == 'session':
       proof.aolAxisState.sessionId = proof.aolAxisState.faultSessionId = 'other-session'
+      delivery = {'axis': proof.as_reader(), 'event': event.as_reader()}
+    elif failure in ('producer', 'epoch', 'source_stale', 'new_occurrence'):
+      if failure == 'producer':
+        proof.aolAxisState.intentProducerSessionId = 'other-card'
+      elif failure == 'epoch':
+        proof.aolAxisState.intentIntegrityEpoch += 1
+      elif failure == 'source_stale':
+        proof.aolAxisState.sourceCarStateMonoTime -= 30_000_001
+      else:
+        proof.aolAxisState.faultEventMonoTime += 1
       delivery = {'axis': proof.as_reader(), 'event': event.as_reader()}
     else:
       from dataclasses import replace

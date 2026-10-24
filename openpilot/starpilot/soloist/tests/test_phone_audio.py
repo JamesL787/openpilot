@@ -16,7 +16,9 @@ class Phone:
   def __init__(self): self.paused, self.controls = [], []
   def powered(self): return self.on
   def ready(self, address, now): return self.connected
-  def control(self, address, action): self.controls.append((address, action))
+  def control(self, address, action):
+    self.controls.append((address, action))
+    return 'pause' if action == 'play_pause' else action
   def close(self): pass
 
 
@@ -180,6 +182,18 @@ def test_phone_connects_only_paired_selected_audio_source_and_pauses_its_player(
   assert phone.client.calls == [(path, DEVICE, 'ConnectProfile', 's', (phone_audio.A2DP_SOURCE,))]
   phone.ready(PHONE, 101)
   assert len(phone.client.calls) == 1
+  transport_path = path + '/fd0'
+  for state in ('pending', 'active'):
+    objects[transport_path] = {phone_audio.MEDIA_TRANSPORT: {'Device': path, 'State': state}}
+    assert phone.ready(PHONE, 200)
+    assert len(phone.client.calls) == 1
+  # Another device's stream must not suppress recovery of this phone's A2DP.
+  objects[transport_path][phone_audio.MEDIA_TRANSPORT]['Device'] = '/other'
+  assert phone.ready(PHONE, 200)
+  assert len(phone.client.calls) == 2
+  del objects[transport_path]
+  assert phone.ready(PHONE, 221)  # transport disappeared: normal retry resumes
+  assert len(phone.client.calls) == 3
   phone.pause(PHONE)
   assert phone.client.calls[-1] == (path + '/player0', phone_audio.MEDIA_PLAYER, 'Pause')
   phone.control(PHONE, 'next')
@@ -233,6 +247,80 @@ def test_relay_closes_capture_and_output_on_disconnect_or_bad_audio(tmp_path, mo
   assert closed == ['capture', 'output']
   assert calls[0][0][0] == '/usr/bin/arecord'
   assert calls[0][1]['env']['ALSA_CONFIG_PATH'] == str(tmp_path / 'alsa.conf')
+
+
+def test_car_controls_flush_queued_phone_audio_only_for_pause_and_skip(music, monkeypatch):
+  import signal
+  sup, now, processes, profiles, stopped = music
+  sup.tick()
+  player = next(p for p in processes if 'phone_audio' in ' '.join(p.argv))
+  sent = []
+  monkeypatch.setattr(supervisor.os, 'kill', lambda pid, sig: sent.append((pid, sig)))
+  for action in ('play', 'pause', 'next', 'previous', 'play_pause'):
+    assert sup.handle({'command': 'control', 'action': action, 'args': {}})['ok']
+  assert sent == [(player.pid, signal.SIGUSR1), (player.pid, signal.SIGUSR2), (player.pid, signal.SIGUSR2),
+                  (player.pid, signal.SIGUSR1)]
+  player.code = 1  # a dead worker is never signaled
+  sent.clear()
+  assert sup.handle({'command': 'control', 'action': 'pause', 'args': {}})['ok']
+  assert sent == []
+
+
+def test_relay_flushes_and_mutes_phone_audio_after_a_flush_request(tmp_path, monkeypatch):
+  import io
+  events = []
+  def chunk(n):
+    return bytes([n]) * 3840
+  class Capture:
+    returncode = 0
+    stdout = io.BytesIO(b''.join(chunk(n) for n in range(1, 7)))
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def terminate(self): pass
+    def wait(self, timeout): return 0
+  class Writer:
+    def __init__(self, server): pass
+    def write(self, data): events.append(('write', data[0]))
+    def flush(self): events.append(('flush',))
+    def close(self): pass
+  clock = [100.0]
+  real_read = Capture.stdout.read
+  def read(n):
+    data = real_read(n)
+    clock[0] += 0.1  # 100 ms per chunk
+    if data and data[0] == 3:
+      phone_audio.request_flush('skip')  # the car pressed next while chunk 3 was in flight
+    return data
+  monkeypatch.setattr(Capture.stdout, 'read', read)
+  monkeypatch.setattr(phone_audio, 'PulseWriter', Writer)
+  monkeypatch.setattr(phone_audio.subprocess, 'Popen', lambda *a, **k: Capture())
+  monkeypatch.setattr(phone_audio.time, 'monotonic', lambda: clock[0])
+  phone_audio.FlushRequest.kind = None
+  monkeypatch.setenv('STARPILOT_SOLOIST_CONFIG', str(tmp_path / 'missing.json'))
+  phone_audio.relay(PHONE, 'unix:/private/socket', tmp_path / 'alsa.conf')
+  # Chunks 1-2 play. The request arrives with chunk 3: flush, then 3-5 fall inside the 250 ms mute and 6 plays.
+  assert events == [('write', 1), ('write', 2), ('flush',), ('write', 6)]
+
+
+def test_mute_windows_start_at_defaults_and_follow_the_tuning_file(tmp_path):
+  path = tmp_path / 'tuning.json'
+  assert phone_audio.mute_seconds('pause', path) == 0.5 and phone_audio.mute_seconds('skip', path) == 0.25
+  path.write_text('{"pause_mute": 0.1, "skip_mute": 0}')
+  assert phone_audio.mute_seconds('pause', path) == 0.1 and phone_audio.mute_seconds('skip', path) == 0.0
+  for bad in ('not json', '{"pause_mute": "x"}', '{"pause_mute": -1}', '{"pause_mute": 99}', '[]'):
+    path.write_text(bad)
+    assert phone_audio.mute_seconds('pause', path) == 0.5
+  path.write_text('{"pause_mute": 2}')
+  assert phone_audio.mute_seconds('pause', path) == 0.5  # above the 1.5 s ceiling
+
+
+def test_pause_flush_request_outranks_a_skip():
+  phone_audio.FlushRequest.kind = None
+  phone_audio.request_flush('skip')
+  phone_audio.request_flush('pause')
+  phone_audio.request_flush('skip')
+  assert phone_audio.FlushRequest.kind == 'pause'
+  phone_audio.FlushRequest.kind = None
 
 
 def test_profile_upgrades_a_legacy_override_to_raise_bluealsa_priority(tmp_path):

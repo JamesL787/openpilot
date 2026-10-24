@@ -81,7 +81,8 @@ class TestFordAngleStartup(unittest.TestCase):
     for key in ("SafeMode", "AlwaysOnLateral"):
       for raw in (b"1", b"", b"false", b"0\n"):
         self.helper.raw(key, raw)
-        self.assertEqual(VehicleStartupPreferences.read(self.params, enabled=True).ford_lateral_mode, 0)
+        self.assertEqual(VehicleStartupPreferences.read(self.params, enabled=True).ford_lateral_mode,
+                         int(key == "AlwaysOnLateral" and raw == b"1"))
       self.helper.raw(key, b"0")
     self.assertEqual(VehicleStartupPreferences.read(self.params, enabled=False).ford_lateral_mode, 0)
 
@@ -117,7 +118,7 @@ class TestFordAngleStartup(unittest.TestCase):
             observed[0][0x5A] = 8
             observed[2].update({0x3D6: 8, 0x186: 8})
             cp = CarInterface.get_params(identity, observed, [], alpha, release, False)
-            long = alpha and (identity not in CANFD or not release)
+            long = alpha
             self.assertEqual(cp.openpilotLongitudinalControl, long)
             self.assertTrue(cp.pcmCruise)
             self.assertEqual(cp.alternativeExperience, 0)
@@ -237,6 +238,8 @@ class TestFordAngleJoined(unittest.TestCase):
               def bind(host, selected, baseline, providers, sent, validity):
                 providers.clear()
                 providers.append(host.CI.CC.bp_lat.host.inputs if selected else host.CI.CC.manual_turn_inputs)
+                if selected and host.CI.CC.manual_turn_inputs is not None:
+                  providers.append(host.CI.CC.manual_turn_inputs)
                 if baseline is not None:
                   providers.append(baseline.manual_turn_inputs)
                 for owner in providers:

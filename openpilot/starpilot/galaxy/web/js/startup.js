@@ -1,5 +1,6 @@
 export async function requestJson(url, { fetcher = (...args) => fetch(...args), timeout = 8000,
   later = (fn, ms) => setTimeout(fn, ms), cancel = id => clearTimeout(id), request = {}, withResponse = false } = {}) {
+  if (globalThis.StarPilotApp?.bluetooth?.()) timeout = Math.max(timeout, 120000)
   const controller = new AbortController()
   let timer
   let rejectCanceled
@@ -31,16 +32,21 @@ export async function requestJson(url, { fetcher = (...args) => fetch(...args), 
   }
 }
 
+const validTool = (tool, root = false) => typeof tool?.path === "string" && tool.path.startsWith("/") &&
+  typeof tool.name === "string" && typeof tool.icon === "string" && typeof tool.description === "string" &&
+  (root ? ["always", "partial-preview", "local-only", "unavailable"].includes(tool.availability) :
+    tool.availability === undefined || ["always", "partial-preview", "local-only", "unavailable"].includes(tool.availability)) &&
+  (tool.visibility === undefined || tool.visibility === "authenticated") &&
+  (tool.tab === undefined || typeof tool.tab === "string") &&
+  (tool.sampleDescription === undefined || typeof tool.sampleDescription === "string") &&
+  (tool.children === undefined || Array.isArray(tool.children) && tool.children.every(child => validTool(child)))
+
 export async function loadCatalog(options) {
   const [catalog, runtime] = await Promise.all([
     requestJson("./data/catalog.json", options), requestJson("./data/runtime.json", options),
   ])
   if (runtime?.schemaVersion !== 1 || !["sample", "local"].includes(runtime.monitor)) throw new Error("Invalid Galaxy runtime")
-  if (catalog?.mode !== "offline-preview" || !Array.isArray(catalog.tools) || catalog.tools.some(tool =>
-    typeof tool?.path !== "string" || !tool.path.startsWith("/") || typeof tool.name !== "string" ||
-    !["always", "partial-preview", "local-only", "unavailable"].includes(tool.availability) ||
-    typeof tool.icon !== "string" || typeof tool.description !== "string" ||
-    (tool.visibility !== undefined && tool.visibility !== "authenticated"))) {
+  if (catalog?.mode !== "offline-preview" || !Array.isArray(catalog.tools) || !catalog.tools.every(tool => validTool(tool, true))) {
     throw new Error("Invalid Galaxy catalog")
   }
   return { tools: catalog.tools.slice().sort((a, b) => a.name.localeCompare(b.name)), mode: runtime.monitor,

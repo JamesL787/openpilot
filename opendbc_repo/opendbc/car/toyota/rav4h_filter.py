@@ -15,7 +15,7 @@ def hardware_supported(candidate, fingerprint, car_fw):
   if (candidate not in EPS5_SDSU_CARS or fingerprint.get(0, {}).get(0x2FF) != 8 or
       any(0x2FF in messages and (bus != 2 or messages[0x2FF] != 8) for bus, messages in fingerprint.items() if bus != 0) or
       any(address in messages for messages in fingerprint.values() for address in (0x201, 0x2AA)) or
-      any(address in fingerprint.get(2, {}) for address in (0x343, 0x4CB))):
+      any(fingerprint.get(2, {}).get(address, 8) != 8 for address in (0x343, 0x4CB))):
     return False
   from opendbc.car.toyota.fingerprints import FW_VERSIONS
   expected = FW_VERSIONS[candidate]
@@ -34,8 +34,10 @@ def hardware_supported(candidate, fingerprint, car_fw):
 
 
 def configured(cp):
-  from opendbc.car.toyota import eps8_sdsu
-  if eps8_sdsu.configured(cp):
+  from opendbc.car.toyota.pedal_composite import parent_cp
+  cp = parent_cp(cp)
+  from opendbc.car.toyota import eps8_sdsu, legacy_sdsu
+  if legacy_sdsu.configured(cp) or eps8_sdsu.configured(cp):
     return True
   if (cp is None or cp.brand != "toyota" or cp.carFingerprint not in EPS5_SDSU_CARS or
       not cp.pcmCruise or cp.dashcamOnly or cp.notCar or cp.passive or
@@ -61,8 +63,11 @@ def enabled(cp):
 
 
 def prepare_stock(cp):
-  from opendbc.car.toyota import eps8_sdsu
-  if eps8_sdsu.prepare_stock(cp):
+  from opendbc.car.toyota import pedal_composite
+  if pedal_composite.marked(cp):
+    return pedal_composite.prepare_stock(cp)
+  from opendbc.car.toyota import eps8_sdsu, legacy_sdsu
+  if legacy_sdsu.prepare_stock(cp) or eps8_sdsu.prepare_stock(cp):
     return True
   if not configured(cp):
     return False

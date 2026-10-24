@@ -378,6 +378,10 @@ class CarInterface(CarInterfaceBase):
     return ret
 
   def update(self, can_packets):
+    recovery = getattr(getattr(self, 'CC', None), 'angle_tx_recovery', None)
+    if recovery is not None:
+      can_packets = list(can_packets)
+      recovery.observe(can_packets, self.CC.frame)
     if (self.CS.pe_ready is not None or self.CS.gv70_camera_lead is not None or self.CS.ev9_camera_lead is not None or
         self.CS.ioniq6_camera_lead is not None or self.CS.torque_ev_camera_lead is not None or self.CS.forte_lkas_sources is not None):
       # This isolated optional parser must never join required controls health.

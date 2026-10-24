@@ -1032,13 +1032,16 @@ class TestBoltPaddleModes(unittest.TestCase):
     for candidate in PEDAL_BOLT_CAR:
       with self.subTest(candidate=candidate), OpenpilotPrefix(), patch.dict(os.environ, {'SIMULATION': '1'}):
         settings = Params()
+        settings.put_bool('AlwaysOnLateral', False, block=True)
         card = TestGmAol.card(params(candidate, pedal=True, camera=True), settings)
         ci, cp = card.CI, card.CP
         self.assertIsNotNone(ci.CC.maneuver_paddle_input)
         packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
         safety = libsafety_py.libsafety
-        self.assertEqual(safety.set_safety_hooks(cp.safetyConfigs[0].safetyModel.raw, cp.safetyConfigs[0].safetyParam), 0)
+        # This ordinary pedal test must not inherit the previous test's AOL policy.
         safety.init_tests()
+        safety.set_alternative_experience(cp.alternativeExperience)
+        self.assertEqual(safety.set_safety_hooks(cp.safetyConfigs[0].safetyModel.raw, cp.safetyConfigs[0].safetyParam), 0)
         recorder = TestGmBoltPedalSafety()
         recorder.safety = safety
         control = structs.CarControl()

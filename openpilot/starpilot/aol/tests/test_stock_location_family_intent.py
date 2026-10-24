@@ -93,7 +93,7 @@ def test_existing_stock_hkg_location_and_nominal_pcm_off_keep_established_intent
 @pytest.mark.parametrize('family', ['canfd_radar', 'canfd_lka', 'canfd_lka_alt', 'canfd_camera', 'canfd_ccnc_camera'])
 @pytest.mark.parametrize('fault', ['native_denial', 'native_invalid', 'panda_rx', 'relay', 'permanent_eps',
   'invalid_can', 'can_timeout', 'door', 'seatbelt', 'brake', 'regen', 'gas', 'physical_cancel', 'reverse', 'unknown_gear',
-  'extra_user', 'hard_event', 'epoch', 'session', 'expired', 'future_source', 'no_baseline'])
+  'extra_user', 'hard_event', 'epoch', 'session', 'expired', 'future_source', 'no_baseline', 'configured_cancel'])
 def test_stock_location_never_retains_intent_through_independent_fault(family, fault):
   from opendbc.car import structs
 
@@ -134,7 +134,10 @@ def test_stock_location_never_retains_intent_through_independent_fault(family, f
     state.brakePressed = fault == 'brake'
     state.regenBraking = fault == 'regen'
     state.gasPressed = fault == 'gas'
-    if fault == 'physical_cancel':
+    if fault == 'configured_cancel':
+      from dataclasses import replace
+      card.aol_card_intent.settings = replace(card.aol_card_intent.settings, cancel_actions=(9, 0, 0))
+    if fault in ('physical_cancel', 'configured_cancel'):
       state.buttonEvents = [structs.CarState.ButtonEvent(type='cancel', pressed=True)]
     if fault in ('reverse', 'unknown_gear'):
       state.gearShifter = 'reverse' if fault == 'reverse' else 'unknown'
@@ -152,5 +155,16 @@ def test_stock_location_never_retains_intent_through_independent_fault(family, f
       proof.aolAxisState.sourceCarStateMonoTime = 10_060_000_000
     if fault == 'no_baseline':
       card.aol_transport_feedback.lateral_baseline_ns = 0
-    assert not receive(10_050_000_001, state=state, axis=proof.as_reader(), event=event.as_reader())
-    assert not card.aol_card_intent.allowed_latch
+    # A physical pause is independent of the location SOFT warning. Current
+    # native proof and zero host commands remain mandatory; unassigned CANCEL
+    # preserves intent, whereas the explicitly configured CANCEL still clears.
+    baseline = (card.aol_transport_feedback.lateral_baseline_ns, card.aol_transport_feedback.lateral_native_ns)
+    retained = receive(10_050_000_001, state=state, axis=proof.as_reader(), event=event.as_reader())
+    expected = fault in ('seatbelt', 'brake', 'regen', 'gas', 'physical_cancel')
+    assert retained == expected, fault
+    assert card.aol_card_intent.allowed_latch == expected
+    assert not axis.lateralActive and not axis.longitudinalActive
+    assert not command.latActive and not command.longActive
+    if expected:
+      assert baseline == (card.aol_transport_feedback.lateral_baseline_ns, card.aol_transport_feedback.lateral_native_ns)
+

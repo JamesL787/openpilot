@@ -17,6 +17,7 @@ from dataclasses import replace
 import numpy as np
 
 from opendbc.car import structs
+from opendbc.car.ford.aol import base_safety_param
 from opendbc.car.ford.values import CAR, FordFlags, FordSafetyFlags
 from opendbc.car.lateral import MAX_LATERAL_JERK
 from opendbc.car.ford.lateral_strategy import (
@@ -99,8 +100,6 @@ class MachELateralController(FordLateralController):
 
 
 def qualified(CP) -> bool:
-  if CP.alternativeExperience == 32 and len(CP.safetyConfigs) != 1:
-    return False
   if (CP.brand != "ford" or CP.carFingerprint != CAR.FORD_MUSTANG_MACH_E_MK1 or
       not CP.flags & FordFlags.CANFD or CP.flags & ~int(FordFlags.CANFD | FordFlags.HAS_BSM) or
       CP.passive or CP.dashcamOnly or CP.notCar or CP.alternativeExperience not in (0, 32) or
@@ -111,7 +110,7 @@ def qualified(CP) -> bool:
     return False
   safety = CP.safetyConfigs[-1]
   return (safety.safetyModel == structs.CarParams.SafetyModel.ford and
-          safety.safetyParam == int(FordSafetyFlags.CANFD | FordSafetyFlags.MACH_E_EXTENDED |
+          base_safety_param(CP) == int(FordSafetyFlags.CANFD | FordSafetyFlags.MACH_E_EXTENDED |
                                     (FordSafetyFlags.LONG_CONTROL if CP.openpilotLongitudinalControl else 0)))
 
 

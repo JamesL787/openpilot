@@ -4,6 +4,7 @@ Only pose rows are new retained state. Commands/encoders remain in the existing
 actual replay engine and emission recorder. Export does bounded work explicitly
 in the optional learner, never in Controls/Card. This is not fit qualification.
 """
+from openpilot.starpilot.flm.producer_clock_equivalence import clock_uncertainty_limit
 from dataclasses import asdict, dataclass
 import math
 
@@ -109,7 +110,7 @@ def validate_pose(row, now_ns):
         row.source_state_ns, row.native_apply_ns, row.left_state_ns, row.right_state_ns, row.observed_ns, row.completed_ns, now_ns)) or
       not 0 < row.mono_ns <= row.received_ns <= row.observed_ns <= row.completed_ns <= now_ns or now_ns - row.mono_ns > MAX_GAP_NS or
       type(row.clock_offset_ns) is not int or type(row.clock_uncertainty_ns) is not int or
-      not 0 <= row.clock_uncertainty_ns <= 1_000_000 or
+      not 0 <= row.clock_uncertainty_ns <= clock_uncertainty_limit(row.source_clock_domain) or
       row.source_timestamp_ns - row.clock_offset_ns != row.mono_ns or
       type(row.source_boot_ns) is not int or type(row.boot_mono_offset_ns) is not int or
       row.source_clock_domain not in ('monotonic', 'boottime', 'unknown-equivalent-at-receipt', 'mono_boot_equivalent_interval_v1') or

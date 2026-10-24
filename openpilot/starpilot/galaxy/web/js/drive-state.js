@@ -1,4 +1,5 @@
 import { GxNotice } from "./notice.js"
+import { beginSave, finishSave } from "./save-feedback.js"
 export const validDriveState = (value) => !!value && ["auto", "offroad", "onroad"].includes(value.mode) &&
   typeof value.available === "boolean" && typeof value.overrideAllowed === "boolean" &&
   (value.revision === null || typeof value.revision === "string" && /^[0-9a-f]{32}$/.test(value.revision)) &&
@@ -37,6 +38,7 @@ export const DriveStatePanel = {
     async change(mode) {
       if (this.busy || !this.state?.available) return
       if (!["onroad", "offroad", "auto"].includes(mode)) return
+      const feedback = beginSave()
       const revision = this.state.revision
       this.busy = true
       this.loading = false
@@ -50,8 +52,8 @@ export const DriveStatePanel = {
           signal: this.controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode, revision }) })
         const value = await response.json()
         if (!response.ok || !validDriveState(value)) throw new Error(value.error || "Drive state unavailable")
-        if (this.active && generation === this.generation) { this.state = value; this.error = "" }
-      } catch (error) { if (this.active && generation === this.generation) this.error = error.message }
+        if (this.active && generation === this.generation) { this.state = value; this.error = ""; finishSave(feedback, true) }
+      } catch (error) { if (this.active && generation === this.generation) this.error = error.message; finishSave(feedback, false) }
       finally { clearTimeout(deadline); this.busy = false; if (this.active && generation === this.generation) this.load() }
     },
   },

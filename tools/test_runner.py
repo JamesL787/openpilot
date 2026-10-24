@@ -13,6 +13,9 @@ import unittest
 import warnings
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from tools.ci import worker_diagnostics
+
 IGNORED = (
   ROOT / "openpilot/selfdrive/test/process_replay/test_processes.py",
   ROOT / "openpilot/tools/sim",
@@ -79,18 +82,22 @@ class Result(unittest.TestResult):
     self.capture = Capture(capture_output)
 
   def startTest(self, test):
+    worker_diagnostics.node_started(test.id())
     self.current = make_record(test.id())
     self.started = time.monotonic()
     self.capture.start()
 
   def stopTest(self, test):
-    self.current["time"] = time.monotonic() - self.started
-    keep = self.current["status"] in FAILURES
+    current = self.current
+    assert current is not None
+    current["time"] = time.monotonic() - self.started
+    keep = current["status"] in FAILURES
     stdout, stderr = self.capture.stop(keep)
     if keep:
-      self.current["stdout"] = stdout
-      self.current["stderr"] = stderr
-    self.records.append(self.current)
+      current["stdout"] = stdout
+      current["stderr"] = stderr
+    self.records.append(current)
+    worker_diagnostics.node_finished(current["id"], current["status"])
     self.current = None
 
   def mark(self, test, status, detail=""):
@@ -245,6 +252,7 @@ def account_for_tests(test_ids, records, tests=()):
 
 
 def run_batch(test_ids, capture_output):
+  worker_diagnostics.batch_started(test_ids)
   result = Result(capture_output)
   outside = Capture(capture_output)
   tests = []
@@ -267,18 +275,32 @@ def run_batch(test_ids, capture_output):
   if failures:  # attach class/module fixture output to the first related failure
     failures[0]["stdout"] = stdout + failures[0]["stdout"]
     failures[0]["stderr"] = stderr + failures[0]["stderr"]
+  worker_diagnostics.update(active_test=None, phase="batch_complete")
   return result.records
 
 
 def run_parallel(batches, workers, warning_action, capture_output):
-  with ProcessPoolExecutor(max_workers=workers, initializer=warnings.simplefilter, initargs=(warning_action,)) as pool:
+  failure_detail = None
+  with ProcessPoolExecutor(max_workers=workers, initializer=worker_diagnostics.initialize, initargs=(warning_action,)) as pool:
     futures = {pool.submit(run_batch, batch, capture_output): batch for batch in batches}
+    processes = tuple(pool._processes.values())
     for future in as_completed(futures):
       try:
         yield future.result()
       except Exception:
-        detail = traceback.format_exc()
+        detail = traceback.format_exc(chain=False)
+        failure_detail = detail
+        witness = worker_diagnostics.pool_failure(processes, detail)
+        if witness is not None:
+          detail = f"Worker batch failed; original exception and observed exits/current tests: {witness}"
         yield [make_record(test_id, "error", detail) for test_id in futures[future]]
+  if failure_detail is not None:
+    # Existing executor shutdown has joined the workers; no new wait is added.
+    # Keep the first failure/identities and fill only previously unknown exits.
+    try:
+      worker_diagnostics.pool_failure(processes, failure_detail)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+      print(f"Worker exit evidence refresh unavailable ({type(error).__name__})", file=sys.stderr)
 
 
 def report(records, errors, duration_count, elapsed):

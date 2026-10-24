@@ -492,12 +492,8 @@ class UnifiedLabel(Widget):
       self._cached_line_sizes,
       strict=True):
 
-      # Calculate height needed for this line
-      # Each line contributes its height * line_height (matching Label's behavior)
-      line_height_needed = size.y * self._line_height
-
-      # Check if this line fits
-      if current_height + line_height_needed > self._rect.height:
+      # The last glyph extends past the baseline spacing used between lines.
+      if current_height + size.y > self._rect.height:
         # This line doesn't fit
         if len(visible_lines) == 0:
           # First line doesn't fit by height - still show it (will be clipped by scissor if needed)
@@ -511,7 +507,7 @@ class UnifiedLabel(Widget):
       visible_lines.append(line)
       visible_sizes.append(size)
 
-      current_height += line_height_needed
+      current_height += size.y * self._line_height
 
     # If we broke early (there are more lines that don't fit) and elide is enabled, elide the last visible line
     if broke_early and len(visible_lines) > 0 and self._elide:

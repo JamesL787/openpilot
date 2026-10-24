@@ -1,14 +1,10 @@
-"""Runs the car renderer on core 6 at the lowest priority.
-Safeguards:
-- SCHED_IDLE, so camerad and the comma UI on core 6 always preempt it.
-- Core 6 again since 2026-10-14. On 2026-10-08 the comma UI took 65-75 % of it
-  and the renderer moved to core 7, but there it waited for a core 47 % of the
-  time behind modeld and dmonitoringmodeld (core 7 at 78 %). With the UI now
-  at 8-14 %, core 6 runs 16-24 % busy, and core 7 is left to the models and
-  Jetlink's frame loop.
-- Every renderer thread is placed, including ones the graphics driver starts later.
-- Parked, power saving turns cores 4-7 off. The pin is re-applied every
-  PLACEMENT_CHECK_INTERVAL seconds once core 6 is back, like selfdrive/ui/ui.py.
+"""Placement for projection rendering and transport.
+
+The renderer uses SCHED_IDLE on background cores 0-2: ordinary driving work
+always preempts it, and it cannot compete on the controls/model cores 3-7.
+Transport retains its existing normal scheduling on core 6. Every renderer
+thread inherits the idle policy; affinity is maintained for later driver threads
+and for CPU power-state changes.
 """
 
 from __future__ import annotations
@@ -17,7 +13,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-RENDER_CORE = 6
+RENDER_CORE = 6  # existing transport/default placement
+BACKGROUND_RENDER_CORES = (0, 1, 2)
 PLACEMENT_CHECK_INTERVAL = 1.0  # s
 FALLBACK_NICE = 10  # if SCHED_IDLE is unavailable
 
@@ -40,15 +37,18 @@ def _core_online(core: int) -> bool:
 
 
 class RendererPlacement:
-  """Keeps every thread of this process on RENDER_CORE while that core is online:
+  """Keeps every thread on the requested online core or core pool:
   SCHED_IDLE for the renderer, or normal scheduling (idle=False) for
   android_autod, whose stream thread otherwise sticks on whichever isolated
   core it first woke on (core 7, waiting ~32 % of the time behind the models)."""
 
-  def __init__(self, core: int = RENDER_CORE, report: Callable[[dict[str, Any]], None] | None = None,
+  def __init__(self, core: int | tuple[int, ...] = RENDER_CORE, report: Callable[[dict[str, Any]], None] | None = None,
                thread_ids: Callable[[], list[int]] = _thread_ids, core_online: Callable[[int], bool] = _core_online,
                idle: bool = True):
     self.core = core
+    self.cores = (core,) if isinstance(core, int) else core
+    if not self.cores or any(cpu < 0 for cpu in self.cores):
+      raise ValueError("Expected a nonempty pool of CPU indices")
     self.idle = idle
     self.report = report or (lambda _event: None)
     self.thread_ids = thread_ids
@@ -73,20 +73,21 @@ class RendererPlacement:
         os.nice(FALLBACK_NICE)
       except OSError:
         policy = "default"
-    self.report({"event": "cpu_placement", "policy": policy, "inherited_cores": inherited, "core": self.core})
+    target = {"core": self.core} if isinstance(self.core, int) else {"cores": list(self.cores)}
+    self.report({"event": "cpu_placement", "policy": policy, "inherited_cores": inherited, **target})
     self.maintain(0.0)
 
   def maintain(self, now: float) -> None:
     if now < self.next_check:
       return
     self.next_check = now + PLACEMENT_CHECK_INTERVAL
-    if not self.core_online(self.core):
+    target = {core for core in self.cores if self.core_online(core)}
+    if not target:
       if self.pinned:
         self.report({"event": "cpu_placement", "pinned": False, "reason": f"core {self.core} offline"})
       self.pinned = False
       return
 
-    target = {self.core}
     changed = False
     for tid in self.thread_ids():
       try:

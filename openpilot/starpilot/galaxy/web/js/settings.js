@@ -266,10 +266,8 @@ export const SettingsPage = {
     const feed = new SettingsFeed({ publish: (update) => Object.assign(state, update), unauthorized: props.unauthorized })
     return { state, feed, sections: SETTINGS_SECTIONS }
   },
-  data() { return { saveStatusVisible: false } },
   computed: {
     busy() { return settingsBusy(this.state) },
-    savingPreference() { return ["updating", "saving"].includes(this.state.status) },
     activeSection() {
       if (this.state.developerOpen) return this.sections.at(-1)
       const page = (this.state.data?.page || "hub").split("/")[0]
@@ -300,19 +298,6 @@ export const SettingsPage = {
     },
   },
   watch: {
-    savingPreference: {
-      flush: "sync",
-      handler(saving) {
-        clearTimeout(this._saveStatusTimer)
-        if (saving) {
-          this.saveStatusVisible = true
-          this._saveStatusUntil = performance.now() + 600
-        } else {
-          this._saveStatusTimer = setTimeout(() => { this.saveStatusVisible = false },
-            Math.max(0, this._saveStatusUntil - performance.now()))
-        }
-      },
-    },
     "state.pending"() { this.flushSoundChoices() },
     "state.status"(status, previous) {
       if (previous === "saving" && status === "ready") this.state.soundChoicesDirty = false
@@ -320,7 +305,7 @@ export const SettingsPage = {
     },
   },
   mounted() { if (this.mode === "local") this.feed.start(this.state.developerOpen ? "developer" : this.initialPage) },
-  beforeUnmount() { this.feed.stop(); clearTimeout(this._saveStatusTimer) },
+  beforeUnmount() { this.feed.stop() },
   methods: {
     open(page) {
       if (this.busy) return
@@ -423,7 +408,8 @@ export const SettingsPage = {
       <p class="gx-page-description" v-else-if="state.data?.page === 'torque'">Tune how StarPilot applies steering torque.</p>
       <p class="gx-page-description" v-else-if="state.data?.page === 'lane'">Choose lane-centering behavior and alerts.</p>
       <p class="gx-page-description" v-else-if="state.data?.page === 'curve'">Set how the vehicle slows for curves ahead.</p>
-      <p class="gx-page-description" v-else-if="state.data?.page === 'slc'">Control how speed limits change your set speed.</p>
+      <div v-else-if="state.data?.page === 'slc'"><p class="gx-page-description">Control how speed limits change your set speed.</p>
+        <a class="gx-btn gx-btn--tonal" href="https://wiki.firestar.link/exclusive/speed-limit-controller/#vision-speed-limits" target="_blank" rel="noopener noreferrer"><i class="bi bi-book" aria-hidden="true"></i> Vision speed limits guide</a></div>
       <p class="gx-page-description" v-else-if="state.data?.page === 'wheel'">Assign what the steering-wheel controls do.</p>
       <p class="gx-page-description" v-else-if="state.data?.page === 'data'">Choose what uploads when the vehicle uses mobile data.</p>
       <p class="gx-page-description" v-else-if="['aggressive','standard','relaxed'].includes(state.data?.page)">Adjust acceleration, braking and following for this driving style.</p>
@@ -432,11 +418,6 @@ export const SettingsPage = {
       <template v-else>
         <GxNotice v-if="state.data && state.data.vehicleIdentified === false" tone="info">Vehicle not identified yet. Turn on the car and wait for fingerprinting; vehicle-specific settings will then appear here.</GxNotice>
         <CloudProviderPage ref="cloudProvider" v-if="state.developerOpen" :mode="mode" :unauthorized="unauthorized" />
-        <Teleport to="body">
-          <p class="gx-settings__save-status gx-settings__save-status--animated"
-            :class="{ 'is-visible': saveStatusVisible }"
-            :aria-hidden="!saveStatusVisible" role="status">{{ savingPreference ? "Saving preferences…" : "Saved" }}</p>
-        </Teleport>
         <GxState v-if="state.status === 'loading'" loading>Reading your device’s saved preferences…</GxState>
         <GxNotice tone="danger" v-else-if="state.status === 'unavailable' && !state.error">The device could not read these preferences. Reconnecting automatically…</GxNotice>
         <GxNotice tone="danger" v-if="state.error">{{ state.error }}

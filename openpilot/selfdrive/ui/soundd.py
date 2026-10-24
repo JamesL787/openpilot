@@ -238,6 +238,8 @@ class Soundd:
 
   @retry(attempts=10, delay=3)
   def get_stream(self, sd):
+    self.audio_backend = "python"
+    self.audio_fallback_reason = "host" if PC else None
     # reload sounddevice to reinitialize portaudio
     sd._terminate()
     sd._initialize()
@@ -245,18 +247,20 @@ class Soundd:
       from openpilot.starpilot.audio.native_playback import NativePlayback
       try:
         playback = NativePlayback(self, sd)
-      except (OSError, AttributeError, ValueError, MemoryError):
-        pass
+      except (OSError, AttributeError, ValueError, MemoryError) as error:
+        self.audio_fallback_reason = "initialization:" + type(error).__name__
       else:
         try:
           stream = playback.stream()
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError) as error:
+          self.audio_fallback_reason = "stream:" + type(error).__name__
           playback.close()
         except BaseException:
           playback.close()
           raise
         else:
           self.native_audio = playback
+          self.audio_backend = "native"
           return stream
     return sd.OutputStream(channels=1, samplerate=SAMPLE_RATE, callback=self.callback, blocksize=SAMPLE_BUFFER)
 
@@ -270,7 +274,8 @@ class Soundd:
     with self.get_stream(sd) as stream:
       rk = Ratekeeper(20)
 
-      cloudlog.info(f"soundd stream started: {stream.samplerate=} {stream.channels=} {stream.dtype=} {stream.device=}, {stream.blocksize=}, {stream.latency=}")
+      cloudlog.info(f"soundd stream started: {stream.samplerate=} {stream.channels=} {stream.dtype=} {stream.device=}, " +
+                   f"{stream.blocksize=}, {stream.latency=}, backend={self.audio_backend}, fallback={self.audio_fallback_reason}")
       while True:
         sm.update(0)
         if self.native_audio is not None:

@@ -19,14 +19,15 @@ VIN = '3FMTK1SS0MMA00001'
 
 class FordEcus:
   """Transport only: the real ISO-TP layer assembles VIN and firmware replies."""
-  def __init__(self, *, firmware=None, vin=VIN, background=None):
+  def __init__(self, *, firmware=None, vin=VIN, background=None, offset=0):
+    self.offset = offset
     self.clock = 100.
     self.vin = vin
     self.versions = firmware if firmware is not None else {(0x706, b'\x22\xf1\x88'): b'RJ6T-14H102-BAE',
       (0x730, b'\x22\xf1\x88'): b'LJ9C-14D003-GA', (0x760, b'\x22\xf1\x88'): b'LK9C-2D053-CN',
       (0x7E0, b'\x22\xf1\x88'): b'MJ98-14C204-BYG'}
-    self.background = background or [CanData(0x5A, bytes(8), 0), CanData(0x3D6, bytes(8), 2),
-                                     CanData(0x186, bytes(8), 2)]
+    self.background = background or [CanData(0x5A, bytes(8), offset), CanData(0x3D6, bytes(8), offset + 2),
+                                     CanData(0x186, bytes(8), offset + 2)]
     self.queued = []
     self.pending = {}
     self.mux_calls = []
@@ -39,30 +40,29 @@ class FordEcus:
     self.mux_calls.append(enabled)
     assert not enabled, 'Ford discovery switched CAN2 onto the OBD network'
 
-  def reply(self, address, payload):
+  def reply(self, address, payload, *, bus=None):
+    bus = self.offset if bus is None else bus
     if len(payload) < 8:
       frames = [bytes([len(payload)]) + payload]
     else:
       frames = [bytes([0x10 | (len(payload) >> 8), len(payload) & 0xFF]) + payload[:6]]
       frames += [bytes([0x20 | (index & 15)]) + payload[offset:offset + 7]
                  for index, offset in enumerate(range(6, len(payload), 7), 1)]
-    self.queued.append(CanData(address + 8, frames[0].ljust(8, b'\0'), 0))
-    self.pending[address] = [CanData(address + 8, data.ljust(8, b'\0'), 0) for data in frames[1:]]
+    self.queued.append(CanData(address + 8, frames[0].ljust(8, b'\0'), bus))
+    self.pending[address, bus] = [CanData(address + 8, data.ljust(8, b'\0'), bus) for data in frames[1:]]
 
   def send(self, frames):
     self.sent.extend(frames)
     for address, data, bus in frames:
-      if bus != 0:
-        continue
       if data[0] >> 4 == 3:
-        self.queued.extend(self.pending.pop(address, []))
+        self.queued.extend(self.pending.pop((address, bus), []))
       elif data[0] >> 4 == 0:
         request = bytes(data[1:1 + data[0]])
-        if address == 0x7DF and request == b'\x22\xf1\x90':
-          self.reply(0x7E0, b'\x62\xf1\x90' + self.vin.encode())
-        elif request == b'\x3e\x00' and any(tx == address for tx, _ in self.versions):
+        if bus == 0 and address == 0x7DF and request == b'\x22\xf1\x90':
+          self.reply(0x7E0, b'\x62\xf1\x90' + self.vin.encode(), bus=0)
+        elif bus == self.offset and request == b'\x3e\x00' and any(tx == address for tx, _ in self.versions):
           self.reply(address, b'\x7e\x00')
-        elif (address, request) in self.versions:
+        elif bus == self.offset and (address, request) in self.versions:
           self.reply(address, bytes([request[0] + 0x40]) + request[1:] + self.versions[address, request])
 
   def recv(self, wait_for_one=False):
@@ -85,8 +85,9 @@ def discover(transport, candidate, *, cached=None):
 
 
 @pytest.mark.parametrize('candidate', CANFD_CARS)
-def test_registered_ford_uses_real_normal_bus_vin_fw_can_and_factory(candidate):
-  transport = FordEcus()
+@pytest.mark.parametrize('offset', (0, 4))
+def test_registered_ford_uses_real_normal_bus_vin_fw_can_and_factory(candidate, offset):
+  transport = FordEcus(offset=offset)
   ci = discover(transport, candidate)
   assert transport.mux_calls and set(transport.mux_calls) == {False}
   assert ci.CP.carFingerprint == candidate and ci.CP.carVin == VIN
@@ -95,9 +96,13 @@ def test_registered_ford_uses_real_normal_bus_vin_fw_can_and_factory(candidate):
   assert ci.CP.safetyConfigs[-1].safetyModel == structs.CarParams.SafetyModel.ford
   assert len(ci.CP.carFw) == len(transport.versions)
   for fw in ci.CP.carFw:
-    assert fw.brand == 'ford' and fw.bus == 0
+    assert fw.brand == 'ford' and fw.bus == offset
     assert fw.fwVersion == transport.versions[fw.address, b'\x22\xf1\x88']
-  assert all(frame.src == 0 for frame in transport.sent)
+  assert all(frame.src in (0, 4) for frame in transport.sent)
+  assert len(ci.CP.safetyConfigs) == (2 if offset else 1)
+  if offset:
+    assert ci.CP.safetyConfigs[0].safetyModel == structs.CarParams.SafetyModel.noOutput
+    assert ci.CP.safetyConfigs[0].safetyParam == 0
   assert any(frame.dat[0] >> 4 == 3 for frame in transport.sent), 'Real ISO-TP flow control was not exercised'
 
 
@@ -118,7 +123,10 @@ def test_wrong_brand_cache_cannot_replace_live_ford_responses():
   assert transport.sent and ci.CP.carFw and all(f.brand == 'ford' for f in ci.CP.carFw)
 
 
-@pytest.mark.parametrize('drift', ['essential_bus1', 'unique_logging_bus1', 'empty', 'effective_only'])
+@pytest.mark.parametrize('drift', [
+  'essential_bus1', 'unique_logging_bus1', 'empty', 'effective_only', 'foreign_auxiliary',
+  'unique_auxiliary', 'missing_auxiliary', 'effective_missing_auxiliary',
+])
 def test_query_topology_drift_refuses_direct_scoped_discovery_before_io(drift):
   original = fw_versions.FW_QUERY_CONFIGS['ford']
   changed = list(original.requests)
@@ -128,7 +136,15 @@ def test_query_topology_drift_refuses_direct_scoped_discovery_before_io(drift):
     changed.append(replace(changed[0], request=[changed[0].request[0], b'\x22\xf1\xff']))
   elif drift == 'empty':
     changed = []
+  elif drift == 'missing_auxiliary':
+    changed = [request for request in changed if request.bus != 4]
+  elif drift == 'foreign_auxiliary':
+    changed.append(replace(changed[1], bus=8))
+  elif drift == 'unique_auxiliary':
+    changed.append(replace(changed[1], bus=4, request=[changed[1].request[0], b'\x22\xf1\xff']))
   effective = [('ford', original, replace(original.requests[1], bus=1))] if drift == 'effective_only' else fw_versions.REQUESTS
+  if drift == 'effective_missing_auxiliary':
+    effective = [(brand, owner, request) for brand, owner, request in effective if brand != 'ford' or request.bus != 4]
   config = replace(original, requests=changed, extra_ecus=[])
   with mock.patch.dict(fw_versions.FW_QUERY_CONFIGS, {'ford': config}), mock.patch.object(fw_versions, 'REQUESTS', effective):
     assert not normal_bus0_queries()

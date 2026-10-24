@@ -1322,7 +1322,7 @@ class StarShellSession:
       drive = self.drive_state.snapshot()
       availability = tuple(replace(item, available=item.destination in
                                    (Destination.TOGGLES, Destination.DEVICE, Destination.SOFTWARE,
-                                    Destination.DRIVING_MODEL, Destination.APPEARANCE, Destination.GALAXY,
+                                    Destination.DRIVING_MODEL, Destination.DRIVING_CONTROLS, Destination.APPEARANCE, Destination.GALAXY,
                                     Destination.NETWORK, Destination.BLUETOOTH, Destination.VEHICLE, Destination.DEVELOPER) or
                                    (item.destination == Destination.FORCE_DRIVE and drive["available"]) or
                                    snapshot.device.offroad and item.destination == Destination.PAIR)

@@ -5,7 +5,23 @@ from opendbc.car.toyota.values import CAR, ToyotaFlags, ToyotaSafetyFlags, EPS_S
 from openpilot.starpilot.aol.policy import AolVehiclePolicy
 from openpilot.starpilot.aol.intent import AolCardIntent, AOL_TOGGLE
 
-AOL_WORDS = frozenset((73, 585, 4169, 4681, 2121, 0x9049, 0x9249, 0x2049, 0x2249, 0x424D, 0x449, 0x649, 0x1449, 0x1649, 0x8049, 0x8249, 0x8449, 0x8649))
+AOL_WORDS = frozenset((
+  0x3049, 0x3249, 0x3449, 0x3649, 0xA042, 0xA049, 0xA242, 0xA249, 0xA449, 0xA649,
+  0xA849, 0xA949, 0xA958, 0xA964, 0xAA49, 0xAB49, 0xAB58, 0xAB64, 0xB149, 0xB158,
+  0xB164, 0xB349, 0xB358, 0xB364, 0xB449, 0xB549, 0xB558, 0xB564, 0xB649, 0xB749,
+  0xB758, 0xB764, 0xB842, 0xB849, 0xBA42, 0xBA49, 0xE042, 0xE049, 0xE242, 0xE249,
+  0xE84D, 0xE949, 0xEA4D, 0xEB49, 0xF049, 0xF04D, 0xF149, 0xF249, 0xF24D, 0xF349,
+  0xF44D, 0xF549, 0xF64D, 0xF749,
+  0x8949, 0x8B49,
+  0x8849, 0x8A49, 0x9849, 0x9A49, 0x9842, 0x9A42, 0x8958, 0x8B58, 0x8964, 0x8B64, 0xC84D, 0xCA4D, 0xC949, 0xCB49,
+  0x8042, 0x8242, 0xC042, 0xC242, 0xD049, 0xD249,
+  0xC049, 0xC249,
+  0x9449, 0x9549, 0x9558, 0x9564, 0x9649, 0x9749, 0x9758, 0x9764, 0xD44D, 0xD549, 0xD64D, 0xD749,
+  73, 585, 856, 4169, 4681, 2121, 0x9049, 0x9249,
+  0xB049, 0xB249, 0x2449, 0x2649, 0x2049, 0x2249, 0x424D, 0x449, 0x649, 0x1449, 0x1649,
+  0x8049, 0x8249, 0x8449, 0x8649, 0x9158, 0x9358, 0x9149,
+  0x9349, 0x9164, 0x9364, 0xd149, 0xd349, 0xd04d, 0xd24d,
+))
 
 
 SECOC_TORQUE_CARS = frozenset((CAR.TOYOTA_SIENNA_4TH_GEN,))
@@ -66,9 +82,49 @@ def angle_qualified(cp, *, marked_only=False):
   return configured(cp) and cp.alternativeExperience in ((32,) if marked_only else (0, 32))
 
 
+def matrix_stock_qualified(cp, *, marked_only=False):
+  if (cp is None or cp.brand != 'toyota' or cp.carFingerprint != CAR.TOYOTA_MATRIX_RETROFIT or
+      cp.notCar or cp.passive or cp.dashcamOnly or not cp.pcmCruise or cp.openpilotLongitudinalControl or
+      cp.secOcRequired or cp.flags != 0 or
+      cp.steerControlType != structs.CarParams.SteerControlType.torque or len(cp.safetyConfigs) != 1 or
+      cp.alternativeExperience not in ((32,) if marked_only else (0, 32))):
+    return False
+  config = cp.safetyConfigs[0]
+  return config.safetyModel == structs.CarParams.SafetyModel.toyota and config.safetyParam == 856
+
+
+def stock_prius_retrofit_qualified(cp, *, marked_only=False):
+  if (cp is None or cp.brand != 'toyota' or cp.carFingerprint != CAR.TOYOTA_PRIUS_RETROFIT or
+      cp.notCar or cp.passive or cp.dashcamOnly or cp.secOcRequired or not cp.pcmCruise or
+      cp.openpilotLongitudinalControl or cp.steerControlType != structs.CarParams.SteerControlType.torque or
+      len(cp.safetyConfigs) != 1 or cp.flags & ~int(ToyotaFlags.ZSS) != int(ToyotaFlags.HYBRID) or
+      cp.alternativeExperience not in ((32,) if marked_only else (0, 32))):
+    return False
+  config = cp.safetyConfigs[0]
+  return config.safetyModel == structs.CarParams.SafetyModel.toyota and config.safetyParam == 585
+
+
 def qualified(cp, *, marked_only=False):
+  from opendbc.car.toyota.pedal_composite import hold_base_cp
+  base = hold_base_cp(cp)
+  if base is not cp:
+    from opendbc.car.toyota.interface import toyota_auto_hold_supported
+    return toyota_auto_hold_supported(cp) and qualified(base, marked_only=marked_only)
+  from opendbc.car.toyota import dsu_bypass
+  if dsu_bypass.configured(cp):
+    return cp.alternativeExperience in ((32,) if marked_only else (0, 32))
+  from opendbc.car.toyota import pedal_composite
+  if pedal_composite.configured(cp):
+    return qualified(pedal_composite.parent_cp(cp), marked_only=marked_only)
+  if stock_prius_retrofit_qualified(cp, marked_only=marked_only):
+    return True
+  if matrix_stock_qualified(cp, marked_only=marked_only):
+    return True
   if angle_qualified(cp, marked_only=marked_only):
     return True
+  from opendbc.car.toyota.advert_filter import configured as advert_filter_configured
+  if advert_filter_configured(cp):
+    return cp.alternativeExperience in ((32,) if marked_only else (0, 32))
   if radar_filter_qualified(cp, marked_only=marked_only):
     return True
   if lexus_is_qualified(cp, marked_only=marked_only):

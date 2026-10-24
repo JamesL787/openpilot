@@ -238,9 +238,10 @@ def test_compact_preview_sprite_keeps_the_sign_offset_arrow_and_override_cross()
     rl.init_window(128, 128, 'SLC preview crop fixture')
   canvas = _Canvas(Profile.COMPACT)
   try:
-    for y, scene in product((20, 0), ('slc_pending', 'slc_retained')):
+    for y, scene in product((20, 0, 64, 108), ('slc_pending', 'slc_retained')):
       document = default_document()
       document['layouts']['compact']['speed_limit']['y'] = y
+      assert validate_document(document)['layouts']['compact']['speed_limit']['y'] == y
       with patch.dict('openpilot.starpilot.ui.layout_preview_renderer.RUNTIME_PREVIEW_WIDGETS', compact=('speed_limit',)):
         png = canvas.render_widget_art(sample_state(scene, document), document['layouts']['compact'])
       with Image.open(io.BytesIO(png)) as sheet:
@@ -256,7 +257,9 @@ def test_compact_preview_sprite_keeps_the_sign_offset_arrow_and_override_cross()
         rl.unload_image(image)
       assert np.array_equal(direct[..., 3], np.asarray(rebuilt)[..., 3])
       assert slot['offsetX'] == slot['offsetY'] == 0
-      assert (slot['width'], slot['height']) == (118, 176)
+      assert (slot['width'], slot['height']) == (118, min(176, Profile.COMPACT.size[1] - y))
+      if scene == 'slc_retained':
+        assert np.any(direct[..., 3]), (y, scene)
   finally:
     canvas.close()
     if owns_context:

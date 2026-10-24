@@ -23,7 +23,7 @@ def _build_libsafety(release: bool = False) -> str:
   ]
   # Coverage must exclude the branches inserted by UBSan.
   if os.environ.get("SAFETY_COVERAGE") == "1":
-    ldflags = ['-fprofile-arcs', '-ftest-coverage'] if not release else []
+    ldflags = ['-fprofile-arcs', '-ftest-coverage']
   else:
     ldflags = ['-fsanitize=undefined', '-fno-sanitize-recover=undefined']
   cflags += ldflags

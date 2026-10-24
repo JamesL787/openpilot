@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { SettingsSearchIndex, searchSettings, ToggleSearch } from "../web/js/toggle-search.js"
+import { readFileSync } from "node:fs"
+import { SettingsSearchIndex, searchSettings, toolSearchEntries, ToggleSearch } from "../web/js/toggle-search.js"
 import { SETTINGS_SECTIONS } from "../web/js/settings.js"
 
 const response = (page, rows, title = page) => ({ ok: true, status: 200, json: async () => ({ page, title, rows }) })
+const catalogTools = JSON.parse(readFileSync(new URL("../web/data/catalog.json", import.meta.url), "utf8")).tools
 
 test("global search reads every current settings section and nested page, then routes to its owner", async () => {
   const pages = new Map()
@@ -75,4 +77,38 @@ test("keyboard selection and Escape are bounded to visible results", () => {
   assert.equal(context.state.query, "")
   assert.equal(context.state.open, false)
   assert.equal(focused, true, "Escape restores focus to the compact search button")
+})
+
+test("global search finds visible tool tiles by title and description", () => {
+  const tools = [{ name: "Navigation & Maps", path: "/navigation", description: "Plan routes and download maps" },
+    { name: "Model Manager", path: "/manage_models", description: "Manage models" }]
+  const entries = toolSearchEntries(tools)
+  assert.equal(searchSettings(entries, "navigation and maps")[0].path, "/navigation")
+  assert.equal(searchSettings(entries, "navigation & maps")[0].path, "/navigation")
+  assert.equal(searchSettings(entries, "download maps")[0].path, "/navigation")
+  assert.deepEqual(searchSettings(entries, "model manager").map(hit => hit.path), ["/manage_models"])
+  assert.ok(entries.every(hit => hit.kind === "Tool"))
+  assert.equal(entries[0].context, "")
+})
+
+test("nested camera tools appear as direct results with a useful location", () => {
+  const entries = toolSearchEntries(catalogTools.filter(tool => tool.path === "/cameras"))
+  const hits = searchSettings(entries, "V-ASM")
+  assert.equal(hits[0].path, "/cameras/vasm")
+  assert.equal(hits[0].kind, "Tool")
+  assert.equal(hits[0].context, "Cameras & Monitoring")
+  assert.equal(hits[1].path, "/cameras")
+})
+
+test("tool search walks every depth and indexes other tool sections", () => {
+  const tools = catalogTools.filter(tool => ["/logs", "/navigation"].includes(tool.path))
+  const entries = toolSearchEntries(tools)
+  assert.equal(searchSettings(entries, "crash reports")[0].path, "/logs/crashes")
+  assert.equal(searchSettings(entries, "offline maps")[0].path, "/navigation/maps")
+  assert.equal(searchSettings(entries, "destination")[0].label, "Destination")
+  const nested = toolSearchEntries([{ name: "Parent", path: "/parent", children: [
+    { name: "Child", path: "/parent/child", children: [{ name: "Grandchild", path: "/parent/child/grandchild" }] },
+  ] }])
+  assert.deepEqual(nested.map(hit => hit.path), ["/parent", "/parent/child", "/parent/child/grandchild"])
+  assert.equal(nested[2].context, "Parent · Child")
 })

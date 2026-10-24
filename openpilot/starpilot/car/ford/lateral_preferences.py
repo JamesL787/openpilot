@@ -16,4 +16,4 @@ def selected(params, *, enabled):
   safe, safe_ok = read_saved(params, "SafeMode", 8)
   aol, aol_ok = read_saved(params, "AlwaysOnLateral", 8)
   return int(enabled and readable and valid and value == 1 and safe_ok and safe in (None, b"0") and
-             aol_ok and aol in (None, b"0"))
+             aol_ok and aol in (None, b"0", b"1"))

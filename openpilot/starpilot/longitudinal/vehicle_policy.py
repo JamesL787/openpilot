@@ -46,6 +46,10 @@ def stopping_decel_rate(cp, policy):
   rate = honda_stopping_decel_rate(cp)
   if rate is not None:
     return rate
+  from opendbc.car.hyundai.gv70_longitudinal import stopping_decel_rate as gv70_stop_rate
+  rate = gv70_stop_rate(cp)
+  if rate is not None:
+    return rate
   rate = hyundai_stopping_decel_rate(cp)
   if rate is not None:
     return rate
@@ -65,6 +69,10 @@ def stopping_policy_for(cp, dt):
 def forecast_should_stop(cp, speeds, time_indices, action_t, fallback):
   from opendbc.car.honda.parameter_profiles import forecast_should_stop as honda_forecast_should_stop
   decision = honda_forecast_should_stop(cp, speeds, time_indices, action_t)
+  if decision is not None:
+    return decision
+  from opendbc.car.hyundai.gv70_longitudinal import forecast_should_stop as gv70_forecast_stop
+  decision = gv70_forecast_stop(cp, speeds, time_indices, action_t)
   if decision is not None:
     return decision
   decision = hyundai_forecast_should_stop(cp, speeds, time_indices, action_t)

@@ -66,14 +66,19 @@ class Ioniq6TorqueSourceTests(unittest.TestCase):
           self.assertFalse(runtime_enabled(stock, params))
           self.assertFalse(runtime_enabled(tagged, params))
           params.put_bool('AdvancedLateralTune', True, block=True)
-          params.put('SteerFriction', float(tagged.lateralTuning.torque.friction) * 1.1, block=True)
+          # Global legacy scalars apply across supported torque vehicles. Use
+          # the per-vehicle document to test this Ioniq-only saved selection.
+          tune = tagged.lateralTuning.torque
+          basis = (float(tune.latAccelFactor), float(tune.latAccelOffset), float(tune.friction))
+          profile = PlatformProfile(basis, FieldChoice('source'), FieldChoice('custom', basis[2] * 1.1))
+          params.put('TorqueOverrideDocument', json.loads(serialize_document({str(tagged.carFingerprint): profile})), block=True)
           self.assertTrue(runtime_enabled(tagged, params))
           self.assertTrue(runtime_enabled(stock, params))
           self.assertFalse(runtime_enabled(cp_for(TOYOTA.TOYOTA_COROLLA_TSS2), params))
           stock.brand = 'toyota'
           self.assertFalse(runtime_enabled(stock, params))
           params.put_bool('AdvancedLateralTune', False, block=True)
-          params.remove('SteerFriction')
+          params.remove('TorqueOverrideDocument')
       _, tagged = ioniq_long_candidate()
       params.put_bool('AdvancedLateralTune', True, block=True)
       Path(params.get_param_path('SteerFriction')).write_bytes(b'nan')
@@ -122,7 +127,10 @@ class Ioniq6TorqueSourceTests(unittest.TestCase):
       self.assertFalse(development_enabled(cp))
     with mock.patch.dict(os.environ, {'TORQUE_REPLAY_RUNTIME': '1'}):
       self.assertTrue(development_enabled(cp))
-      self.assertFalse(development_enabled(cp_for(HYUNDAI.HYUNDAI_IONIQ_5)))
+      self.assertTrue(development_enabled(cp_for(HYUNDAI.HYUNDAI_IONIQ_5)))
+      angle = cp_for(HYUNDAI.HYUNDAI_IONIQ_5).as_reader().as_builder()
+      angle.steerControlType = 'angle'
+      self.assertFalse(development_enabled(angle))
       self.assertTrue(development_enabled(cp_for(TOYOTA.TOYOTA_COROLLA_TSS2)))
       cp.brand = 'toyota'
       self.assertFalse(development_enabled(cp))

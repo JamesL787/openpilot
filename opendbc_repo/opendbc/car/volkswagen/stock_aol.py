@@ -1,10 +1,11 @@
-"""Exact MQB stock-ACC capability; direct drive remains ordinary."""
+"""Exact MQB stock-ACC capability; direct drive uses its own checked gear source."""
 from opendbc.car import Bus, structs
 from opendbc.car.volkswagen.values import CAR, DBC, VolkswagenFlags
 
 AOL_WORD = 8
 MANUAL_WORD = 16
-AOL_WORDS = frozenset((8, 24))
+DIRECT_WORD = 32
+AOL_WORDS = frozenset((8, 24, 40))
 MQB_CARS = frozenset(car for car in CAR if DBC[car].get(Bus.pt) == "vw_mqb" and
                      not car.config.flags & (VolkswagenFlags.PQ | VolkswagenFlags.MLB | VolkswagenFlags.MEB))
 KNOWN_FLAGS = int(VolkswagenFlags.STOCK_HCA_PRESENT | VolkswagenFlags.KOMBI_PRESENT | VolkswagenFlags.HAS_BSM)
@@ -28,12 +29,14 @@ def _qualified(cp, *, marked_only=False, longitudinal=False):
   if (cp is None or cp.brand != "volkswagen" or cp.carFingerprint not in MQB_CARS or
       cp.passive or cp.notCar or cp.dashcamOnly or cp.flags & ~KNOWN_FLAGS or
       cp.steerControlType != structs.CarParams.SteerControlType.torque or
-      cp.transmissionType not in (structs.CarParams.TransmissionType.automatic, structs.CarParams.TransmissionType.manual) or
+      cp.transmissionType not in (structs.CarParams.TransmissionType.automatic, structs.CarParams.TransmissionType.manual,
+                                 structs.CarParams.TransmissionType.direct) or
       cp.networkLocation not in (structs.CarParams.NetworkLocation.gateway, structs.CarParams.NetworkLocation.fwdCamera) or
       bool(cp.openpilotLongitudinalControl) != longitudinal or bool(cp.pcmCruise) == longitudinal or
       (longitudinal and (cp.networkLocation != structs.CarParams.NetworkLocation.gateway or not cp.alphaLongitudinalAvailable))):
     return False
   word = AOL_WORD | (MANUAL_WORD if cp.transmissionType == structs.CarParams.TransmissionType.manual else 0)
+  word |= DIRECT_WORD if cp.transmissionType == structs.CarParams.TransmissionType.direct else 0
   word |= int(longitudinal)
   safety = safety_config(cp)
   return (safety is not None and safety.safetyModel == structs.CarParams.SafetyModel.volkswagen and

@@ -74,7 +74,8 @@ class ReplayHTTP:
       args = {key: value[0] for key, value in query.items()}
       operation = path.removeprefix('/api/replay/')
       expected = {'catalog': set(), 'status': {'clientId'}, 'detail': {'routeId'}, 'export-download': {'exportId', 'clientId'},
-                  'media': {'sessionId', 'clientId', 'epoch', 'sequence'}}.get(operation)
+                  'media': {'sessionId', 'clientId', 'epoch', 'sequence'},
+                  'timeline': {'sessionId', 'clientId', 'cursor'}}.get(operation)
       if expected is None:
         handler.json(404, {'error': 'Replay endpoint unavailable'})
         return
@@ -82,6 +83,10 @@ class ReplayHTTP:
         raise ValueError('Invalid replay query')
       if 'clientId' in args:
         args['clientId'] = self.actor(identity, args['clientId'])
+      if operation == 'timeline':
+        if ID.fullmatch(args['sessionId']) is None or not re.fullmatch(r'0|[1-9][0-9]{0,7}', args['cursor']):
+          raise ValueError('Invalid replay timeline identity')
+        args['cursor'] = int(args['cursor'])
       if operation == 'export-download':
         self.download(handler, identity, args)
       elif operation == 'media':

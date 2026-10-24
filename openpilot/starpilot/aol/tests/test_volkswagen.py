@@ -43,7 +43,7 @@ def test_factory_exact_marked_words_and_stock_long_separation(identity, manual, 
     assert native_matches_cp(long_cp, 15, 25 if manual else 9)
     assert long_cp.openpilotLongitudinalControl and not long_cp.pcmCruise
   for field, bad in (("passive", True), ("dashcamOnly", True), ("notCar", True), ("flags", 1 << 20),
-                     ("alternativeExperience", 33), ("transmissionType", structs.CarParams.TransmissionType.direct)):
+                     ("alternativeExperience", 33), ("transmissionType", structs.CarParams.TransmissionType.unknown)):
     altered = structs.CarParams(**cp.to_dict())
     setattr(altered, field, bad)
     assert not qualified(altered)
@@ -111,7 +111,7 @@ def test_gateway_long_profile_rejects_changed_identity_bus_and_safety_context(ma
     ('passive', True), ('notCar', True), ('dashcamOnly', True), ('flags', 1 << 20),
     ('networkLocation', structs.CarParams.NetworkLocation.fwdCamera),
     ('brand', 'toyota'),
-    ('transmissionType', structs.CarParams.TransmissionType.direct),
+    ('transmissionType', structs.CarParams.TransmissionType.unknown),
     ('steerControlType', structs.CarParams.SteerControlType.angle),
     ('openpilotLongitudinalControl', False), ('pcmCruise', True),
     ('alphaLongitudinalAvailable', False), ('alternativeExperience', 33),

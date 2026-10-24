@@ -19,7 +19,10 @@ from openpilot.starpilot.system.android_auto.projection_control import DEFAULT_C
 from openpilot.starpilot.system.android_auto.touch import DEFAULT_TOUCH_SOCKET, TouchEvent, TouchSender
 
 CAR_FRAME_PATH = "/dev/shm/starpilot_android_auto_car_frame"
-CAR_STARTUP_TIMEOUT = 25.0   # loading the full UI (fonts, textures, layouts) takes a few seconds on device
+# Cold UI/font/GL initialization can consume 25 seconds under onroad load.
+# Allow the first frame to finish without restarting that initialization; once
+# frames arrive, the separate five-second stall watchdog remains authoritative.
+CAR_STARTUP_TIMEOUT = 60.0
 CAR_STALL_TIMEOUT = 5.0
 MAX_RESTARTS = 2
 RESTART_WINDOW = 300.0

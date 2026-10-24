@@ -468,6 +468,19 @@ suite.addTests(unittest.TestLoader().loadTestsFromName('opendbc.bluepilot_latera
       code, text = self.run("unittest", [self.python, "-c", suite_script, str(native)], cwd=SAFETY_TESTS)
       summary = parse_unittest_summary(text)
       self.summary = summary
+      pytest_results = self.output / "pytest-coverage-results.json"
+      pytest_code, _ = self.run("pytest-coverage", [self.python, str(ROOT / "tools/ci/safety_pytest_coverage.py"),
+                                  "--native", str(native), "--results-json", str(pytest_results)], cwd=ROOT)
+      try:
+        from tools.ci.safety_pytest_coverage import report_complete, targets_for_coverage
+        pytest_report = json.loads(pytest_results.read_text())
+        pytest_ok = report_complete(pytest_report, targets_for_coverage(), hashlib.sha256(native.read_bytes()).hexdigest())
+      except (OSError, ValueError, TypeError, KeyError):
+        pytest_report, pytest_ok = {}, False
+      self.summary["pytest_coverage"] = {"complete": pytest_ok, "collected": len(pytest_report.get("nodeids", [])),
+                                        "ran": len(pytest_report.get("records", []))}
+      if pytest_results.is_file():
+        self.hash_artifact(pytest_results)
       if sys.platform == "darwin":
         found, llvm_cov = self.run("llvm-cov-path", ["xcrun", "--find", "llvm-cov"])
         if found:
@@ -480,7 +493,7 @@ suite.addTests(unittest.TestLoader().loadTestsFromName('opendbc.bluepilot_latera
       for source_root in SAFETY_SOURCE_ROOTS:
         coverage_argv += ["--filter", re.escape(source_root.resolve().as_posix() + "/")]
       gcovr, _ = self.run("coverage", coverage_argv, cwd=SAFETY_TESTS)
-      return code == 0 and complete_unittest(summary) and gcovr == 0
+      return code == 0 and complete_unittest(summary) and pytest_code == 0 and pytest_ok and gcovr == 0
     if self.name in ("opendbc-misra", "panda-misra"):
       if self.name == "panda-misra":
         built, _ = self.run("build-h7", ["scons", "-j4", "panda/board/obj/panda_h7/main.elf",

@@ -61,7 +61,13 @@ def test_location_loss_retains_only_existing_ford_lateral_intent(identity, alpha
     early.messages['onroadEvents'] = peers.messages['onroadEvents']
     early.logMonoTime['onroadEvents'] = stamp
     assert not feedback.observe(early, cp, cs, stamp, latched=True, intent_producer_session=PRODUCER)
-    assert feedback.temporary_host_qualified and not feedback.failed
+    # The earlier SOFT event is owned by the shared ordinary-warning join.
+    # The inactive, matched location proof below still uses the host pause owner.
+    assert feedback.ordinary_warning_qualified and feedback.ordinary_warning_retained
+    assert not feedback.temporary_host_qualified and not feedback.failed
+    assert feedback.lateral_only_baseline and feedback.pending_event == 0
+    assert baseline == (feedback.lateral_baseline_ns, feedback.lateral_source_ns, feedback.lateral_native_ns,
+                        feedback.healthy_feedback_ns, feedback.healthy_native_ns)
   assert not feedback.observe(peers, cp, cs, stamp, latched=True, intent_producer_session=PRODUCER)
   assert feedback.temporary_host_qualified and not feedback.failed
   assert baseline == (feedback.lateral_baseline_ns, feedback.lateral_source_ns, feedback.lateral_native_ns,
@@ -123,4 +129,46 @@ def test_location_exception_cannot_hide_independent_fault_or_driver_veto(fault):
   before = dict(vars(feedback))
   assert not feedback._temporary_host_intent_current(peers, cp, cs, peers['aolAxisState'], stamp, stamp,
                                                     latched=latched, producer=producer)
+  assert vars(feedback) == before
+
+
+@pytest.mark.parametrize('fault', ['unlatched', 'invalid-can', 'can-timeout', 'main-off', 'door', 'permanent-eps',
+                                 'native-denial', 'native-rx', 'native-heartbeat', 'interrupt-can2',
+                                 'producer', 'epoch', 'session', 'expired-native', 'future-event',
+                                 'explicit-cancel', 'hard-fault'])
+def test_event_first_ordinary_warning_rejects_independent_faults_without_mutation(fault):
+  cp, cs, feedback, withdrawn, _, stamp = location_case()
+  early, native = sample(cp, NOW, stamp, 1)
+  early.messages['onroadEvents'] = withdrawn.messages['onroadEvents']
+  early.logMonoTime['onroadEvents'] = stamp
+  latched, producer = fault != 'unlatched', PRODUCER
+  if fault in ('invalid-can', 'can-timeout', 'main-off', 'door', 'permanent-eps'):
+    if fault == 'main-off':
+      cs.cruiseState.available = False
+    else:
+      field = {'invalid-can': 'canValid', 'can-timeout': 'canTimeout',
+               'door': 'doorOpen', 'permanent-eps': 'steerFaultPermanent'}[fault]
+      setattr(cs, field, fault != 'invalid-can')
+  elif fault == 'native-denial':
+    native_change(early, native, requestedLateral=True, lateralAllowed=False)
+  elif fault in ('native-rx', 'native-heartbeat', 'interrupt-can2'):
+    updates = {'native-rx': {'safetyRxChecksInvalid': True}, 'native-heartbeat': {'heartbeatLost': True},
+               'interrupt-can2': {'faults': 8}}[fault]
+    native_change(early, native, pandaInventory=(replace(native.pandaInventory[0], **updates),))
+  elif fault == 'producer':
+    producer = 'foreign-card'
+  elif fault in ('epoch', 'session'):
+    field, value = ('intentIntegrityEpoch', 2) if fault == 'epoch' else ('sessionId', 'foreign-axis')
+    change(early, 'aolAxisState', lambda axis: setattr(axis, field, value))
+  elif fault == 'expired-native':
+    native_change(early, native, validUntilMonoTime=stamp - 1)
+  elif fault == 'future-event':
+    early.logMonoTime['onroadEvents'] = stamp + 1
+  elif fault == 'explicit-cancel':
+    change(early, 'onroadEvents', lambda events: setattr(events[0], 'name', 'buttonCancel'))
+  elif fault == 'hard-fault':
+    change(early, 'onroadEvents', lambda events: setattr(events[0], 'immediateDisable', True))
+  before = dict(vars(feedback))
+  assert not feedback._ordinary_warning_intent_current(early, cp, cs, early['aolAxisState'], NOW, stamp,
+                                                      latched=latched, producer=producer)
   assert vars(feedback) == before

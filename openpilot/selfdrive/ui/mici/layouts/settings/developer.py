@@ -8,11 +8,14 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.layouts.settings.common import restart_needed_callback
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot.car.hyundai.aol import ioniq6_settings_capable
+from openpilot.starpilot.car.ford.longitudinal_preferences import release_long_available as ford_release_long_available
+from opendbc.car.volkswagen.meb_modes import MEB_CARS, settings_capable as meb_settings_capable
+from openpilot.starpilot.car.volkswagen.preferences import stock_long_requested
 from openpilot.selfdrive.ui.widgets.ssh_key import SshKeyFetcher
 
 
 class AlphaLongConfirmPage(NavScroller):
-  def __init__(self, on_confirm: Callable[[], None]):
+  def __init__(self, on_confirm: Callable[[], None], *, system_long_default: bool = False):
     super().__init__()
 
     accept = BigConfirmationCircleButton("enable alpha\nlongitudinal",
@@ -23,7 +26,8 @@ class AlphaLongConfirmPage(NavScroller):
       GreyBigButton("enabling alpha longitudinal", "scroll to continue",
                     gui_app.texture("icons_mici/setup/warning.png", 64, 64)),
       GreyBigButton("", "WARNING: alpha longitudinal control may disable Automatic Emergency Braking (AEB)"),
-      GreyBigButton("", "On this car, openpilot defaults to the stock system's built-in ACC."),
+      GreyBigButton("", "Use StarPilot speed control instead of stock adaptive cruise control." if system_long_default else
+                    "On this car, openpilot defaults to the stock system's built-in ACC."),
       GreyBigButton("", "This requests openpilot longitudinal control after a verified vehicle takeover at startup."),
       accept,
     ])
@@ -166,8 +170,9 @@ class DeveloperLayoutMici(NavScroller):
 
     # CP gating
     if ui_state.CP is not None:
-      alpha_avail = ui_state.CP.alphaLongitudinalAvailable or ioniq6_settings_capable(ui_state.CP)
-      if not alpha_avail or ui_state.is_release:
+      alpha_avail = (meb_settings_capable(ui_state.CP) if ui_state.CP.brand == 'volkswagen' and ui_state.CP.carFingerprint in MEB_CARS
+                     else ui_state.CP.alphaLongitudinalAvailable or ioniq6_settings_capable(ui_state.CP))
+      if not alpha_avail or (ui_state.is_release and not (meb_settings_capable(ui_state.CP) or ford_release_long_available(ui_state.CP))):
         self._alpha_long_toggle.set_visible(False)
       else:
         self._alpha_long_toggle.set_visible(True)
@@ -177,7 +182,9 @@ class DeveloperLayoutMici(NavScroller):
 
     # Refresh toggles from params to mirror external changes
     for key, item in self._refresh_toggles:
-      item.set_checked(ui_state.params.get_bool(key))
+      value = (not stock_long_requested(ui_state.params) if key == "AlphaLongitudinalEnabled" and meb_settings_capable(ui_state.CP)
+               else ui_state.params.get_bool(key))
+      item.set_checked(value)
 
   def _on_joystick_debug_mode(self, state: bool):
     ui_state.params.put_bool("JoystickDebugMode", state, block=True)
@@ -187,7 +194,9 @@ class DeveloperLayoutMici(NavScroller):
   def _on_alpha_long_enabled(self, state: bool):
     def do_toggle(_state: bool):
       if (not ui_state.is_offroad() or (_state and (ui_state.CP is None or
-              not (ui_state.CP.alphaLongitudinalAvailable or ioniq6_settings_capable(ui_state.CP))))):
+              not (meb_settings_capable(ui_state.CP) if ui_state.CP.brand == 'volkswagen' and ui_state.CP.carFingerprint in MEB_CARS
+                     else ui_state.CP.alphaLongitudinalAvailable or ioniq6_settings_capable(ui_state.CP)) or
+              ui_state.is_release and not (meb_settings_capable(ui_state.CP) or ford_release_long_available(ui_state.CP))))):
         self._update_toggles()
         return
       ui_state.params.put_bool("AlphaLongitudinalEnabled", _state, block=True)
@@ -197,6 +206,8 @@ class DeveloperLayoutMici(NavScroller):
     if state:
       # Don't show enabled state until confirm
       self._alpha_long_toggle.set_checked(False)
-      gui_app.push_widget(AlphaLongConfirmPage(lambda: do_toggle(True)))
+      page = (AlphaLongConfirmPage(lambda: do_toggle(True), system_long_default=True) if meb_settings_capable(ui_state.CP)
+              else AlphaLongConfirmPage(lambda: do_toggle(True)))
+      gui_app.push_widget(page)
     else:
       do_toggle(False)

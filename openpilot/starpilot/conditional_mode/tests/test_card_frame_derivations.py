@@ -1,5 +1,6 @@
 """Frame-local pure derivations; live settings/authority checks still run."""
 from dataclasses import fields, replace
+import fcntl
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -206,9 +207,18 @@ def test_actual_card_adoption_and_multiple_consumers_keep_live_authority(full_op
       with patch.object(module, 'REPLAY', False):
         card.configure_conditional_settings_worker()
       worker = card.conditional_settings_worker
+      def refresh_snapshot(now):
+        # Constructor Params writes can still be queued on the real writer.
+        # Serialize this source fixture with that writer; Card itself remains
+        # nonblocking and the original read-start timestamp is unchanged.
+        lock_path = Path(card.params.get_param_path('ConditionalModeConfig')).parent.parent / '.lock'
+        with lock_path.open('a+') as source_lock:
+          fcntl.flock(source_lock, fcntl.LOCK_SH)
+          worker.refresh(now)
+        assert worker.published.status == 'verified'
       for tick in (2, 3):
         now = NOW + tick * 10_000_000
-        worker.refresh(now)
+        refresh_snapshot(now)
         axis, _, command = drive(tick)
         with patch.object(runtime_settings, 'saved_selection_for_drive', wraps=runtime_settings.saved_selection_for_drive) as selection, \
              patch.object(worker.view, 'affirm', wraps=worker.view.affirm) as affirm:
@@ -220,7 +230,7 @@ def test_actual_card_adoption_and_multiple_consumers_keep_live_authority(full_op
       # A fresh restrictive worker publication must revoke optional proposals.
       Path(card.params.get_param_path('ConditionalModeConfig')).write_bytes(b'{')
       now = NOW + 40_000_000
-      worker.refresh(now)
+      refresh_snapshot(now)
       axis, _, command = drive(4)
       assert receive(now, axis=sd.pm.messages['aolAxisState'], event=sd.pm.messages['onroadEvents'])
       assert worker.view.verdict(worker.view.current, now_mono_ns=now, drive_id=NOW - 1_000_000_000).status == 'unavailable_document'

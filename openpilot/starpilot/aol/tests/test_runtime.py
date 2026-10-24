@@ -282,7 +282,7 @@ class CardIntentTests(unittest.TestCase):
     self.assertTrue(direct.lateral_active)
     self.assertFalse(direct.desired_longitudinal)
     events.add(log.OnroadEvent.EventName.doorOpen)
-    self.assertTrue(disarming_fault(events.to_msg(), state))
+    self.assertFalse(disarming_fault(events.to_msg(), state))
     self.assertTrue(aol_no_entry(events.names, state, paddle_only_cancel=False))
 
   def test_temporary_eps_and_known_gears_preserve_latch_with_zero_steering(self):
@@ -328,7 +328,7 @@ class CardIntentTests(unittest.TestCase):
           dm_lockout=False, pause_brake_mps=0)
         self.assertTrue(decision.lateral_active)
 
-  def test_calibration_rearm_follows_live_mapping_without_arming_on_change(self):
+  def test_calibration_pause_retains_intent_and_mapping_change_cannot_rearm(self):
     from dataclasses import replace
     from openpilot.starpilot.aol.intent import AOL_TOGGLE
     owner = AolCardIntent(AolSettings(True, 0., 0, 0, (0, 0, 0), (0, 0, 0)))
@@ -340,17 +340,26 @@ class CardIntentTests(unittest.TestCase):
     invalid = Events()
     invalid.add(log.OnroadEvent.EventName.calibrationInvalid)
     owner.observe_calibration(state, events=invalid.to_msg())
-    self.assertFalse(owner.allowed_latch)
+    self.assertTrue(owner.allowed_latch)
+    self.assertEqual(owner.output(state)[1:], (True, True))
     owner.settings = replace(owner.settings, lkas_action=AOL_TOGGLE)
     owner.update(state)
-    owner.observe_calibration(state, events=invalid.to_msg())
-    self.assertFalse(owner.allowed_latch)
-    owner.update(state)
     owner.observe_calibration(state, events=[])
-    self.assertFalse(owner.allowed_latch)  # The mapping change is not an arming gesture.
+    self.assertTrue(owner.allowed_latch)
+    self.assertEqual(owner.output(state)[1:], (False, False))
     state.buttonEvents = [car.CarState.ButtonEvent(type=car.CarState.ButtonEvent.Type.lkas, pressed=True)]
     owner.update(state)
-    owner.observe_calibration(state, events=[])
+    self.assertFalse(owner.allowed_latch)
+    state.buttonEvents = [car.CarState.ButtonEvent(type=car.CarState.ButtonEvent.Type.lkas, pressed=False)]
+    owner.update(state)
+    state.buttonEvents = []
+    owner.settings = replace(owner.settings, main_action=AOL_TOGGLE)
+    owner.update(state)
+    owner.settings = replace(owner.settings, main_action=0)
+    owner.update(state)
+    self.assertFalse(owner.allowed_latch)  # Changing another mapping is not an arming gesture.
+    state.buttonEvents = [car.CarState.ButtonEvent(type=car.CarState.ButtonEvent.Type.lkas, pressed=True)]
+    owner.update(state)
     self.assertTrue(owner.allowed_latch)
 
   def test_low_speed_brake_suppresses_output_without_destroying_explicit_latch(self):
@@ -382,7 +391,8 @@ class CardIntentTests(unittest.TestCase):
                  log.OnroadEvent.EventName.overheat):
       events = Events()
       events.add(name)
-      self.assertTrue(disarming_fault(events.to_msg(), state))
+      self.assertEqual(disarming_fault(events.to_msg(), state),
+                       any(event.immediateDisable for event in events.to_msg()))
     events = Events()
     events.add(log.OnroadEvent.EventName.wrongGear)
     self.assertFalse(disarming_fault(events.to_msg(), state))  # Events may lag the return to Drive.
@@ -2124,32 +2134,38 @@ class UiProcessIntentTests(unittest.TestCase):
     owner.update(state)
     self.assertFalse(owner.allowed_latch)  # Physical CANCEL remains intentional withdrawal.
 
-  def test_context_denies_unknown_mixed_stale_missing_and_critical_faults(self):
+  def test_soft_process_context_guards_remain_distinct_from_immediate_faults(self):
     card = self.make_card()
     state = car_state()
     card.sm.events.add(log.OnroadEvent.EventName.processNotRunning)
     event_ns = 1_020_000_000
-    self.assertTrue(card.aol_disarming_fault(state, event_ns, event_ns + 1))
+    self.assertFalse(card.aol_disarming_fault(state, event_ns, event_ns + 1))
+    self.assertFalse(card.aol_process_fault_context.temporary_ui_failure(event_ns, event_ns + 1))
     for failures in ({'controlsd'}, {'unknown_service'}, {'ui', 'modeld'}, set()):
       with self.subTest(failures=failures):
         card.aol_process_fault_context.history.clear()
         self.observe(card, 1_000_000_000, failures)
-        self.assertTrue(card.aol_disarming_fault(state, event_ns, event_ns + 1))
+        self.assertFalse(card.aol_disarming_fault(state, event_ns, event_ns + 1))
+        self.assertFalse(card.aol_process_fault_context.temporary_ui_failure(event_ns, event_ns + 1))
     self.observe(card, 1_100_000_000, {'ui'})
-    self.assertTrue(card.aol_disarming_fault(state, 1_120_000_000, 2_600_000_001))
+    self.assertFalse(card.aol_disarming_fault(state, 1_120_000_000, 2_600_000_001))
+    self.assertFalse(card.aol_process_fault_context.temporary_ui_failure(1_120_000_000, 2_600_000_001))
     self.observe(card, 1_150_000_000, {'ui', 'modeld'})
-    self.assertTrue(card.aol_disarming_fault(state, 1_120_000_000, 1_160_000_000))
+    self.assertFalse(card.aol_disarming_fault(state, 1_120_000_000, 1_160_000_000))
+    self.assertFalse(card.aol_process_fault_context.temporary_ui_failure(1_120_000_000, 1_160_000_000))
     card.aol_process_fault_context.history.clear()
     self.observe(card, 1_100_000_000, {'ui'})
     card.sm.processes[0].shouldBeRunning = False
     card.aol_process_fault_context.observe(card.sm, 1_120_000_000)
-    self.assertTrue(card.aol_disarming_fault(state, 1_120_000_000, 1_120_000_001))
+    self.assertFalse(card.aol_disarming_fault(state, 1_120_000_000, 1_120_000_001))
+    self.assertFalse(card.aol_process_fault_context.temporary_ui_failure(1_120_000_000, 1_120_000_001))
     self.observe(card, 1_100_000_000, {'ui'})
     for source_flag in ('seen', 'valid', 'alive'):
       with self.subTest(source_flag=source_flag):
         getattr(card.sm, source_flag)['managerState'] = False
         card.aol_process_fault_context.observe(card.sm, 1_120_000_000)
-        self.assertTrue(card.aol_disarming_fault(state, 1_120_000_000, 1_120_000_001))
+        self.assertFalse(card.aol_disarming_fault(state, 1_120_000_000, 1_120_000_001))
+        self.assertFalse(card.aol_process_fault_context.temporary_ui_failure(1_120_000_000, 1_120_000_001))
         getattr(card.sm, source_flag)['managerState'] = True
         self.observe(card, 1_100_000_000, {'ui'})
     for name in (log.OnroadEvent.EventName.controlsMismatch, log.OnroadEvent.EventName.steerUnavailable):
