@@ -59,6 +59,9 @@ get a first calibration. Every other PID car keeps 7.0's stock `LatControlPID`.
 routes), `inferred` (carried over from a related car), `spec` (predicted from published specs), `default` or `none`.
 A test requires the record to be complete, and the controller logs the summary at start.
 
+The C020's calibration follows its corrected rev-b PTM (RWD df67bf6f); the TGG-A120 has its own measured column, rack map
+and live command row (row 0).
+
 Each earlier PTM build of an image reports the same EPS version string as the corrected one, so openpilot cannot tell
 them apart: `REQUIRED_PTM_RWD` names the build each calibration models, and the car must run that build.
 
@@ -72,7 +75,9 @@ them apart: `REQUIRED_PTM_RWD` names the build each calibration models, and the 
   map (same car, same A table). The RDX's TJB-A220 image has no A table at all: its linear map is integrated from the EPS's own
   0x18F rate word, which quickens with the rack, and the rack map is fitted on its yaw through it. The same PTM runs on
   every 3G RDX (2019-2026, the 2022+ MMR included), so both fingerprints take this calibration; its vehicle side was
-  measured on a 2019. Every calibration has one, and a car whose firmware A table is unknown stays on the
+  measured on a 2019 over five routes: R6 is read from the firmware (reference = 32 x its 0x18F rate word x 0.4812, the word
+  measured at 7.8 per deg/s), and a closed-loop replay (`tools/lateral/eps_closed_loop.py`) sets its trims, P x0.7 above
+  50 mph and a softer friction knee at speed (`friction_width_v`), because its loop is delay-limited there. Every calibration has one, and a car whose firmware A table is unknown stays on the
   modified PID; paramsd's steer ratio, the road-measured curves and `HondaEpsFirmwareVgr` apply to the modified PID
   only.
 - **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
@@ -98,7 +103,16 @@ them apart: `REQUIRED_PTM_RWD` names the build each calibration models, and the 
   0.37-0.39 s, which ran them early.
 - **Driver override.** The shared modified-EPS press detector; after a press, while the carcontroller fades torque
   back in, the integrator bleeds toward 0 (tau 0.5 s) rather than holding its pre-press value.
-- **Disengage** resets the PID and the feedforward.
+- **Output ceiling.** The output is limited to what the firmware still answers: past the end of the command row or the
+  input clamp, more 0xE4 gives the same R5. A 4096-per-unit car whose row ends at key 1663 (CR-V A040 rows 0-1, A220 rows
+  0-3) tops out at 3840/4096 = 0.9375; a car sent its own clamp (the Clarity, the Civics) at 1.0. The residual PID is
+  clamped to the same ceiling so its integrator cannot wind into 0xE4 the map ignores.
+- **Dropouts.** A one-frame STEER_STATUS fault (the RDX's NO_TORQUE_ALERT_1 trips on one raw torque sample over 768
+  counts, with no debounce) drops latActive for a frame, and controlsd resets the controller on every inactive frame. A
+  dropout shorter than `RIDE_THROUGH_S` (0.1 s) sends nothing but keeps the feedforward and tracks with the integrator
+  held; a longer one resets as before. In the closed-loop replay of the turn that prompted it (route
+  412ed2539bfc2c42/000000cc): feedforward off 250 -> 0 ms, worst error 11 -> 8 deg.
+- **Disengage** (a dropout past the ride-through) resets the PID and the feedforward.
 
 ## Settings
 
@@ -133,6 +147,7 @@ the tools use kept their ordinals across 7.0's renames (`vehicleParameters`, `de
 | Rack map | `openpilot/tools/lateral/fit_rack_map.py --car FP --vgr PROFILE --bus N --scale S --right R <routes>` | >= 300 s of turning at >= 3 deg, the GPS-checked yaw scale |
 | Command delay | `openpilot/tools/lateral/plan_timing.py <route>` | a drive on this controller, turns at 5-12 m/s |
 | Per-drive check | `openpilot/tools/lateral/eps_report.py <route>` | any drive: yaw sources, rack map vs the car, tracking, delivery, timing vs its schedule |
+| Closed-loop trims | `openpilot/tools/lateral/eps_closed_loop.py --calibration NAME <route dir>` | hands-off engaged windows; replays the core against the car's firmware law and fitted column, open loop and closed loop, with and without the calibration's P scale and friction knee |
 | Command row | `openpilot/tools/lateral/live_row_fit.py teg\|c020 <route>` | a telemetry build whose rows differ |
 | Column load | `openpilot/tools/lateral/fit_column_load.py --source clarity\|c020\|teg\|e4 --calibration NAME <routes>` (the Clarity recipe) | telemetry, or the E4 -> firmware-law rebuild without it |
 
