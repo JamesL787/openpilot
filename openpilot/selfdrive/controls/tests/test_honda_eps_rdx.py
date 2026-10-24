@@ -67,8 +67,8 @@ def test_its_linear_map_quickens_as_the_rack_does():
   linear, physical = sr.HONDA_VGR_INVERSE_BY_PROFILE[sr.HONDA_VGR_RDX_TJB_A220]
   slope = lambda a: (np.interp(a + 5, physical, linear) - np.interp(max(a - 5, 0), physical, linear)) / (a + 5 - max(a - 5, 0))  # noqa: E731
   assert slope(2.5) == pytest.approx(1.0, abs=0.03)
-  assert slope(200) == pytest.approx(9.5 / 7.2, rel=0.01)   # the 0x18F rate word, centre to plateau
-  assert CAL.r6_angle_gain[0] == 1.0 and max(CAL.r6_angle_gain) == pytest.approx(9.5 / 7.2, rel=0.02)
+  assert slope(200) == pytest.approx(9.58 / 7.8, rel=0.01)   # the 0x18F rate word, centre to plateau
+  assert CAL.r6_angle_gain[0] == 1.0 and max(CAL.r6_angle_gain) == pytest.approx(9.58 / 7.8, rel=0.02)
 
 
 @pytest.mark.parametrize("v", [3.0, 15.0, 30.0])
@@ -80,6 +80,14 @@ def test_its_rack_map_round_trips_to_lock(v):
 
 
 def test_its_feedback_is_the_word_derived_value():
-  # R6 = (15768 / 32768) x 32 x the rate word's -7.2 per published deg/s at centre
-  assert CAL.r6_per_deg_s == pytest.approx(15768 / 32768 * 32 * -7.2, abs=0.1)
-  assert eps_cal.provenance(CAL)["r6"].startswith("inferred")
+  # ref = 32 x the 0x18F rate word in the image (0x1C668 / 0x1D300), x 15768/32768 in the build; the word is -7.8 per
+  # published deg/s at centre
+  assert CAL.r6_per_deg_s == pytest.approx(15768 / 32768 * 32 * -7.8, abs=0.1)
+  assert eps_cal.provenance(CAL)["r6"].startswith("firmware")
+
+
+def test_its_trims_come_from_the_closed_loop_replay():
+  # P x0.7 above 50 mph and a 15 deg/s friction knee at speed (see RDX_TJB_A220_P_SCALE); I and town untouched
+  assert CAL.p_scale == (1.0, 1.0, 0.7) and CAL.i_scale == (1.0, 1.0, 1.0)
+  assert CAL.friction_width_v == (20.0, 15.0)
+  assert eps_cal.provenance(CAL)["trims"].startswith("measured: closed-loop replay")

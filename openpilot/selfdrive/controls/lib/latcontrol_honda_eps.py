@@ -71,6 +71,15 @@ SETTINGS_REFRESH_FRAMES = 300
 CMD_DELAY_SCALE_BY_SOURCE = {"plan": 0.0}
 CMD_DELAY_RAMP_S = 1.0  # s, from one source's command delay to the other's when the model changes
 
+# A one-frame STEER_STATUS fault (the RDX's NO_TORQUE_ALERT_1 trips on a single raw torque sample over 768 internal
+# counts, with no debounce) drops latActive for one frame, and controlsd resets the lateral controller on every
+# inactive frame. A reset mid-turn throws the feedforward away, and it may only rejoin once the error is under
+# FF_JOIN_ERROR_DEG: on route 412ed2539bfc2c42/000000cc at 719.65 s the fault cut a -0.28 feedforward holding a 20 deg
+# turn at 13 m/s, P alone pushed the other way, and the wheel unwound at 190 deg/s while the error grew past 10 deg.
+# So a dropout this short sends nothing but keeps the controller's state, tracking with the integrator held, and only
+# a longer one resets it. In the closed-loop replay of that turn: feedforward off 250 -> 0 ms, worst error 11 -> 8 deg.
+RIDE_THROUGH_S = 0.1
+
 
 
 
@@ -206,6 +215,8 @@ class LatControlHondaEps(LatControl):
     self.prev_rate_limited_angle = 0.0
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
+    self.inactive_frames = math.inf  # frames since latActive was last true; see RIDE_THROUGH_S
+    self.ride_through_frames = int(round(RIDE_THROUGH_S / dt))
     self.starpilot_lateral_state = custom.StarPilotLateralState.new_message()
     self._read_settings()
 
@@ -230,6 +241,11 @@ class LatControlHondaEps(LatControl):
     return self.cmd_delay_scale * command_delay(self.calibration, v_ego)
 
   def reset(self):
+    # controlsd calls this on every inactive frame; update() decides whether the dropout is long enough to reset
+    if self.inactive_frames > self.ride_through_frames:
+      self._hard_reset()
+
+  def _hard_reset(self):
     super().reset()
     self.core.reset()
     self.steering_pressed_filter_s = 0.0
@@ -260,10 +276,16 @@ class LatControlHondaEps(LatControl):
     pid_log.angleError = angle_des - CS.steeringAngleDeg
 
     if not active:
-      self.reset()
+      self.inactive_frames += 1
+      if self.inactive_frames > self.ride_through_frames:
+        self._hard_reset()
+      else:
+        # a brief dropout: keep tracking with the integrator held, send nothing
+        self.core.update(angle_des_no_offset, params.angleOffsetDeg, CS.steeringAngleDeg, CS.vEgo, params.roll, False, True)
       output = 0.0
       pid_log.active = False
     else:
+      self.inactive_frames = 0
       self.frame += 1
       if self.frame % SETTINGS_REFRESH_FRAMES == 0:
         self._read_settings()

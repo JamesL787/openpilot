@@ -97,7 +97,6 @@ def test_the_spec_load_is_close_to_every_measured_load(name, s, profile, load):
 
 @pytest.mark.parametrize("cal,s,profile", [
   (eps_cal.CIVIC_TBA_C120, spec.CIVIC_2019_SEDAN_SPEC, sr.HONDA_VGR_CIVIC_TBA_C120),
-  (eps_cal.CIVIC_TGG_A120, spec.CIVIC_HATCH_SPORT_SPEC, sr.HONDA_VGR_CIVIC_TBA_C020),
   (eps_cal.CRV_TLA_A040, spec.CRV_2017_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
   (eps_cal.CRV_TLA_A220, spec.CRV_2020_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
 ])

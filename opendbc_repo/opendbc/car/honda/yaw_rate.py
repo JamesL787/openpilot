@@ -43,11 +43,11 @@ YAW_RATE_CALIBRATION = {
   # bus 0, 359k straight-to-straight GPS pairs (tools/lateral/fit_yaw_scale.py): 0.2414 deg/s per count + 0.098 clockwise
   # (heading rms 2.10 deg against 2.24 for one scale 0.2428; per-route scales 0.2417-0.2458); stopped means 511.9-512.8.
   CAR.HONDA_CIVIC: (0.241, 512.0, 0.10),
-  # Acura RDX 3G (39990-TJB-A220 PTM): routes 412ed2539bfc2c42/000000c6 and 000000c7 (2026-10-18), 0x94 on bus 1, 556
-  # straight-to-straight GPS pairs: 0.2478 deg/s per count - 0.151 clockwise (heading rms 1.10 deg against 1.49 for one
-  # scale 0.2457; per-route single scales 0.2457 / 0.2456); stopped means 512.35-512.42. It over-reads right turns, the
+  # Acura RDX 3G (39990-TJB-A220 PTM): routes 412ed2539bfc2c42/000000b8, c6, c7, cc and d2, 0x94 on bus 1, 2,331
+  # straight-to-straight GPS pairs: 0.2511 deg/s per count - 0.201 clockwise (heading rms 2.02 deg against 2.47 for one
+  # scale 0.2470; per-route single scales 0.2433-0.2503); stopped means 512.17-512.42. It over-reads right turns, the
   # opposite of the Clarity.
-  CAR.ACURA_RDX_3G: (0.248, 512.4, -0.15),
+  CAR.ACURA_RDX_3G: (0.2511, 512.3, -0.20),
 }
 RIGHT_LOSS_BP = (3.0, 5.0)  # counts from zero over which the clockwise under-read comes in
 
