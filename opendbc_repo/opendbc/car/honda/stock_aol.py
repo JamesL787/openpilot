@@ -123,10 +123,15 @@ def qualified(cp, *, marked_only=False):
 
 
 def temporary_restriction(cp, state):
+  # The driver steering counts too: a hard takeover raises the EPS's temporary fault (STEER_STATUS 2 at ~3000 torque),
+  # which flickers clear while the driver still holds the wheel and openpilot is not yet re-requesting lateral. Without
+  # this, native_observation read that gap as a lost grant and cleared the latch, so lateral waited for an LKAS press
+  # after every hard takeover (Clarity 00000039--a3fe07ccbe 488.6 s, 0000003a--1bf485aec1 446.0 s); 6.x resumed alone.
   gears = structs.CarState.GearShifter
   return bool(state is not None and qualified(cp, marked_only=True) and state.canValid and not state.canTimeout
               and not state.steerFaultPermanent and
-              (state.gearShifter not in (gears.drive, gears.sport, gears.low, gears.brake) or state.steerFaultTemporary))
+              (state.gearShifter not in (gears.drive, gears.sport, gears.low, gears.brake) or state.steerFaultTemporary or
+               state.steeringPressed))
 
 
 def native_observation(native, *, latched, panda_ready, restricted, now_ns, pending_since_ns,
