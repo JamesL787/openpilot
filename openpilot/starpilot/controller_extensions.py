@@ -284,6 +284,11 @@ def configure_controller(CI, params):
     from openpilot.starpilot.car.honda.longitudinal import BoschLearningParams
     controller.bosch_learning_params = BoschLearningParams(params, controller.bosch_longitudinal)
 
+  if controller is not None and cp.brand == "honda" and getattr(CI, "CS", None) is not None:
+    from openpilot.starpilot.car.honda.pcm_acc_preference import attach as attach_pcm_acc
+    if attach_pcm_acc(CI, params):
+      cloudlog.warning("Clarity PCM-ACC test mode on: the PCM stays in ACC while openpilot is engaged")
+
   from opendbc.car.hyundai.g90_lead import eligible as g90_lead_eligible
   if controller is not None and g90_lead_eligible(cp):
     from openpilot.starpilot.longitudinal.g90_lead import G90LeadInputs

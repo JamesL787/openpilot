@@ -52,6 +52,11 @@ class CarState(CarStateBase):
     self.brake_switch_active = False
     self.low_speed_alert = False
 
+    # Clarity interceptor PCM-ACC test mode (honda/pcm_acc.py, attached by openpilot): the controller holds the PCM
+    # in ACC while engaged, so cruiseState.enabled keeps reporting it off as before and pcm_acc_active carries the bit
+    self.keep_pcm_acc = False
+    self.pcm_acc_active = False
+
     self.dynamic_v_cruise_units = bool(self.CP.flags & (HondaFlags.BOSCH_RADARLESS | HondaFlags.BOSCH_ALT_RADAR | HondaFlags.BOSCH_CANFD))
     self.cruise_setting = 0
     self.scm_ambient_light = 0
@@ -227,7 +232,8 @@ class CarState(CarStateBase):
         self.brake_switch_prev = brake_switch
       ret.brakePressed = (powertrain_data["BRAKE_PRESSED"] != 0) or self.brake_switch_active
 
-    ret.cruiseState.enabled = cp.vl["POWERTRAIN_DATA"]["ACC_STATUS"] != 0
+    self.pcm_acc_active = cp.vl["POWERTRAIN_DATA"]["ACC_STATUS"] != 0
+    ret.cruiseState.enabled = self.pcm_acc_active and not self.keep_pcm_acc
     ret.cruiseState.available = bool(cp.vl[self.car_state_scm_msg]["MAIN_ON"])
 
     if self.CP.flags & HondaFlags.BOSCH:
