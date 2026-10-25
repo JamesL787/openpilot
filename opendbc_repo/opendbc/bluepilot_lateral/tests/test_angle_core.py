@@ -171,7 +171,7 @@ class TestAngleTrim(unittest.TestCase):
     for changes in ({"active": False}, {"lane_change": True}, {"steering_pressed": True}):
       trim = LaneCenterTrim()
       trim.update(0., 15., original, config, active=True, lane_change=False)
-      flags = dict(active=True, lane_change=False, steering_pressed=False)
+      flags = {"active": True, "lane_change": False, "steering_pressed": False}
       flags.update(changes)
       self.assertEqual(trim.update(.001, 15., original, config, **flags), .001)
       self.assertEqual(trim.correction, 0.)
@@ -211,3 +211,19 @@ class TestAngleTrim(unittest.TestCase):
           else:
             previous = 0.
             self.assertEqual(core.trim.correction, 0.)
+
+
+class TestAngleInputParity(unittest.TestCase):
+  def test_missing_model_fallback_matches_pinned_bp7(self):
+    for identity in sorted(CLASSIC | CANFD):
+      gains = (.95, .95) if identity in TRUCKS else ((1., 1.05) if identity in CANFD else (1., 1.15))
+      for speed in (5., 8.):
+        for direction in (-1, 1):
+          adapted = AngleController(low_gain=gains[0], high_gain=gains[1])
+          upstream = reference.Angle(identity)
+          for _ in range(20):
+            inputs = Inputs(True, speed, direction * .001, direction * .001)
+            command, expected = adapted.step(inputs), upstream.step(inputs)
+            self.assertTrue(command.active)
+            self.assertAlmostEqual(command.path_angle, expected.path_angle, places=12)
+            self.assertEqual(command.precision, expected.precision_type)

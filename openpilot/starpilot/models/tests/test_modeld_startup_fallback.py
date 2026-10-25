@@ -114,7 +114,9 @@ def test_remote_inference_failure_does_not_change_chestnut_status():
 
 
 def execute(statements, env):
-  env.setdefault("os", SimpleNamespace(getenv=lambda key: None))
+  def exit_process(code):
+    raise SystemExit(code)
+  env.setdefault("os", SimpleNamespace(getenv=lambda key: None, _exit=exit_process))
   env.setdefault("recovery_small_only", False)
   from openpilot.starpilot.models.recovery import STARTUP_FALLBACK_EXIT
   env.setdefault("STARTUP_FALLBACK_EXIT", STARTUP_FALLBACK_EXIT)

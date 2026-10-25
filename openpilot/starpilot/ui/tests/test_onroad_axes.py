@@ -31,7 +31,7 @@ class TestOnroadAxes(unittest.TestCase):
   def setUp(self):
     for name in ('draw_rectangle_rounded', 'draw_rectangle_rounded_lines_ex', 'draw_circle', 'draw_ring'):
       self.enterContext(patch('openpilot.starpilot.ui.speed_limit_widget.rl.' + name, new_callable=Mock))
-    for name in ('circle', 'arrow'):
+    for name in ('circle', 'arrow', 'outline'):
       self.enterContext(patch('openpilot.starpilot.ui.speed_limit_shapes.SpeedLimitShapes.' + name, new_callable=Mock))
     self.ui = ui_fake()
     self.ui.CP = NS(carFingerprint='', openpilotLongitudinalControl=True, pcmCruise=False)

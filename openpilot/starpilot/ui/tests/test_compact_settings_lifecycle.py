@@ -31,6 +31,7 @@ def lifecycle(monkeypatch):
   session.compact_y = session.compact_scroll_x = 0
   session.sidebar_expanded = True
   session._snapshot_cache = None
+  session.input = Mock()
   session.favorites = Mock()
   session.pip_warning = Mock()
   session.view = Mock()
@@ -46,6 +47,43 @@ def lifecycle(monkeypatch):
   page = runtime_app.StarCompactSettings(session)
   page.set_rect(rl.Rectangle(0, 0, 536, 240))
   return page, session, ui, paired
+
+
+@pytest.mark.parametrize("state", list(ScrollState))
+def test_main_menu_push_resets_position_and_momentum(lifecycle, monkeypatch, state):
+  page, session, _, _ = lifecycle
+  monkeypatch.setattr(runtime_app.gui_app, "_nav_stack", [Mock()])
+  for offset in (-422, -1266):
+    page._panel.set_offset(offset)
+    page._panel._state = state
+    page._panel._velocity = -1500
+    page._panel._velocity_buffer.extend([-1200, -1500])
+    session.compact_scroll_x = offset
+    session._snapshot_cache = object()
+    runtime_app.gui_app.push_widget(page)
+    assert page._panel.get_offset() == session.compact_scroll_x == 0
+    assert page._panel.state == ScrollState.STEADY
+    assert page._panel.velocity == 0
+    assert not page._panel._velocity_buffer
+    assert session._snapshot_cache is None
+    page._update_state()
+    assert page._panel.get_offset() == session.compact_scroll_x == 0
+    runtime_app.gui_app.pop_widget()
+
+
+def test_submenu_pop_keeps_main_menu_position(lifecycle, monkeypatch):
+  page, session, _, _ = lifecycle
+  monkeypatch.setattr(runtime_app.gui_app, "_nav_stack", [Mock()])
+  runtime_app.gui_app.push_widget(page)
+  page._panel.set_offset(-844)
+  session.compact_scroll_x = -844
+  panel = page._panel
+  runtime_app.gui_app.push_widget(Mock())
+  assert not page.enabled
+  runtime_app.gui_app.pop_widget()
+  assert page.enabled
+  assert page._panel is panel
+  assert page._panel.get_offset() == session.compact_scroll_x == -844
 
 
 @pytest.mark.parametrize("paired_value", [False, True])

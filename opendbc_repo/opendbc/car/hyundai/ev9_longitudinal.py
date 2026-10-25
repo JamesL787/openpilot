@@ -5,7 +5,7 @@ from capnp.lib.capnp import _DynamicStructBuilder, _DynamicStructReader
 import numpy as np
 from opendbc.car import DT_CTRL, structs
 from opendbc.car.hyundai.values import CAR
-from opendbc.car.hyundai.ccnc_ev_stock import qualified as stock_qualified
+from opendbc.car.hyundai.ccnc_ev_stock import qualified as stock_qualified, metadata_qualified
 
 class CarControllerParams:
   ACCEL_MIN = -3.5
@@ -314,6 +314,8 @@ def qualified(cp):
       cp.alternativeExperience not in (0, 32) or
       not cp.alphaLongitudinalAvailable or len(cp.safetyConfigs) != 1 or cp.safetyConfigs[0].safetyParam != LONG_PARAM):
     return False
+  if type(cp) is _DynamicStructBuilder and cp.schema == structs.CarParams.schema:
+    return metadata_qualified(cp)
   stock = stock_copy(cp)
   stock.alternativeExperience = 0
   return stock_qualified(stock)

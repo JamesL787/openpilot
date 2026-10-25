@@ -197,3 +197,105 @@ class TestEV9LongController(unittest.TestCase):
         self.assertFalse(ci.CS.out.canTimeout)
         self.assertTrue(ci.CS.out.cruiseState.available)
         self.assertTrue(ci.CS.out.cruiseState.enabled)
+
+
+class TestEV9FreshMetadataQualification(unittest.TestCase):
+  @staticmethod
+  def original(cp):
+    from opendbc.car.hyundai.ev9_longitudinal import LONG_PARAM, stock_copy
+    from opendbc.car.hyundai.ccnc_ev_stock import qualified as stock_qualified
+    if (cp.carFingerprint != CAR.KIA_EV9 or not cp.openpilotLongitudinalControl or cp.pcmCruise or
+        cp.alternativeExperience not in (0, 32) or not cp.alphaLongitudinalAvailable or
+        len(cp.safetyConfigs) != 1 or cp.safetyConfigs[0].safetyParam != LONG_PARAM):
+      return False
+    stock = stock_copy(cp)
+    stock.alternativeExperience = 0
+    return stock_qualified(stock)
+
+  def base(self):
+    return candidate(params(candidate=CAR.KIA_EV9), enabled=True, is_release=False)
+
+  def check(self, cp):
+    def result(fn):
+      try:
+        return ('value', fn(cp))
+      except Exception as error:
+        return ('error', type(error), str(error))
+    self.assertEqual(result(qualified), result(self.original))
+
+  def test_current_builder_fields_and_every_safety_word(self):
+    cp = self.base()
+    for experience in (0, 32):
+      cp.alternativeExperience = experience
+      for word in range(65536):
+        cp.safetyConfigs[0].safetyParam = word
+        self.assertEqual(qualified(cp), self.original(cp), (experience, word))
+
+  def test_each_live_metadata_field_and_neighbor_profile(self):
+    cp = self.base()
+    changes = {
+      'brand': ('', 'gm', 'hyundai'),
+      'carFingerprint': ('', CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_6, CAR.KIA_EV9),
+      'flags': (0, *(int(cp.flags) ^ (1 << bit) for bit in range(32))),
+      'alternativeExperience': (0, 32, 64, 96, 128),
+      'openpilotLongitudinalControl': (False, True), 'pcmCruise': (False, True),
+      'alphaLongitudinalAvailable': (False, True), 'notCar': (False, True),
+      'passive': (False, True), 'dashcamOnly': (False, True),
+    }
+    for field, values in changes.items():
+      for value in values:
+        changed = cp.copy()
+        setattr(changed, field, value)
+        with self.subTest(field=field, value=value):
+          self.check(changed)
+    for count in (0, 2):
+      changed = cp.copy()
+      changed.init('safetyConfigs', count)
+      self.check(changed)
+    for model in ('silent', 'noOutput', 'toyota', 'gm', 'hyundai', 'hyundaiCanfd'):
+      changed = cp.copy()
+      changed.safetyConfigs[0].safetyModel = model
+      self.check(changed)
+
+  def test_ignored_gear_metadata_and_live_mutations(self):
+    from opendbc.car.hyundai.values import HyundaiFlags
+    cp = self.base()
+    for bits in (0, int(HyundaiFlags.CANFD_ALT_GEARS), int(HyundaiFlags.CANFD_ALT_GEARS_2),
+                 int(HyundaiFlags.CANFD_ALT_GEARS | HyundaiFlags.CANFD_ALT_GEARS_2)):
+      cp.flags = int(self.base().flags) | bits
+      self.assertTrue(qualified(cp))
+      self.check(cp)
+      cp.safetyConfigs[0].safetyParam ^= 1
+      self.assertFalse(qualified(cp))
+      self.check(cp)
+      cp.safetyConfigs[0].safetyParam ^= 1
+      self.assertTrue(qualified(cp))
+
+  def test_valid_builder_avoids_copy_and_reader_keeps_copy_contract(self):
+    from unittest.mock import patch
+    from opendbc.car.hyundai import ev9_longitudinal
+    cp = self.base()
+    with patch.object(ev9_longitudinal, 'stock_copy', side_effect=AssertionError('unexpected whole CP copy')):
+      self.assertTrue(qualified(cp))
+    with structs.CarParams.from_bytes(cp.to_bytes()) as reader:
+      with patch.object(ev9_longitudinal, 'stock_copy', wraps=ev9_longitudinal.stock_copy) as copied:
+        self.assertTrue(qualified(reader))
+        self.assertEqual(copied.call_count, 1)
+
+  def test_custom_owner_keeps_original_access_and_copy_behavior(self):
+    cp = self.base()
+
+    class Proxy:
+      def __init__(self):
+        self.calls = []
+
+      def __getattr__(self, field):
+        self.calls.append(field)
+        return getattr(cp, field)
+
+      def to_dict(self):
+        self.calls.append('to_dict')
+        return cp.to_dict()
+    current, original = Proxy(), Proxy()
+    self.assertEqual(qualified(current), self.original(original))
+    self.assertEqual(current.calls, original.calls)

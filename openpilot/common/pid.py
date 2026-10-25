@@ -1,6 +1,8 @@
 import numpy as np
 from collections.abc import Sequence
 
+from openpilot.common.scalar_clip import clip_float64
+
 Gain = int | float | tuple[Sequence[float], Sequence[float]] | list[list[float]]
 
 class PIDController:
@@ -56,8 +58,8 @@ class PIDController:
       test_control = self.p + i + self.d + self.f
       i_upperbound = self.i if test_control > self.pos_limit else self.pos_limit
       i_lowerbound = self.i if test_control < self.neg_limit else self.neg_limit
-      self.i = np.clip(i, i_lowerbound, i_upperbound)
+      self.i = clip_float64(i, i_lowerbound, i_upperbound)
 
     control = self.p + self.i + self.d + self.f
-    self.control = np.clip(control, self.neg_limit, self.pos_limit)
+    self.control = clip_float64(control, self.neg_limit, self.pos_limit)
     return self.control

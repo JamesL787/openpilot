@@ -9,6 +9,12 @@ import numpy as np
 from openpilot.starpilot.audio.alert_volume import effective_volume
 
 LIBRARY = Path(__file__).with_name('native') / 'libaudio_mixer.so'
+TIMING_HEADER = ('abi', 'row_words', 'capacity', 'total_recorded', 'first_underflow', 'frozen',
+                 'start_ordinal', 'row_count', 'callback_aborts', 'clock_error_rows')
+TIMING_COLUMNS = ('ordinal', 'entry_mono_ns', 'entry_cpu_ns', 'exit_mono_ns', 'exit_cpu_ns',
+                  'pa_input_bits', 'pa_current_bits', 'pa_output_bits', 'frames', 'flags', 'command',
+                  'restart', 'slot', 'cursor', 'bank_revision', 'status_callbacks', 'underflows',
+                  'last_flags', 'clock_error_mask', 'timeinfo_present', 'pending_bank', 'retired_bank')
 # sounddevice marks its pointer closed even when Pa_CloseStream returns an error.
 # Keep code, userdata and PCM alive until process exit if that fence fails.
 _unclosed_streams = []
@@ -59,6 +65,11 @@ class NativePlayback:
     self.stop_frame = 0
     self.previous_alert = self.previous_sound = None
     self.status_count = 0
+    self.timing_reported = False
+    self.timing_getter = getattr(self.lib, 'audio_diagnostic_snapshot', None)
+    if self.timing_getter is not None:
+      self.timing_getter.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint]
+      self.timing_getter.restype = ctypes.c_uint
     try:
       if not self.publish():
         raise ValueError('Native sounds were not admitted')
@@ -149,6 +160,29 @@ class NativePlayback:
       owner.pending_stream_status = self.sd.CallbackFlags(value[5])
       self.status_count = value[3]
     owner.stream_status_count, owner.output_underflow_count = value[3], value[4]
+
+  def report_underflow_timing(self, *, closing=False):
+    """Read one fixed native trace on the service thread, after four recovery callbacks."""
+    if self.timing_reported or self.timing_getter is None or (not closing and not self.owner.output_underflow_count):
+      return
+    values = (ctypes.c_uint64 * 714)()
+    words = self.timing_getter(self.handle, values, len(values))
+    if not words or (not closing and not values[5]):
+      return
+    if not values[4] and not values[8]:
+      return
+    self.timing_reported = True
+    from openpilot.common.swaglog import cloudlog
+    # Integer clock values and raw PortAudio double bits keep invalid clocks
+    # explicit and make JSON finite. Decode host stream clocks separately.
+    count = values[7]
+    if values[0] != 1 or values[1] != 22 or values[2] != 32 or count > 32 or words != 10 + 22 * count:
+      cloudlog.error({'event': 'soundd_underflow_timing', 'error': 'invalid_native_diagnostic'})
+      return
+    cloudlog.error({'event': 'soundd_underflow_timing', 'schema': 1, 'sample_rate': self.rate,
+                    'block_frames': self.buffer, 'header_columns': TIMING_HEADER, 'columns': TIMING_COLUMNS,
+                    'header': list(values[:10]),
+                    'rows': [list(values[i:i + 22]) for i in range(10, words, 22)]})
 
   def stream(self):
     # Public OutputStream/RawOutputStream wrap callbacks in Python; only the existing base CData path avoids the GIL.

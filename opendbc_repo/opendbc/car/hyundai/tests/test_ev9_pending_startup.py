@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from copy import deepcopy
 import unittest
 from types import SimpleNamespace
 from typing import cast
@@ -9,7 +10,7 @@ from opendbc.car import Bus, CanData, structs
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.ev9_longitudinal import candidate, qualified
 from opendbc.car.hyundai.ev9_pending_startup import EV9PendingStartup as PEPendingStartup
-from opendbc.car.hyundai.ioniq5pe_startup import Phase
+from opendbc.car.hyundai.ioniq5pe_startup import Lease, Phase
 from opendbc.car.hyundai.ioniq5pe_ready import PEReadySource
 from opendbc.car.hyundai.hyundaicanfd import hkg_can_fd_checksum
 from opendbc.car.hyundai.tests.test_ioniq5pe_stock import params as stock_params
@@ -590,7 +591,7 @@ class TestEV9PendingIdentity(unittest.TestCase):
     stock = stock_params()
     long = pe_candidate(stock, enabled=True, is_release=False)
     with self.assertRaises(ValueError):
-      OriginalPEPendingStartup(long, (lambda **kw: [], lambda frames: None), stock_cp=params())
+      OriginalPEPendingStartup(long, (lambda wait_for_one=False, **kw: [], lambda frames: None), stock_cp=params())
 
 
 class TestEV9UnpreparedController(unittest.TestCase):
@@ -607,3 +608,120 @@ class TestEV9UnpreparedController(unittest.TestCase):
     control.actuators.accel = 1.
     _, frames = ci.apply(control.as_reader(), 130_000_000)
     self.assertEqual(frames, [])
+
+
+class TestPreparedConfigurationComparison(unittest.TestCase):
+  @staticmethod
+  def context(car=CAR.KIA_EV9):
+    cp = stock_params(candidate=car)
+    owner = PEPendingStartup.__new__(PEPendingStartup)
+    owner.owner = Lease(cp.copy())
+    owner.owner.phase = Phase.OWNED
+    owner.closed = False
+    owner.fault = None
+    owner.snapshot = deepcopy(cp.to_dict())
+    assert owner.prepared_for(cp)
+    return owner, cp
+
+  @staticmethod
+  def leaf_paths(value, path=()):
+    if type(value) is dict:
+      for key, child in value.items():
+        yield from TestPreparedConfigurationComparison.leaf_paths(child, path + (key,))
+    elif type(value) is list:
+      for key, child in enumerate(value):
+        yield from TestPreparedConfigurationComparison.leaf_paths(child, path + (key,))
+    else:
+      yield path, value
+
+  @staticmethod
+  def assign(cp, path, value):
+    for key in path[:-1]:
+      cp = getattr(cp, key) if type(key) is str else cp[key]
+    if type(path[-1]) is str:
+      setattr(cp, path[-1], value)
+    else:
+      cp[path[-1]] = value
+
+  def test_every_legal_configuration_mutation_remains_freshly_rejected(self):
+    checked = 0
+    for car in (CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_PE):
+      for path, value in self.leaf_paths(stock_params(candidate=car).to_dict()):
+        if type(value) is bool:
+          changed = not value
+        elif type(value) is int:
+          changed = value ^ 1
+        elif type(value) is float:
+          changed = value + .125
+        elif type(value) is str:
+          changed = value + 'changed'
+        elif type(value) is bytes:
+          changed = value + b'changed'
+        else:
+          continue
+        for target in ('owner', 'caller', 'snapshot'):
+          owner, cp = self.context(car)
+          if target == 'snapshot':
+            container = owner.snapshot
+            for key in path[:-1]:
+              container = container[key]
+            container[path[-1]] = changed
+          else:
+            try:
+              self.assign(owner.owner.cp if target == 'owner' else cp, path, changed)
+            except (ValueError, TypeError, AttributeError, RuntimeError):
+              # Invalid enum/union assignments never become a configuration.
+              continue
+          self.assertFalse(owner.prepared_for(cp), (car, path, target))
+          checked += 1
+    self.assertGreater(checked, 300)
+
+  def test_owner_fault_and_phase_are_never_cached(self):
+    for phase in Phase:
+      owner, cp = self.context()
+      owner.owner.phase = phase
+      self.assertEqual(owner.prepared_for(cp), phase in (Phase.PENDING, Phase.OWNED, Phase.STOCK))
+    for name, value in (('closed', True), ('fault', 'current fault'), ('snapshot', None)):
+      owner, cp = self.context()
+      setattr(owner, name, value)
+      self.assertFalse(owner.prepared_for(cp))
+
+  def test_equivalent_replacements_arena_changes_and_reader_fallback(self):
+    owner, cp = self.context()
+    original = cp.carFingerprint
+    cp.carFingerprint += 'temporary'
+    cp.carFingerprint = original
+    self.assertTrue(owner.prepared_for(cp))
+    cp = cp.copy()
+    self.assertTrue(owner.prepared_for(cp))
+    owner.owner.cp = owner.owner.cp.copy()
+    self.assertTrue(owner.prepared_for(cp))
+    self.assertTrue(owner.prepared_for(cp.as_reader()))
+    cp.mass = owner.owner.cp.mass = 0.
+    owner.snapshot['mass'] = -0.
+    self.assertTrue(owner.prepared_for(cp))
+    cp.mass = owner.owner.cp.mass = float('nan')
+    owner.snapshot['mass'] = float('nan')
+    self.assertFalse(owner.prepared_for(cp))
+
+  def test_custom_snapshot_callbacks_keep_original_semantics(self):
+    trace = []
+
+    class Meta(type):
+      def __eq__(self, other):
+        raise AssertionError('Metadata validation must not invoke metaclass equality')
+
+      def __hash__(self):
+        raise AssertionError('Metadata validation must not invoke metaclass hashing')
+
+    class EqualValue(metaclass=Meta):
+      def __eq__(self, other):
+        trace.append(other)
+        return True
+
+    owner, cp = self.context()
+    mass = owner.snapshot['mass']
+    owner.snapshot['mass'] = EqualValue()
+    self.assertTrue(owner.prepared_for(cp))
+    self.assertEqual(trace, [mass, mass])
+    self.assertIsNone(owner._prepared_cp_comparison)

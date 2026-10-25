@@ -163,5 +163,6 @@ class DrawerNativeTest(unittest.TestCase):
 
 @pytest.fixture(autouse=True)
 def mock_sign_graphics(monkeypatch):
+  monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_shapes.SpeedLimitShapes.outline', Mock())
   for name in ('draw_rectangle_rounded_lines_ex', 'draw_circle', 'draw_ring'):
     monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_widget.rl.' + name, Mock())

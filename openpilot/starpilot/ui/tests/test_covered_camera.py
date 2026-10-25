@@ -257,6 +257,21 @@ def test_large_camera_paint_is_unchanged(monkeypatch, request):
   assert 'paint' not in kwargs
 
 
+@pytest.mark.parametrize('profile', [runtime_app.Profile.LARGE, runtime_app.Profile.COMPACT])
+def test_shell_wires_native_gpu_status_layer(monkeypatch, request, profile):
+  camera = Mock()
+  box = object()
+  # Night Star: the 3X shell fits the GPU icon under the steering wheel (onroad_large_widgets.model_source_box)
+  monkeypatch.setattr('openpilot.starpilot.ui.onroad_large_widgets.model_source_box', lambda _rect, _state: box)
+  session = make_session(monkeypatch, request, profile, camera)
+  rect, state = rl.Rectangle(30, 30, 2100, 1020), Mock()
+  session.view.onroad.extra_overlays(rect, state)
+  if profile == runtime_app.Profile.COMPACT:
+    camera.render_model_source_layer.assert_called_once_with(rect, show_long_indicator=None)
+  else:
+    camera.render_model_source_layer.assert_called_once_with(rect, box)
+
+
 @pytest.mark.parametrize('choice', list(runtime_app.CameraViewChoice))
 @pytest.mark.parametrize('reverse', [False, True])
 def test_large_shell_forwards_the_saved_camera_and_temporary_reverse(monkeypatch, request, choice, reverse):

@@ -735,6 +735,18 @@
       "cases": 128,
       "seconds": 5.208667722000996,
       "source_sha256": "e5edc7933ea1a186c1b874deedbd2104a976c1d454241c58251a963b2b5953c0"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_pedal_parent_callers.py": {
+      "cases": 92,
+      "seconds": 272.3922869809985,
+      "source_sha256": "ae85b8e373d4d12c302e59baad88ee88dda4221e3e1d255b294e2dbca9889acf",
+      "reference": {
+        "revision": "d43477ec413a31c445f264a65dbcc805117ef168",
+        "run_id": 40128755737,
+        "artifact_id": 12574163616,
+        "shard": 12,
+        "results_sha256": "3484585f40bb30a502adf638949ca5b251252365917d6f0d0c90db962f9ee3d5"
+      }
     }
   },
   "reference": {

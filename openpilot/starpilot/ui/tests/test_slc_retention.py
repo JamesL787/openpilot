@@ -362,9 +362,7 @@ def test_compact_sign_keeps_accepted_value_without_pulsing_on_recovery(tmp_path)
   fonts.vertical_ink.return_value = (0, 20)
   fonts.horizontal_ink.return_value = (0, 20)
   renderer = CompactHudRenderer(fonts, Path('/unused'))
-  with patch('openpilot.starpilot.ui.onroad_compact_widgets.rl.draw_rectangle_rounded_lines_ex'), \
-       patch('openpilot.starpilot.ui.onroad_compact_widgets.rl.draw_circle'), \
-       patch('openpilot.starpilot.ui.onroad_compact_widgets.rl.draw_ring'):
+  with patch('openpilot.starpilot.ui.speed_limit_widget.rl.draw_rectangle_rounded_lines_ex'):
     for view in (before, held, recovered):
       renderer._speed_limit_sign(replace(view, appearance=replace(view.appearance, show_speed_limit_sign=True)))
   assert any(call.args[0] == '45' for call in fonts.draw.call_args_list)

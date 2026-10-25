@@ -91,8 +91,8 @@ def test_eps_recovery_never_bypasses_independent_vetoes(established_stock, fault
   before = (feedback.healthy_feedback_ns, feedback.healthy_native_ns, feedback.lateral_baseline_ns,
             feedback.lateral_source_ns, feedback.lateral_native_ns)
   rejected = feedback.observe(sm, cp, state, now, latched=True, intent_producer_session=producer)
-  if fault == 'brake' and cp.carFingerprint in (Ford.FORD_MUSTANG_MACH_E_MK1, Ford.FORD_ESCAPE_MK4):
-    # Stock Ford's qualified EPS/brake overlap preserves intent, never output.
+  if fault in ('brake', 'gas') and cp.carFingerprint in (Ford.FORD_MUSTANG_MACH_E_MK1, Ford.FORD_ESCAPE_MK4):
+    # Stock Ford's qualified EPS/pedal overlap preserves intent, never output.
     assert not rejected and feedback.temporary_host_qualified
     assert not native.lateralAllowed and not native.longitudinalAllowed
     assert before == (feedback.healthy_feedback_ns, feedback.healthy_native_ns, feedback.lateral_baseline_ns,

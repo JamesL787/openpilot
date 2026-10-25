@@ -25,8 +25,13 @@ def generate():
       # End the white backing inside the opaque rim, avoiding an outer white fringe.
       mask = radius <= 55 if name == 'disc' else (radius <= 59) & (radius >= 51)
       rgba[..., 3] = np.rint(coverage(mask, width, height) * 255).astype(np.uint8)
+    elif name == 'outline':
+      # Signed distance to a rounded rectangle; supersampling is offline only.
+      qx, qy = np.abs(xx) - 49, np.abs(yy) - 56
+      distance = np.hypot(np.maximum(qx, 0), np.maximum(qy, 0)) + np.minimum(np.maximum(qx, qy), 0) - 8
+      rgba[..., 3] = np.rint(coverage((distance >= -2) & (distance <= 0), width, height) * 255).astype(np.uint8)
     else:
-      half_height, wing, stem, head, outline = (14, 9, 3, 9, 1.4) if name == 'arrow_large' else (7, 5, 2.5, 5, 1)
+      half_height, wing, stem, head, outline = (14, 9, 3, 9, 1.4) if name == 'arrow_large' else (6, 4, 2, 4, 1)
       base = half_height - head
       points = ((-stem/2, -half_height), (stem/2, -half_height), (stem/2, base), (wing, base),
                 (0, half_height), (-wing, base), (-stem/2, base))

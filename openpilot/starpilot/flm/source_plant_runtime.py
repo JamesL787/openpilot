@@ -33,8 +33,11 @@ def start_original_capture(collector):
   adapter = collector.adapter
   try:
     collector.enable_original_source_capture(clock_contract=adapter.source_plant_clock)
-  except (OSError,ValueError):
+  except (OSError,ValueError) as error:
     adapter.source_plant_capture_error = 'original_source_clock_contract_unavailable'
+    from openpilot.starpilot.flm.source_observation_report import record_refusal
+    import time
+    record_refusal(collector, None, time.monotonic_ns(), adapter.source_plant_capture_error, error=error)
     adapter.current_physical_valid = False
     adapter.last_physical_ns = collector.last_qualified_response = 0
     return False

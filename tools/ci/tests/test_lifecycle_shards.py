@@ -52,6 +52,27 @@ class LifecycleShardTests(unittest.TestCase):
                 if any(helper.matches(identity, target) for target in shard)]
     self.assertCountEqual(selected, identities)
 
+  def test_measured_pedal_callers_keep_complete_module(self):
+    module = 'openpilot/starpilot/car/toyota/tests/test_pedal_parent_callers.py'
+    policy = helper.workload_policy()
+    measured = policy['modules'][module]
+    self.assertNotIn(module, policy['function_groups'])
+    self.assertEqual(measured['cases'], 92)
+    self.assertGreater(measured['seconds'], 100 * policy['unknown_seconds_per_case'])
+    self.assertEqual(len(measured['source_sha256']), 64)
+    self.assertEqual(measured['reference']['artifact_id'], 12574163616)
+    prefix = module.removesuffix('.py').replace('/', '.') + '.'
+    identities = [prefix + f'test_case[{index}]' for index in range(92)]
+    identities += [f'other.test_case[{index}]' for index in range(100)]
+    targets = [module, 'other.py']
+    shards = helper.partition(targets, identities, 2)
+    self.assertEqual(shards, [[module], ['other.py']])
+    self.assertCountEqual([target for shard in shards for target in shard], targets)
+    selected = [identity for shard in shards for identity in identities
+                if any(helper.matches(identity, target) for target in shard)]
+    self.assertCountEqual(selected, identities)
+    self.assertEqual(shards, helper.partition(list(reversed(targets)), list(reversed(identities)), 2))
+
   def test_only_large_reviewed_heavy_functions_split_into_exact_parameter_leaves(self):
     heavy = 'openpilot/starpilot/car/toyota/tests/test_legacy_advert_callers.py'
     prefix = heavy.removesuffix('.py').replace('/', '.') + '.'

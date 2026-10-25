@@ -133,3 +133,48 @@ class TestControllerExtensions(unittest.TestCase):
     cp.passive = True
     configure_controller(SimpleNamespace(CP=cp, CC=controller), SimpleNamespace())
     self.assertIsNone(controller.manual_turn_inputs)
+
+
+class TestAngleSnapshotParity(unittest.TestCase):
+  def test_angle_delay_reaches_pinned_bp7_without_changing_curvature_snapshot(self):
+    import openpilot.cereal.messaging as messaging
+    from openpilot.selfdrive.modeld.constants import ModelConstants
+    from opendbc.bluepilot_lateral.core.angle import AngleController, Inputs
+    from opendbc.bluepilot_lateral.tests import reference
+    from dataclasses import replace
+
+    now = 10_000_000_000
+    model = messaging.new_message('modelV2')
+    model.modelV2.orientationRate.z = [5. * (.001 + .004 * value) for value in ModelConstants.T_IDXS]
+    delay = messaging.new_message('lateralDelay')
+    class Reader:
+      alive = {'modelV2': True, 'lateralDelay': True}
+      valid = dict(alive)
+      logMonoTime = {'modelV2': now, 'lateralDelay': now}
+      def __getitem__(self, key):
+        return model.modelV2 if key == 'modelV2' else delay.lateralDelay
+    provider = ManualTurnInputs.__new__(ManualTurnInputs)
+    vars(provider)['sm'] = Reader()
+    provider.enabled = True
+    with patch('openpilot.starpilot.controller_extensions.time.monotonic_ns', return_value=now):
+      for value in (.05, .10, .125, .15, .30):
+        delay.lateralDelay.lateralDelay = value
+        snapshot = provider.lateral_snapshot(5., angle=True)
+        self.assertIsNotNone(snapshot)
+        self.assertAlmostEqual(snapshot[2], min(.15, max(.10, value)))
+        self.assertAlmostEqual(provider.lateral_snapshot(5.)[2], min(.4, max(.2, value)))
+        adapted, upstream = AngleController(low_gain=1., high_gain=1.05), reference.Angle(CAR.FORD_MUSTANG_MACH_E_MK1)
+        for _ in range(20):
+          common = Inputs(active=True, speed=5., measured_curvature=.001, desired_curvature=.001,
+                          yaw_predictions=tuple(snapshot[0].orientationRate.z), time_indices=tuple(snapshot[1]), lateral_delay=snapshot[2])
+          command = adapted.step(common)
+          expected = upstream.step(replace(common, lateral_delay=delay.lateralDelay.lateralDelay))
+          self.assertTrue(command.active)
+          self.assertAlmostEqual(command.path_angle, expected.path_angle, places=12)
+      provider.sm.logMonoTime['lateralDelay'] = now - 1_000_000_001
+      self.assertAlmostEqual(provider.lateral_snapshot(5., angle=True)[2], .15)
+      self.assertAlmostEqual(provider.lateral_snapshot(5.)[2], .2)
+      for stamp in (0, now + 1, now - 100_000_001):
+        provider.sm.logMonoTime['modelV2'] = stamp
+        self.assertIsNone(provider.lateral_snapshot(5., angle=True))
+        self.assertIsNone(provider.lateral_snapshot(5.))

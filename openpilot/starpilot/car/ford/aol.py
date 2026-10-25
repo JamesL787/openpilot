@@ -149,20 +149,20 @@ def temporary_eps_restriction(cp, state):
       state.steerFaultTemporary and not state.steerFaultPermanent and state.canValid and not state.canTimeout and
       state.cruiseState.available and not state.cruiseState.enabled and
       state.gearShifter == structs.CarState.GearShifter.drive and
-      not state.regenBraking and not state.gasPressed and
+      not state.regenBraking and
       not state.doorOpen and not state.seatbeltUnlatched and not state.accFaulted and
       not state.vehicleSensorsInvalid and not state.steeringDisengage and not state.buttonEvents)
   except (AttributeError, KeyError, IndexError, TypeError, ValueError, OverflowError):
     return False
 
 
-def temporary_eps_brake_recovery(cp, state):
-  """Lateral-only intent may outlive EPS loss while the brake remains held."""
+def temporary_eps_pedal_recovery(cp, state):
+  """Retain only existing LAT intent through EPS recovery with a pedal held."""
   try:
     return bool(qualified(cp, marked_only=True) and
-      state.brakePressed and not state.steerFaultTemporary and not state.steerFaultPermanent and
+      (state.brakePressed or state.gasPressed) and not state.steerFaultTemporary and not state.steerFaultPermanent and
       state.canValid and not state.canTimeout and state.cruiseState.available and not state.cruiseState.enabled and
-      state.gearShifter == structs.CarState.GearShifter.drive and not state.regenBraking and not state.gasPressed and
+      state.gearShifter == structs.CarState.GearShifter.drive and not state.regenBraking and
       not state.doorOpen and not state.seatbeltUnlatched and not state.accFaulted and
       not state.vehicleSensorsInvalid and not state.steeringDisengage and not state.buttonEvents)
   except (AttributeError, KeyError, IndexError, TypeError, ValueError, OverflowError):

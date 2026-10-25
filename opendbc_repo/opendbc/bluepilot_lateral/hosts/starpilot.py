@@ -93,7 +93,7 @@ class Host:
   def update(self, CC, CS):
     if self.inputs is not None:
       self.inputs.update()
-    snapshot = self.inputs.lateral_snapshot(CS.out.vEgoRaw) if self.inputs is not None else None
+    snapshot = self.inputs.lateral_snapshot(CS.out.vEgoRaw, angle=True) if self.inputs is not None else None
     model, times, delay, _ = snapshot if snapshot is not None else (None, (), 0.15, True)
     aol = self.cp.alternativeExperience == 32
     ordinary = CC.enabled and CS.out.cruiseState.enabled and not CS.out.gasPressed and not CS.out.brakePressed

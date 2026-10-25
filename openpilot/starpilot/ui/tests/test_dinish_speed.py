@@ -11,7 +11,7 @@ import pyray as rl
 
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile, default_font_directory, font_filename, font_path, validate_bitmap_font
 from openpilot.starpilot.ui.onroad_customization import default_document, validate_document
-from openpilot.starpilot.ui.onroad_state import slc_controls
+from openpilot.starpilot.ui.onroad_state import ObservationKind, slc_controls
 from openpilot.starpilot.ui.tests.test_speed_stack import road
 from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, validate_layout_for_viewport
 
@@ -91,10 +91,10 @@ def test_large_sign_is_secondary_to_set_speed_at_the_saved_position():
           UnifiedSpeedWidget(fonts).render(rl.Rectangle(30, 30, 1800, 1020), current)
         calls = [call for call in calls if call[-1].a == 255]
         posted = next(call for call in calls if call[0] == '120' and call[1] == FontRole.BOLD)
-        assert abs(posted[2] - 58 * .95 * Profile.COMPACT.font_scale / Profile.LARGE.font_scale) < 1e-6
+        assert abs(posted[2] - 58 * 1.25 * Profile.COMPACT.font_scale / Profile.LARGE.font_scale) < 1e-6
         left, right = fonts.horizontal_ink('120', FontRole.BOLD, posted[2])
-        assert abs(posted[3] + (left + right) / 2 - 428.05) < 1e-6
-        assert posted[4] + fonts.vertical_ink('120', FontRole.BOLD, posted[2])[0] == 142.5
+        assert abs(posted[3] + (left + right) / 2 - 445.75) < 1e-6
+        assert posted[4] + fonts.vertical_ink('120', FontRole.BOLD, posted[2])[0] == 157.5
         set_calls = [call for call in calls if call[1] == FontRole.SET_SPEED]
         assert bool(set_calls) == show_set
         if set_calls:
@@ -212,9 +212,9 @@ def test_native_signs_offsets_and_captions_fit_their_touch_targets():
                           call[4]+fonts.vertical_ink(call[0], call[1], call[2])[1])
                  for call in calls if call[-1].a == 255}
           if profile == Profile.LARGE:
-            assert ink['SET'][2] < ink['SPEED'][0]
+            assert ink['SET'][2] < ink['OSM'][0]
           else:
-            assert 'SET' not in ink and 'SPEED' in ink
+            assert 'SET' not in ink and 'OSM' in ink
           assert ink['120'][3] < ink['+10'][1]
           bounds = speed_limit_bounds(profile, current)
           assert bounds is not None
@@ -257,7 +257,7 @@ def test_compact_preview_sprite_keeps_the_sign_offset_arrow_and_override_cross()
         rl.unload_image(image)
       assert np.array_equal(direct[..., 3], np.asarray(rebuilt)[..., 3])
       assert slot['offsetX'] == slot['offsetY'] == 0
-      assert (slot['width'], slot['height']) == (118, min(176, Profile.COMPACT.size[1] - y))
+      assert (slot['width'], slot['height']) == (118, min(176, 240-y))
       if scene == 'slc_retained':
         assert np.any(direct[..., 3]), (y, scene)
   finally:
@@ -323,24 +323,28 @@ def test_both_sign_styles_contain_text_and_arrows_at_each_profile_scale():
         widget = SpeedLimitWidget(fonts, profile)
         scale = widget.scale
         positions = ((88, 75), (188, 95), (1642, 882)) if profile == Profile.LARGE else ((330, 20), (100, 0), (358, 108))
-        for vienna, (posted, offset), elapsed, (saved_x, y), direction in product(
-            (False, True), ((65, 5), (120, 10), (130, -10), (145, -137), (199, -191), (200, -192), (55, 0)),
-            (0, 350_000_000, 2_100_000_000), positions, (-1, 1)):
-          if not vienna and posted > 145:
-            continue
-          case = (profile, vienna, posted, offset, elapsed, saved_x, y, direction)
+        for vienna, (source, heading), (posted, offset), elapsed, (saved_x, y), direction, retained in product(
+            (False, True), (('map', 'OSM'), ('vision', 'VISION')),
+            ((65, 5), (120, 10), (130, -10), (145, -137), (199, -191), (200, -192), (252, -244), (406, -261), (55, 0)),
+            (0, 350_000_000, 2_100_000_000), positions, (-1, 1), (False, True)):
+          case = (profile, vienna, source, posted, offset, elapsed, saved_x, y, direction, retained)
           current = state(observed_ns=10_000_000_000+elapsed)
           key = 'cruise_limits' if profile == Profile.LARGE else 'speed_limit'
           current.customization['layouts'][profile][key].update(x=saved_x, y=y)
           x = saved_x+184 if profile == Profile.LARGE else saved_x
           current = replace(current, speed_mps=(posted+offset+direction*2)/3.6,
             appearance=replace(current.appearance, use_vienna_sign=vienna),
-            speed_limit=replace(current.speed_limit, speed_limit_mps=posted/3.6,
+            speed_limit=replace(current.speed_limit, source=source, speed_limit_mps=posted/3.6,
               pending_speed_limit_mps=posted/3.6, presentation_adjusted_limit_mps=(posted+offset)/3.6))
+          if retained:
+            current = replace(current, speed_limit=replace(current.speed_limit, kind=ObservationKind.STALE,
+              speed_limit_mps=None, pending_speed_limit_mps=None, last_received_speed_limit_mps=posted/3.6,
+              last_received_adjusted_limit_mps=(posted+offset)/3.6))
           calls = []
           with patch.object(fonts, 'draw', lambda *args, sink=calls: sink.append(args)), \
                patch.object(widget.shapes, 'arrow') as arrow_draw:
             widget.render(current)
+          assert sum(call[0] == 'LAST' for call in calls) == int(retained), case
           ink = []
           for text, role, size, left, top, color in calls:
             a, b = fonts.horizontal_ink(text, role, size)
@@ -353,43 +357,48 @@ def test_both_sign_styles_contain_text_and_arrows_at_each_profile_scale():
               # The original compact no-offset numeral carries the manual confirmation pulse.
               # Other Vienna layouts keep black numerals while pulsing the ring.
               expected_color = ((170, 115, 235, 255)
-                                if profile == Profile.COMPACT and not offset and elapsed == 350_000_000
+                                if role == FontRole.BOLD and not retained and profile == Profile.COMPACT and not offset and elapsed == 350_000_000
                                 else (0, 0, 0, 255))
               assert (color.r, color.g, color.b, color.a) == expected_color, case
             else:
-              assert x+7*scale <= box[0] < box[2] <= x+111*scale, case
+              # The inner stroke ends at x+4/x+114; keep one clear pixel beside the glyphs.
+              assert x+5*scale <= box[0] < box[2] <= x+113*scale, case
               sign_height = 176 if profile == Profile.COMPACT and offset else 132
               assert y+7*scale <= box[1] < box[3] <= y+(sign_height-7)*scale, case
             ink.append((text, box))
             nominal_size = size/widget.text_scale
             if role == FontRole.BOLD:
-              if profile == Profile.COMPACT and not vienna:
-                assert nominal_size == (50 if len(text) <= 2 else 42), case
-              elif profile == Profile.COMPACT and vienna and not offset:
-                assert nominal_size == (58 if len(text) <= 2 else 48), case
+              if not vienna:
+                assert nominal_size == ((50 if len(text)<=2 else 42) if profile == Profile.COMPACT else 58), case
               else:
-                assert 31.99 <= nominal_size <= (48.01 if len(text)>2 else 54.01) if vienna else nominal_size == 58, case
+                maximum_size = 48 if len(text)>2 else 58 if retained or profile == Profile.COMPACT and not offset else 54
+                assert 31.99 <= nominal_size <= maximum_size+.01, case
             elif role == FontRole.MEDIUM:
-              if profile == Profile.COMPACT and not vienna:
-                assert nominal_size == 30, case
-              else:
-                assert 23.99 <= nominal_size <= 36.01 if vienna else nominal_size == 36, case
-          arrow_draw.assert_called_once()
-          size, ax, ay, arrow_direction, _ = arrow_draw.call_args.args
-          assert size == ('compact' if vienna else 'large'), case
-          assert arrow_direction == direction, case
-          glyph = glyphs[size]
-          left, top, right, bottom = glyph if direction>0 else (-glyph[2], -glyph[3], -glyph[0], -glyph[1])
-          arrow = ax+left*scale, ay+top*scale, ax+right*scale, ay+bottom*scale
-          if vienna:
-            assert all((px-cx)**2+(py-cy)**2 <= (47*scale)**2
-                       for px, py in product((arrow[0], arrow[2]), (arrow[1], arrow[3]))), case
+              assert 23.99 <= nominal_size <= 36.01 if vienna else nominal_size == (30 if profile == Profile.COMPACT else 36), case
+          if retained:
+            arrow_draw.assert_not_called()
           else:
-            assert x+7*scale <= arrow[0] < arrow[2] <= x+111*scale, case
-            assert y+7*scale <= arrow[1] < arrow[3] <= y+125*scale, case
-            assert all(box[2]+4*scale <= arrow[0] for text, box in ink if text in ('SPEED', 'LIMIT')), (case, ink, arrow)
-            assert arrow[3]+6*scale <= next(box[1] for text, box in ink if text==str(posted))
-          ink.append(('arrow', arrow))
+            arrow_draw.assert_called_once()
+            size, ax, ay, arrow_direction, _ = arrow_draw.call_args.args
+            assert size == ('compact' if vienna else 'large'), case
+            assert arrow_direction == direction, case
+            glyph = glyphs[size]
+            left, top, right, bottom = glyph if direction>0 else (-glyph[2], -glyph[3], -glyph[0], -glyph[1])
+            arrow = ax+left*scale, ay+top*scale, ax+right*scale, ay+bottom*scale
+            if vienna:
+              assert all((px-cx)**2+(py-cy)**2 <= (47*scale)**2
+                         for px, py in product((arrow[0], arrow[2]), (arrow[1], arrow[3]))), case
+              label = next(box for text, box in ink if text == heading)
+              assert abs(arrow[0] - label[2] - 6*scale) < 1e-6, case
+              assert abs((label[0] + arrow[2]) / 2 - cx) < 1e-6, case
+              assert abs((label[1] + label[3]) / 2 - (arrow[1] + arrow[3]) / 2) < 1e-6, case
+              assert label[3]-label[1] <= arrow[3]-arrow[1] <= 1.25*(label[3]-label[1]), case
+            else:
+              assert x+7*scale <= arrow[0] < arrow[2] <= x+111*scale, case
+              assert y+7*scale <= arrow[1] < arrow[3] <= y+125*scale, case
+              assert all(box[2]+4*scale <= arrow[0] for text, box in ink if text in (heading, 'LIMIT')), (case, ink, arrow)
+              assert arrow[3]+6*scale <= next(box[1] for text, box in ink if text==str(posted))
+            ink.append(('arrow', arrow))
           for index, (_, a) in enumerate(ink):
             for _, b in ink[index+1:]:
               assert not (a[0]<b[2] and a[2]>b[0] and a[1]<b[3] and a[3]>b[1]), (case, a, b)

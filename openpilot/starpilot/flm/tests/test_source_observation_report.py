@@ -111,3 +111,74 @@ def test_existing_report_writer_exposes_bounded_observations_without_application
     assert not actual['application']['applied']
     assert path.stat().st_size <= READ_MAX_BYTES
     assert (receiver_state(sm), tuple(collector.ready), collector.reason) == before
+
+
+def test_stall_log_exports_original_receiver_refusal_without_granting_application():
+  import json
+  from openpilot.starpilot.flm.source_stall_log import SourceStallLog, WAIT_NS
+  with fixture() as (collector, cp, sm):
+    record_refusal(collector, sm, BASE, 'receiver_health')
+    before = (receiver_state(sm), tuple(collector.ready), collector.reason)
+    emitted = []
+    logger = SourceStallLog(emitted.append)
+    logger.observe(collector, now_ns=BASE, bootstrap_allowed=True)
+    assert not emitted
+    logger.observe(collector, now_ns=BASE+WAIT_NS, bootstrap_allowed=True)
+    assert len(emitted) == 1
+    value = emitted[0]
+    assert value['phase'] == 'original_pose_unavailable'
+    assert value['controlMonoTime'] == collector.ready[-1][0].control_ns
+    assert value['applyMonoTime'] == collector.ready[-1][1].apply_ns
+    assert value['sourceObservation'] == refusal_report(collector)
+    assert len(json.dumps(value)) < 8192
+    assert (receiver_state(sm), tuple(collector.ready), collector.reason) == before
+    assert not collector.original_source_capture.rows
+
+
+def test_stall_logging_is_rate_limited_across_collector_replacement_and_sink_failure():
+  from openpilot.starpilot.flm.source_stall_log import SourceStallLog, WAIT_NS, INTERVAL_NS
+  attempted = []
+
+  def broken_sink(value):
+    attempted.append(value)
+    raise OSError('declared unavailable log transport')
+
+  logger = SourceStallLog(broken_sink)
+  logger.observe(None, now_ns=BASE, bootstrap_allowed=True)
+  for tick in range(1000):
+    logger.observe(None, now_ns=BASE+WAIT_NS+tick, bootstrap_allowed=True)
+  assert len(attempted) == 1
+  logger.observe(None, now_ns=BASE+WAIT_NS+INTERVAL_NS, bootstrap_allowed=False)
+  assert len(attempted) == 2
+  assert attempted[-1]['phase'] == 'bootstrap_deferred'
+
+
+def test_context_failure_log_keeps_old_pose_clock_and_bounds_error():
+  from types import SimpleNamespace
+  from openpilot.starpilot.flm.source_stall_log import SourceStallLog, WAIT_NS
+  with fixture() as (collector, cp, sm):
+    original = SimpleNamespace(mono_ns=BASE-100_000_001)
+    collector.original_source_capture.rows.append(original)
+    emitted = []
+    logger = SourceStallLog(emitted.append)
+    logger.observe(collector, now_ns=BASE, bootstrap_allowed=True)
+    logger.observe(collector, now_ns=BASE+WAIT_NS, bootstrap_allowed=True, context_error=ValueError('old original clock '+200*'x'))
+    assert emitted[0]['phase'] == 'source_context_rejected'
+    assert len(emitted[0]['contextError']) == 192
+    assert collector.original_source_capture.rows == [original]
+    assert original.mono_ns == BASE-100_000_001
+
+
+def test_actual_observer_exception_is_reported_with_existing_refusal_intact():
+  from unittest import mock
+  from openpilot.selfdrive.locationd.helpers import Pose
+  with fixture() as (collector, cp, sm):
+    before = (receiver_state(sm), tuple(collector.ready))
+    with mock.patch.object(Pose, 'from_device_motion', side_effect=ValueError('declared original pose decode failure')):
+      assert observe(collector, cp, sm, BASE) is None
+    report = refusal_report(collector)
+    assert report['lastRefusal'] == {'reason': 'source_observation_exception', 'observedMonoTime': BASE}
+    assert report['lastException'] == {'observedMonoTime': BASE, 'type': 'ValueError', 'message': 'declared original pose decode failure'}
+    assert not collector.original_source_capture.rows
+    assert collector.reason == 'initializing'
+    assert (receiver_state(sm), tuple(collector.ready)) == before

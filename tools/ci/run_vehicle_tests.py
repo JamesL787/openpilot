@@ -24,6 +24,7 @@ from tools.ci import lifecycle_shards, vehicle_pytest
 # Representative production callers plus their source/native refusal cases.
 # The emitted selected_test_ids record exact parametrized configurations.
 AOL_LIFECYCLE_TARGETS = (
+  "opendbc_repo/opendbc/car/hyundai/tests/test_torque_ev_deferred_takeover.py",
   'openpilot/starpilot/tests/test_ford_bluepilot_aol.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_bluepilot_aol.py',
   'openpilot/starpilot/aol/tests/test_hkg_early_long_withdrawal.py',
@@ -340,6 +341,7 @@ RELEASE_TARGETS = (
   "opendbc_repo/opendbc/car/hyundai/tests/test_classic_aol_dash.py",
   "opendbc_repo/opendbc/car/hyundai/tests/test_g90_continuity.py",
   "opendbc_repo/opendbc/car/hyundai/tests/test_classic_deferred_takeover.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_torque_ev_deferred_takeover.py::test_release_native_refuses_alpha_torque_long",
   "opendbc_repo/opendbc/car/hyundai/tests/test_disable_response.py",
   "openpilot/starpilot/aol/tests/test_angle_stop_native_feedback.py",
   "openpilot/starpilot/aol/tests/test_angle_stop_fault_guards.py",

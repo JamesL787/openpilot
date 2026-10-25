@@ -24,7 +24,7 @@ def _snapshot(collector, sm, now_ns, reason):
   }
 
 
-def record_refusal(collector, sm, now_ns, reason):
+def record_refusal(collector, sm, now_ns, reason, *, error=None):
   """Existing rejected branches only; at most two snapshots per collector."""
   try:
     counts = getattr(collector, '_source_observation_refusals', None)
@@ -33,6 +33,8 @@ def record_refusal(collector, sm, now_ns, reason):
     if reason in counts or len(counts) < 24:
       counts[reason] = counts.get(reason, 0) + 1
     collector._source_observation_current_refusal = (reason, now_ns)
+    if error is not None:
+      collector._source_observation_exception = {'observedMonoTime': now_ns, 'type': type(error).__name__, 'message': str(error)[:192]}
     if not getattr(collector, '_source_observation_first_attempted', False):
       collector._source_observation_first_attempted = True
       collector._source_observation_first_refusal = _snapshot(collector, sm, now_ns, reason)
@@ -51,6 +53,7 @@ def refusal_report(collector):
     'scope': 'learner receiver only; not the Controls publisher admission reason',
     'counts': dict(getattr(collector, '_source_observation_refusals', {})),
     'lastRefusal': None if current is None else {'reason': current[0], 'observedMonoTime': current[1]},
+    'lastException': getattr(collector, '_source_observation_exception', None),
     'firstRefusal': getattr(collector, '_source_observation_first_refusal', None),
     'firstReadyPairRefusal': getattr(collector, '_source_observation_ready_refusal', None),
   }

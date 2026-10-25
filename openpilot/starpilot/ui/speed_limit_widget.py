@@ -14,6 +14,7 @@ from openpilot.starpilot.ui.unified_speed_presentation import displayed_adjusted
 
 INK = rl.Color(241, 246, 243, 255)
 MUTED = rl.Color(190, 208, 202, 255)
+SOURCE_LABELS = {'dashboard': 'DASH', 'map': 'OSM', 'vision': 'VISION', 'mapbox': 'NAV'}
 
 
 def draw_text(fonts, text, role, size, x, y, color=INK):
@@ -77,6 +78,7 @@ class SpeedLimitWidget:
 
   def _sign(self, state: OnroadState, bounds, now: float) -> None:
     shown, obs = resolve_unified_speed(state), state.speed_limit
+    heading = 'LAST' if str(obs.kind) != 'valid' else SOURCE_LABELS.get(shown.source, 'SPEED')
     x, top = bounds[0] + 12, bounds[1] + 12
     scale = self.scale
     pending = shown.pending and not obs.automatic_adoption_pending
@@ -97,26 +99,27 @@ class SpeedLimitWidget:
       self.fonts.draw(text, role, size * self.text_scale, origin, ink_top - a, color)
       return origin + left, ink_top, origin + right, ink_top + b - a
 
-    if self.profile == Profile.COMPACT and state.appearance.use_vienna_sign and not shown.offset_text:
-      cx, cy = x + 59, top + 67
-      rl.draw_circle(int(cx), int(cy), 59, rl.WHITE)
-      rl.draw_ring(rl.Vector2(cx, cy), 47, 59, 0, 360, 64, self.pulse.color(rl.Color(201, 34, 49, 255), now))
-      color = self.pulse.color(rl.BLACK, now)
-      size = 58 if len(shown.posted_text) <= 2 else 48
-      measured = self.fonts.measure(shown.posted_text, FontRole.BOLD, size)
-      origin, number_top = cx - measured.width / 2, cy - measured.height / 2
-      self.fonts.draw(shown.posted_text, FontRole.BOLD, size, origin, number_top, color)
-      number = origin, number_top, origin + measured.width, number_top + measured.height
-    elif state.appearance.use_vienna_sign:
+    if state.appearance.use_vienna_sign:
       cx, cy = x + 59 * scale, top + 67 * scale
+      black = rl.Color(0, 0, 0, 255)
       self.shapes.circle(cx, cy, self.pulse.color(rl.Color(201, 34, 49, 255), now))
-      # Keep black-on-white numerals stable; the ring carries manual confirmation pulses.
-      color = rl.Color(0, 0, 0, 255) if pending else self.pulse.color(rl.Color(0, 0, 0, 255), now)
-      size = (54 if pending else 58) if len(shown.posted_text) <= 2 else 48
-      number_center = cy - 7 * scale if shown.offset_text else cy + (7 * scale if pending else 0)
+      heading_bounds = centered(heading, FontRole.SEMI_BOLD, 16, top + 36 * scale, black,
+                                x + (51 if arrow_direction else 59) * scale)
+      # Preserve the compact no-offset numeral pulse; other pending numerals stay black.
+      pulse_number = self.profile == Profile.COMPACT and not shown.offset_text
+      color = self.pulse.color(black, now) if pulse_number or not pending else black
+      size = (54 if pending and not pulse_number else 58) if len(shown.posted_text) <= 2 else 48
+      number_center = cy + (2 if shown.offset_text else 11) * scale
+      offset_half_width = offset_height = 0
+      if shown.offset_text:
+        left, right, a, b = ink(shown.offset_text, FontRole.MEDIUM, 24)
+        offset_half_width, offset_height = (right - left) / 2, b - a
       while True:
         left, right, a, b = ink(shown.posted_text, FontRole.BOLD, size)
-        if ((right - left) / 2) ** 2 + (abs(number_center - cy) + (b - a) / 2) ** 2 <= (47 * scale) ** 2 or size <= 32:
+        offset_fits = (not shown.offset_text or offset_half_width ** 2 +
+                       (number_center + (b - a) / 2 + 4 * scale + offset_height - cy) ** 2 <= (47 * scale) ** 2)
+        if (number_center - (b - a) / 2 >= top + 52 * scale and
+            ((right - left) / 2) ** 2 + (abs(number_center - cy) + (b - a) / 2) ** 2 <= (47 * scale) ** 2 and offset_fits) or size <= 32:
           break
         size -= 2
       number_top = number_center - (b - a) / 2
@@ -134,13 +137,14 @@ class SpeedLimitWidget:
         rect = rl.Rectangle(x + 2, top, 116, 132 + (44 if shown.offset_text else 0))
         rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(rect.x + 8, rect.y + 8, rect.width - 16, rect.height - 16),
                                          .14, 16, 2, white)
-        for label, size, label_top, role in (('SPEED', 20, 18, FontRole.SEMI_BOLD),
+        for label, size, label_top, role in ((heading, 20, 18, FontRole.SEMI_BOLD),
                                               ('LIMIT', 20, 36, FontRole.SEMI_BOLD),
                                               (shown.posted_text, 50 if len(shown.posted_text) <= 2 else 42, 66, FontRole.BOLD)):
           measured = self.fonts.measure(label, role, size)
           origin = rect.x + (rect.width - measured.width) / 2
           if arrow_direction and role == FontRole.SEMI_BOLD:
-            origin -= 6  # Keep four pixels between the measured header ink and the pending arrow.
+            _, ink_right = self.fonts.horizontal_ink(label, role, size)
+            origin = min(origin - 6, x + 84 - ink_right)
           self.fonts.draw(label, role, size, origin, rect.y + label_top, white)
           if label == shown.posted_text:
             number = origin, rect.y + label_top, origin + measured.width, rect.y + label_top + measured.height
@@ -149,16 +153,15 @@ class SpeedLimitWidget:
           self.fonts.draw(shown.offset_text, FontRole.MEDIUM, 30, rect.x + (rect.width - measured.width) / 2,
                           rect.y + 118, secondary)
       else:
-        rect = rl.Rectangle(x + 2 * scale, top + 2 * scale, 114 * scale, 128 * scale)
-        rl.draw_rectangle_rounded(rect, .1, 16, rl.Color(10, 17, 19, 230))
-        rl.draw_rectangle_rounded_lines_ex(rect, .1, 16, 2 * scale, white)
-        for label, y in (('SPEED', top + 11 * scale), ('LIMIT', top + 27 * scale)):
-          centered(label, FontRole.SEMI_BOLD, 20, y, white, x + (53 if arrow_direction else 59) * scale)
+        self.shapes.outline(x + 59 * scale, top + 66 * scale, white)
+        for label, y in ((heading, top + 11 * scale), ('LIMIT', top + 27 * scale)):
+          centered(label, FontRole.SEMI_BOLD, 20, y, white, x + (52 if arrow_direction else 59) * scale)
         number = centered(shown.posted_text, FontRole.BOLD, 58, top + (50 if shown.offset_text else 61) * scale, white)
         if shown.offset_text:
           centered(shown.offset_text, FontRole.MEDIUM, 36, top + 98 * scale, secondary)
     if arrow_direction:
-      ax, ay = ((x + 59 * scale, top + 29 * scale) if state.appearance.use_vienna_sign else (x + 99 * scale, top + 26 * scale))
+      ax, ay = ((heading_bounds[2] + 11 * scale, (heading_bounds[1] + heading_bounds[3]) / 2)
+                if state.appearance.use_vienna_sign else (x + 99 * scale, top + 26 * scale))
       arrow_color = color if state.appearance.use_vienna_sign else white
       self.shapes.arrow('compact' if state.appearance.use_vienna_sign else 'large', ax, ay, arrow_direction, arrow_color)
     if obs.driver_override_active:

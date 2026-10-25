@@ -26,6 +26,7 @@ from openpilot.starpilot.ui.tests.test_unified_speed_native import foreground_ca
 def drawing_guard(monkeypatch):
   monkeypatch.setattr(rl, 'draw_line_ex', Mock())
   monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_shapes.SpeedLimitShapes.arrow', Mock())
+  monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_shapes.SpeedLimitShapes.outline', Mock())
   monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_shapes.SpeedLimitShapes.circle', Mock())
 
 
@@ -551,6 +552,7 @@ def test_compact_us_sign_keeps_camera_visible_at_saved_position(speed, size):
   outline.assert_called_once()
   rect = outline.call_args.args[0]
   assert (rect.x, rect.y, rect.width, rect.height) == (210, 38, 100, 116)
+  assert outline.call_args.args[1:4] == (.14, 16, 2)
   assert [(call.args[0], call.args[2]) for call in foreground_calls(fonts.draw)] == [("SPEED", 20), ('LIMIT', 20), (str(speed), size)]
   assert foreground_calls(fonts.draw)[0].args[3:5] == (255, 48)
 

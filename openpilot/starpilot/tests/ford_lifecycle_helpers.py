@@ -277,7 +277,7 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
           fields = dict(values)
           if name == 'EngBrakeData' and brake:
             fields['BpedDrvAppl_D_Actl'] = 2
-          if name == 'EngVehicleSpThrottle' and fault == 'gas':
+          if name == 'EngVehicleSpThrottle' and fault in ('gas', 'temporary-eps-gas'):
             fields['ApedPos_Pc_ActlArb'] = 25
           if name == 'BrakeSysFeatures' and fault == 'rx-quality':
             fields['VehVActlBrk_D_Qf'] = 0
@@ -285,7 +285,7 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
           if not (fault == 'source-loss' and name == 'Yaw_Data_FD1'):
             accepted = safety.safety_rx_hook(joined_packet(frame))
             assert bool(accepted) == (not (fault == 'rx-quality' and name == 'BrakeSysFeatures'))
-          pedal = name == 'EngVehicleSpThrottle' and fault == 'gas' or name == 'EngBrakeData' and brake
+          pedal = name == 'EngVehicleSpThrottle' and fault in ('gas', 'temporary-eps-gas') or name == 'EngBrakeData' and brake
           if getattr(monkeypatch, 'ford_native_first_pedal', False) and pedal and name not in delayed_pedals_seen:
             # The real native RX already consumed this frame above. Deliver it
             # to the host on the next update, retaining native authority now.
@@ -302,7 +302,7 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
             mask=request,
             heartbeat=heartbeat and fault != 'heartbeat',
             speed=(3.1 + .12 * ((steps // 2) % 12) / 11 if getattr(monkeypatch, "ford_speed_window", False) else 15.0),
-            eps=1 if fault == 'temporary-eps' else 0,
+            eps=1 if fault in ('temporary-eps', 'temporary-eps-gas') else 0,
           )
         assert native.tick == steps
         safety.safety_tick()
@@ -396,7 +396,7 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
         qualified_samples += 1
         parsed_before_producer = state.to_dict()
         assert (main_off or state.cruiseState.available or availability_transition and not state.cruiseState.enabled) and not state.steeringPressed
-        assert bool(state.gasPressed) == (fault == 'gas' and not any(frame[0] == 0x204 for frame in delayed_pedal_frames))
+        assert bool(state.gasPressed) == (fault in ('gas', 'temporary-eps-gas') and not any(frame[0] == 0x204 for frame in delayed_pedal_frames))
         axis, sd_state, command = drive(
           steps,
           car_state_message=published['carState'],
@@ -532,11 +532,25 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
         for _ in range(40):
           state, axis, sd_state, command = step()
         assert command.latActive and not command.longActive
-        for _ in range(40):
-          state, axis, sd_state, command = step(fault='temporary-eps')
+        eps_gas = getattr(monkeypatch, 'ford_eps_gas', False)
+        if eps_gas:
+          # Route 3b: gas starts 40 ms before the 150 ms EPS restriction.
+          for _ in range(4):
+            state, axis, sd_state, command = step(fault='gas')
+            assert host.aol_card_intent.allowed_latch and command.latActive and not command.longActive
+        for _ in range(15 if eps_gas else 40):
+          state, axis, sd_state, command = step(fault='temporary-eps-gas' if eps_gas else 'temporary-eps')
+          if eps_gas:
+            assert host.aol_card_intent.allowed_latch, transition_trace[-40:]
+            assert not command.longActive
+            if state.steerFaultTemporary:
+              assert not command.latActive, transition_trace[-40:]
         assert host.aol_card_intent.allowed_latch and not command.latActive, transition_trace[-40:]
         for _ in range(40):
-          state, axis, sd_state, command = step()
+          state, axis, sd_state, command = step(fault='gas' if eps_gas else None)
+          if eps_gas:
+            assert host.aol_card_intent.allowed_latch, 'Route3b EPS recovery with gas erased AOL intent'
+            assert not command.longActive
         assert command.latActive and not command.longActive
         for _ in range(30):
           state, axis, sd_state, command = step(main_off=True)

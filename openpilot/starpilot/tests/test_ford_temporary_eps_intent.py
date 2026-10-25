@@ -17,10 +17,11 @@ def case(identity=IDENTITIES[0]):
 
 
 @pytest.mark.parametrize('identity', IDENTITIES)
-@pytest.mark.parametrize('brake', [False, True])
-def test_stock_temporary_eps_join_preserves_only_original_intent_and_recovers(identity, brake):
+@pytest.mark.parametrize('brake,gas', [(False, False), (True, False), (False, True), (True, True)])
+def test_stock_temporary_eps_join_preserves_only_original_intent_and_recovers(identity, brake, gas):
   cp, cs, feedback, peers, _, stamp = case(identity)
   cs.brakePressed = brake
+  cs.gasPressed = gas
   if brake:
     event = messaging.new_message('onroadEvents', 2, valid=True, logMonoTime=NOW)
     event.onroadEvents = [{'name': 'pcmDisable', 'userDisable': True}, {'name': 'pedalPressed', 'userDisable': True}]
@@ -57,7 +58,7 @@ def test_stock_temporary_eps_join_preserves_only_original_intent_and_recovers(id
   )
   cs.steerFaultTemporary = False
   recovery_stamp = next_stamp + 10_000_000
-  if brake:
+  if brake or gas:
     recovering, _ = sample(cp, recovery_stamp, recovery_stamp, 4, active=False, requested=False,
                            allowed=False, event_stamp=next_stamp)
     change(recovering, 'aolAxisState', lambda axis: setattr(axis, 'nativeAcknowledged', False))
@@ -80,7 +81,7 @@ def test_stock_temporary_eps_join_preserves_only_original_intent_and_recovers(id
     'can-invalid',
     'timeout',
     'brake-without-eps',
-    'gas',
+    'gas-without-eps',
     'regen',
     'door',
     'seatbelt',
@@ -103,10 +104,15 @@ def test_stock_temporary_eps_join_preserves_only_original_intent_and_recovers(id
     'cancel',
   ],
 )
-def test_stock_eps_cannot_hide_independent_fault_or_borrow_another_owner(fault):
+@pytest.mark.parametrize('gas', [False, True])
+def test_stock_eps_cannot_hide_independent_fault_or_borrow_another_owner(fault, gas):
   cp, cs, feedback, peers, native, stamp = case()
   latched, producer = True, PRODUCER
-  if fault == 'brake-without-eps':
+  cs.gasPressed = gas
+  if fault == 'gas-without-eps':
+    cs.gasPressed = True
+    cs.steerFaultTemporary = False
+  elif fault == 'brake-without-eps':
     cs.brakePressed = True
     cs.steerFaultTemporary = False
   elif fault in ('no-eps', 'permanent-eps', 'can-invalid', 'timeout', 'brake-without-eps', 'gas', 'regen', 'door', 'seatbelt'):

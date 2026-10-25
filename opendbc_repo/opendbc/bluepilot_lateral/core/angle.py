@@ -127,7 +127,7 @@ class AngleController:
     entering = bool(curves) and abs(interp(base, i.time_indices, curves)) > abs(i.desired_curvature)
     factor = 1.0 if entering else interp(abs(i.desired_curvature), (0.005, 0.020), (1.0, 0.0))
     lookup = base + bounds.VLT_EXTRA * interp(i.speed, (11.176, 24.5872), (1.0, 0.0)) * factor
-    predicted = interp(lookup, i.time_indices, curves) if curves else i.desired_curvature
+    predicted = interp(lookup, i.time_indices, curves) if curves else 0.0
     saturated = i.limit_status >= 2 or self.path_last >= 0.5235 * 0.9 or self.path_last <= -0.5 * 0.9
     falling = abs(i.desired_curvature) < abs(self.desired_last) - 0.010
     blend = bounds.BLEND * 0.25 if not entering and (i.limit_status >= 1 or saturated or falling) else bounds.BLEND

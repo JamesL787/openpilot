@@ -8,7 +8,7 @@ from openpilot.starpilot.flm import producer_clock_equivalence as clock
 
 
 APPROVED = {
-  'selfdrive/modeld/modeld.py': 'cc4f0187df2505a623db079e1ee3b6dfea56577303aa104c1770fd744f16f2ba',
+  'selfdrive/modeld/modeld.py': '25a0a0c477bd03dcb2fbf887bd8c881a3b28ce1a15d5a063557d289eb1d07c4c',
   'visionipc/visionipc_server.cc': 'a4325a5171eacb931eb271d06a992d2f27216040df113d92099f62cdfa67d81a',
   'visionipc/visionipc_client.cc': 'd142cd60eedabfc581e9770fcd6f0ca81b762ba9dbc608b54dd20a27a317a52d',
 }
@@ -86,3 +86,72 @@ def test_changed_model_producer_still_blocks_actual_live_collector(monkeypatch):
   assert adapter.source_plant_capture_error == 'original_source_clock_contract_unavailable'
   assert not adapter.current_physical_valid and adapter.last_physical_ns == collector.last_qualified_response == 0
   assert getattr(collector, 'original_source_capture', None) is None
+  from openpilot.starpilot.flm.source_observation_report import refusal_report
+  error = refusal_report(collector)['lastException']
+  assert error['type'] == 'ValueError'
+  assert 'openpilot/selfdrive/modeld/modeld.py' in error['message']
+
+
+def test_actual_daemon_reports_startup_source_refusal_without_issuing_a_trial(monkeypatch):
+  """Synthetic parent input; genuine installed-source refusal, no native permission."""
+  from types import SimpleNamespace
+  from openpilot.common.swaglog import cloudlog
+  from openpilot.starpilot.flm import steerlearnerd
+  from openpilot.starpilot.flm.tests.test_live_tracking_daemon import BASE, LoopComplete, NoLegacyFitter, RecordingActor, source
+
+  now, sends, logs = [BASE], [], []
+  original = Path.read_bytes
+  monkeypatch.setattr(Path, 'read_bytes', lambda path: original(path)+b'\n' if path.as_posix().endswith('selfdrive/modeld/modeld.py') else original(path))
+  monkeypatch.setattr(cloudlog, 'event', lambda name, **kw: logs.append((name, kw)))
+
+  class SM:
+    updated = {'deviceMotion': False}
+    logMonoTime = {'deviceMotion': 0}
+    steps = 0
+
+    def update(self, timeout=None):
+      if timeout == 0:
+        return
+      self.steps += 1
+      if self.steps > 7:
+        raise LoopComplete
+      now[0] = BASE+self.steps*1_000_000_000
+
+  actor, fitter = RecordingActor(), NoLegacyFitter()
+  actor.interrupt = lambda reason, **kw: setattr(actor, 'reason', reason)
+  fitter.cancel = lambda reason: None
+  control_socket, output_socket = object(), object()
+  def forbid_capture() -> None:
+    raise AssertionError('Unapproved source must not enable capture')
+
+  adapter = SimpleNamespace(event_collection=True, source_plant_protocol='declared-unit-source-refusal',
+    source_plant_clock=None, current_physical_valid=False, last_physical_ns=0,
+    enable_original_context_capture=forbid_capture)
+
+  def drain(socket, callback, receive, sink, stamp):
+    if socket is control_socket:
+      event = SimpleNamespace(which=lambda: 'starpilotLateralState',
+        starpilotLateralState=SimpleNamespace(learningEvidence=SimpleNamespace(version=1)))
+      callback(event, sink, stamp)
+
+  def read_control(event):
+    return SimpleNamespace(source_epoch=source(now[0]).source_epoch, source_receipt_ns=now[0], control_ns=now[0],
+      identity='f'*64, generation=1, domain='normalized_torque', stage_revision='stage', response_revision='response',
+      controller_mode='starpilot', policy='declared-unit-policy', baseline_revision='baseline', controller_revision='controller', turn_assist=False)
+
+  monkeypatch.setattr(steerlearnerd, 'drain', drain)
+  monkeypatch.setattr(steerlearnerd, 'read_control', read_control)
+  with pytest.raises(LoopComplete):
+    steerlearnerd.run(SimpleNamespace(), SM(), control_socket, output_socket,
+      SimpleNamespace(send=lambda topic, message: sends.append((topic, message.as_reader()))),
+      lambda *args: adapter, None, lambda stamp: source(stamp), lambda evidence: ('declared-unit',),
+      lambda evidence: 'declared-unit', None, None, fitter, None, clock=lambda: now[0], live_actor=actor)
+  learning = [message.autoSteeringLearning.learning for topic, message in sends if topic == 'autoSteeringLearning']
+  assert learning and all(row.reason == 'original_source_clock_contract_unavailable' for row in learning)
+  tracking = [message.starpilotSteeringTracking for topic, message in sends if topic == 'starpilotSteeringTracking']
+  assert tracking and all(row.trial.version == 0 and row.restore.version == 0 for row in tracking)
+  assert actor.closed and fitter.closed
+  failures = [value for name, value in logs if name == 'auto_learn_source_stall']
+  assert len(failures) == 1
+  assert failures[0]['captureError'] == 'original_source_clock_contract_unavailable'
+  assert 'openpilot/selfdrive/modeld/modeld.py' in failures[0]['sourceObservation']['lastException']['message']

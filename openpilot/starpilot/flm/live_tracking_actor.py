@@ -806,6 +806,7 @@ class LiveTrackingActor:
           self.adopt_response(certificate_from_dict(result['certificate']), collector)
         else:
           self.reason = str(result.get('reason', 'response_identification_unavailable'))
+    context_error = None
     if self.ingress is None and self.source_tracking and allow_bootstrap:
       from openpilot.starpilot.flm.live_tracking_response import source_context
 
@@ -814,9 +815,12 @@ class LiveTrackingActor:
         try:
           context = source_context(seed, collector.ready[-1][0], capture.rows[-1], now_ns=now_ns)
           self.adopt_response(context, collector)
-        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as error:
+          context_error = error
           self.reason = 'current_original_tracking_sources_required'
     if self.ingress is None and self.source_tracking:
+      from openpilot.starpilot.flm.source_stall_log import log_source_stall
+      log_source_stall(self, collector, now_ns=now_ns, bootstrap_allowed=allow_bootstrap, context_error=context_error)
       self.reason = 'fresh_current_tracking_sources_required'
       return None
     if self.ingress is None:

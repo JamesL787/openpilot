@@ -21,6 +21,12 @@ each), rests for one second, pulses twice quickly (300 ms each), and rests for o
 second before repeating. Each pair has a 200 ms gap. The arrow remains relative
 to vehicle speed; Vienna numerals stay black while their ring pulses.
 Large UI uses the same US or Vienna sign at 1.25× scale beside SET speed.
+US signs share a cached antialiased white outline with a transparent interior;
+the offset fits inside the fixed sign height on both screens.
+Both sign styles identify the displayed source: DASH for Dashboard, OSM for offline
+Maps, and VISION for the vision model. Explicit Mapbox readings in historical
+replay use NAV; unidentified sources keep SPEED. Retained readings use LAST.
+Vienna signs place this label above the number, beside any pending arrow.
 Steering-wheel + accepts and − declines. Tapping the sign opens the same
 Accept / Decline choices on either native screen. A pending manual choice expires
 after ten monotonic seconds, including time without active longitudinal control.
@@ -36,7 +42,8 @@ Only a finite positive source observation can propose a limit. Missing, stale an
 unknown observations stay distinct. Source loss clears a pending choice; it cannot
 change set speed. While the publisher remains fresh, the widget retains the latest
 received limit and offset with an unavailable status, independently of accepted
-history and the previous-limit fallback preference. Offset-only edits preserve accepted and
+history and the previous-limit fallback preference. A LAST marker identifies the
+retained reading on either screen. Offset-only edits preserve accepted and
 rejected state and renew action identities. A changed offset can update the set
 speed of the accepted current limit; source loss defers this command until that
 limit is qualified again.

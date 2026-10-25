@@ -263,7 +263,6 @@ class AugmentedRoadView(CameraView):
                                   lead_info_mode, lead_info_metric, lateral_active=lateral_active, paint=paint)
 
   def render_model_source_layer(self, rect: rl.Rectangle, *, show_long_indicator: bool | None = False) -> None:
-    self._hud_renderer._update_state()
     self._hud_renderer._draw_model_source(rect)
     if show_long_indicator is not None:
       self._long_indicator.set_should_draw(show_long_indicator)

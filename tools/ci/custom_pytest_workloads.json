@@ -1413,10 +1413,22 @@
       "basis": "Actual complete-module setup/call/teardown receipts, hosted tests40108387164 custom14; same source blob. Scheduling estimate only; all original cases and timeout retained."
     },
     "openpilot/starpilot/tests/test_ford_bluepilot_aol.py": {
-      "cases": 40,
-      "seconds": 86.998515,
-      "blob": "09e2918b2999e9f7b5bce5e56d9c562a914a1984",
-      "basis": "Actual complete-module setup/call/teardown receipts, hosted tests40108387164 custom14; same source blob. Scheduling estimate only; all original cases and timeout retained."
+      "cases": 64,
+      "seconds": 147.861995,
+      "blob": "cf201fab94f604dc6b9e9ea8789309c18074375d",
+      "basis": "Actual complete-module setup/call/teardown: DEBUG 96.479484s, RELEASE 98.574663s; conservative 1.5x host allowance. Scheduling estimate only; all cases and timeout retained."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_sdsu_priority_callers.py": {
+      "cases": 204,
+      "seconds": 612.050501,
+      "blob": "3f8196b546f7de4ec09af452552b34b71b692371",
+      "basis": "Hosted tests40117319129 custom22: 199/204 actual cases completed in 477.639410s of setup/call/teardown before whole-shard timeout. Projected full case count at observed mean with 25 percent allowance; scheduling estimate only. Original cases, grouping and 900s deadline retained."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_radar_filter_variant_callers.py": {
+      "cases": 48,
+      "seconds": 254.992359,
+      "blob": "c54a2f6be83b36f3c0f2f1e112d4ddffe980329d",
+      "basis": "Hosted tests40117319129 custom22: 48/48 actual cases completed in 203.993887s of setup/call/teardown before whole-shard timeout. Projected full case count at observed mean with 25 percent allowance; scheduling estimate only. Original cases, grouping and 900s deadline retained."
     }
   },
   "reference_sha": "6eb9df96425a661afcbf1edfa27894d6e49b3706",

@@ -98,7 +98,6 @@ def test_child_import_and_main_failure_after_real_fork(reporting, monkeypatch, d
     writer.send((sentry._initialized_pid, event_list(reporting)))
 
   monkeypatch.setattr(reporting.sdk, 'capture_exception', capture)
-  monkeypatch.setattr(process.messaging, 'reset_context', Mock())
   monkeypatch.setattr(process, 'setproctitle', Mock())
   monkeypatch.setattr(sentry, 'flush', Mock())
 
@@ -179,7 +178,9 @@ def test_native_apport_keeps_local_copy_and_queues_header_stack_qlog(reporting, 
     monkeypatch.setattr(sentry, 'sdk', None)
   tombstoned.report_tombstone_apport(str(source))
   assert not source.exists()
-  copies = list((reporting.tmp_path / 'crash').iterdir())
+  crash_dir = reporting.tmp_path / 'crash'
+  assert (crash_dir / '.lock').is_file()
+  copies = [path for path in crash_dir.iterdir() if path.name != '.lock']
   assert len(copies) == 1 and copies[0].read_text() == payload
   if not report_available:
     assert event_list(reporting) == []
@@ -279,3 +280,40 @@ def test_metadata_or_attachment_error_does_not_disable_capture(reporting, monkey
   sentry.capture_exception(ValueError('metadata and attachment unavailable'))
   event, = event_list(reporting)
   assert event['exception']['values'][0]['type'] == 'ValueError'
+
+
+def test_forked_daemon_has_no_deferred_session_upload(reporting, monkeypatch):
+  ctx = multiprocessing.get_context('fork')
+  reader, writer = ctx.Pipe(duplex=False)
+
+  def child():
+    try:
+      assert sentry.init()
+      client = reporting.sdk.get_client()
+      pending = list(client.session_flusher.pending_sessions)
+      try:
+        raise RuntimeError('child crash still reported without session telemetry')
+      except RuntimeError:
+        reporting.sdk.capture_exception()
+      writer.send((pending, event_list(reporting), client.options['auto_session_tracking']))
+    finally:
+      writer.close()
+
+  process = ctx.Process(target=child)
+  process.start()
+  writer.close()
+  try:
+    assert reader.poll(5), 'child did not report its SDK state'
+    pending, events, automatic = reader.recv()
+    process.join(5)
+    assert not process.is_alive() and process.exitcode == 0
+    assert pending == [], 'inherited manager session schedules a 60-second upload'
+    assert automatic is False
+    event, = events
+    assert event['exception']['values'][0]['value'] == 'child crash still reported without session telemetry'
+    assert event['user']['id'] == 'test-device'
+  finally:
+    if process.is_alive():
+      process.kill()
+      process.join(5)
+    reader.close()

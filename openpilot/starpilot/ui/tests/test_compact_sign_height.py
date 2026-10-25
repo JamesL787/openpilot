@@ -1,64 +1,109 @@
 from dataclasses import replace
 from unittest.mock import Mock, patch
 
+import pyray as rl
 import pytest
 
-from openpilot.starpilot.ui.onroad_state import speed_limit_bounds
+from openpilot.starpilot.ui.large_speed_geometry import LARGE_SIGN_SCALE
+from openpilot.starpilot.ui.onroad_state import speed_limit_bounds, slc_controls, compact_sign_obscured_by_actions, SpeedLimitObservation, ObservationKind
 from openpilot.starpilot.ui.presentation import Profile
 from openpilot.starpilot.ui.speed_limit_widget import SpeedLimitWidget
 from openpilot.starpilot.ui.tests.test_unified_speed_native import fonts, state
+from openpilot.starpilot.ui.unified_speed_presentation import resolve_unified_speed
+
+
+@pytest.fixture(autouse=True)
+def historical_outline():
+  with patch.object(rl, 'draw_rectangle_rounded_lines_ex') as outline:
+    yield outline
 
 
 @pytest.mark.parametrize('profile', list(Profile))
 @pytest.mark.parametrize('offset', [False, True])
-def test_only_compact_rectangle_grows_for_visible_offset(profile, offset):
+@pytest.mark.parametrize('vienna', [False, True])
+def test_only_small_rectangular_sign_extends_for_visible_offset(profile, offset, vienna, historical_outline):
   current = state(show_slc_offset=offset)
-  widget = object.__new__(SpeedLimitWidget)
-  widget.fonts = fonts(profile)
-  widget.profile = profile
-  widget.scale = 1
-  widget.text_scale = 1
-  widget.pulse = Mock(color=lambda color, now: color)
-  bounds = speed_limit_bounds(profile, current)
-  assert bounds is not None
-  with patch('openpilot.starpilot.ui.speed_limit_widget.rl.draw_rectangle_rounded_lines_ex') as outline, \
-       patch('openpilot.starpilot.ui.speed_limit_widget.rl.draw_rectangle_rounded'), \
-       patch('openpilot.starpilot.ui.speed_limit_widget.SpeedLimitShapes.arrow'):
-    widget.shapes = Mock()
-    widget._sign(current, bounds, 10.)
-  rectangle = outline.call_args.args[0]
-  assert rectangle.height == ((160 if offset else 116) if profile == Profile.COMPACT else 128)
-  other = speed_limit_bounds(profile, replace(current, show_slc_offset=not offset))
-  assert other is not None
-  assert bounds[:3] == other[:3]
-  assert abs(bounds[3] - other[3]) == (44 if profile == Profile.COMPACT else 0)
-  texts = [call.args[0] for call in widget.fonts.draw.call_args_list]
-  assert ('+5' in texts) == offset
-
-
-@pytest.mark.parametrize('value', ['55', '125'])
-@pytest.mark.parametrize('pending_arrow', [False, True])
-def test_compact_rectangle_uses_original_geometry_and_measured_typography(value, pending_arrow):
-  from openpilot.starpilot.ui.presentation import FontRole
-  from openpilot.starpilot.ui.onroad_state import SpeedLimitObservation, ObservationKind
-  current = state(show_slc_offset=False)
-  current = replace(current, speed_limit=SpeedLimitObservation(ObservationKind.VALID, 'map', int(value) / 3.6,
-    pending_speed_limit_mps=int(value) / 3.6 if pending_arrow else None))
-  widget = object.__new__(SpeedLimitWidget)
-  widget.fonts, widget.profile = fonts(Profile.COMPACT), Profile.COMPACT
-  widget.scale, widget.text_scale = 1, 1
-  widget.pulse = Mock(color=lambda color, now: color)
+  current = replace(current, appearance=replace(current.appearance, use_vienna_sign=vienna))
+  widget = SpeedLimitWidget(fonts(profile), profile)
   widget.shapes = Mock()
-  with patch('openpilot.starpilot.ui.speed_limit_widget.rl.draw_rectangle_rounded_lines_ex') as outline:
-    widget._sign(current, speed_limit_bounds(Profile.COMPACT, current), 10.)
-  rect = outline.call_args.args[0]
-  assert (rect.x, rect.y, rect.width, rect.height) == (340, 28, 100, 116)
-  assert outline.call_args.args[1:4] == (.14, 16, 2)
-  calls = widget.fonts.draw.call_args_list
-  for call, text, size, y, role in zip(calls, ['SPEED', 'LIMIT', value], [20, 20, 50 if len(value) <= 2 else 42],
-                                        [38, 56, 86], [FontRole.SEMI_BOLD, FontRole.SEMI_BOLD, FontRole.BOLD], strict=True):
-    measured = widget.fonts.measure(text, role, size)
-    header_shift = 6 if pending_arrow and role == FontRole.SEMI_BOLD else 0
-    # Without an actual pending arrow, the original screenshot's centered origin is exact.
-    assert call.args[:5] == (text, role, size, 332 + (116 - measured.width) / 2 - header_shift, y)
-  assert widget.shapes.arrow.called is pending_arrow
+  with patch('openpilot.starpilot.ui.speed_limit_widget.rl.draw_rectangle_rounded') as fill:
+    widget.render(current)
+  fill.assert_not_called()
+  scale = LARGE_SIGN_SCALE if profile == Profile.LARGE else 1
+  bounds = speed_limit_bounds(profile, current)
+  tall = speed_limit_bounds(profile, replace(current, show_slc_offset=True))
+  assert bounds is not None and tall is not None
+  extended = profile == Profile.COMPACT and not vienna
+  assert bounds[:3] == tall[:3]
+  assert bounds[3] == tall[3] - (44 if extended and not offset else 0)
+  if vienna:
+    widget.shapes.outline.assert_not_called()
+    widget.shapes.circle.assert_called_once()
+    historical_outline.assert_not_called()
+  elif profile == Profile.COMPACT:
+    widget.shapes.outline.assert_not_called()
+    rect, rounding, segments, stroke, _ = historical_outline.call_args.args
+    assert (rect.x, rect.y, rect.width, rect.height) == (bounds[0]+22, bounds[1]+20, 100, 116+(44 if offset else 0))
+    assert (rounding, segments, stroke) == (.14, 16, 2)
+  else:
+    historical_outline.assert_not_called()
+    widget.shapes.outline.assert_called_once()
+    assert widget.shapes.outline.call_args.args[:2] == (bounds[0]+12+59*scale, bounds[1]+12+66*scale)
+    assert widget.shapes.outline.call_args.kwargs == {}
+  assert ('+5' in [call.args[0] for call in widget.fonts.draw.call_args_list]) == offset
+
+
+@pytest.mark.parametrize('value', (65, 120))
+@pytest.mark.parametrize('metric', (False, True))
+@pytest.mark.parametrize('show', (False, True))
+@pytest.mark.parametrize('offset', (None, 0., .01, -.01, 5., -10.))
+def test_small_sign_has_space_only_for_a_visible_offset(value, metric, show, offset, historical_outline):
+  factor = 3.6 if metric else 2.2369362921
+  current = state(metric=metric, show_slc_offset=show)
+  current = replace(current, appearance=replace(current.appearance, show_speed_limit_sign=True, use_vienna_sign=False),
+    speed_limit=SpeedLimitObservation(ObservationKind.VALID, 'vision', value / factor,
+    offset_mps=None if offset is None else offset / factor, action_enabled=False))
+  shown = resolve_unified_speed(current)
+  widget = SpeedLimitWidget(fonts(Profile.COMPACT), Profile.COMPACT)
+  widget.shapes = Mock()
+  widget.render(current)
+  bounds = speed_limit_bounds(Profile.COMPACT, current)
+  assert bounds is not None
+  extended = bool(shown.offset_text)
+  widget.shapes.outline.assert_not_called()
+  rect = historical_outline.call_args.args[0]
+  assert (rect.width, rect.height) == (100, 160 if extended else 116)
+  assert bounds[3] - bounds[1] == (196 if extended else 152)
+  number = next(call.args for call in widget.fonts.draw.call_args_list if call.args[0] == str(value))
+  assert number[4] == bounds[1] + 12 + 66
+  assert number[2] == (50 if value < 100 else 42)
+
+
+def test_small_offset_layout_transitions_reuse_the_same_widget(historical_outline):
+  widget = SpeedLimitWidget(fonts(Profile.COMPACT), Profile.COMPACT)
+  widget.shapes = Mock()
+  for enabled in (False, True, False):
+    current = state(show_slc_offset=enabled)
+    widget.render(current)
+    assert historical_outline.call_args.args[0].height == (160 if enabled else 116)
+
+
+@pytest.mark.parametrize('y', [20, 50, 108])
+def test_compact_confirmation_overlap_remains_conservative(y):
+  current = state(slc_prompt_open=True)
+  current.customization['layouts']['compact']['speed_limit']['y'] = y
+  obscured = compact_sign_obscured_by_actions(current)
+  assert obscured is (y == 108)
+  assert (speed_limit_bounds(Profile.COMPACT, current) is None) is obscured
+  assert slc_controls(Profile.COMPACT, current)
+
+
+def test_small_rectangular_no_offset_regression(historical_outline):
+  current = state(show_slc_offset=False)
+  widget = SpeedLimitWidget(fonts(Profile.COMPACT), Profile.COMPACT)
+  widget.shapes = Mock()
+  widget.render(current)
+  bounds = speed_limit_bounds(Profile.COMPACT, current)
+  assert bounds is not None and bounds[3] - bounds[1] == 152
+  rect = historical_outline.call_args.args[0]
+  assert (rect.width, rect.height) == (100, 116)

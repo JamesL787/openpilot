@@ -552,6 +552,11 @@ def run(
               from openpilot.starpilot.flm.source_plant_runtime import start_original_capture
               if not start_original_capture(collector):
                 unavailable_reason = adapter.source_plant_capture_error
+                if live_actor is not None:
+                  # Preserve the actual startup refusal instead of the previous identity-reset status.
+                  live_actor.reason = unavailable_reason
+                  from openpilot.starpilot.flm.source_stall_log import log_source_stall
+                  log_source_stall(live_actor, collector, now_ns=received_now, bootstrap_allowed=True)
                 collector = None
                 return
           else:

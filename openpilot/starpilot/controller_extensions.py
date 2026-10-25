@@ -75,17 +75,17 @@ class ManualTurnInputs:
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
       return None
 
-  def lateral_snapshot(self, speed: float):
+  def lateral_snapshot(self, speed: float, *, angle: bool = False):
     if self.preview_curvature(speed) is None:
       return None
-    delay = 0.2
+    delay = 0.15 if angle else 0.2
     now = time.monotonic_ns()
     stamp = self.sm.logMonoTime["lateralDelay"]
     if (self.sm.alive["lateralDelay"] and self.sm.valid["lateralDelay"] and
         0 < stamp <= now <= stamp + 1_000_000_000):
       value = float(self.sm["lateralDelay"].lateralDelay)
       if math.isfinite(value):
-        delay = float(np.clip(value, 0.2, 0.4))
+        delay = float(np.clip(value, 0.1, 0.15)) if angle else float(np.clip(value, 0.2, 0.4))
     return self.sm["modelV2"], ModelConstants.T_IDXS, delay, self.enabled
 
   def native_permission(self, cp, *, max_age_ns):

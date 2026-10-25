@@ -55,7 +55,7 @@ def test_real_rejected_packet_resynchronizes_without_permission_bypass(ford_join
   inputs = adapter.host.inputs
   blocked = 0
   monkeypatch.setattr(inputs, 'update', lambda: None)
-  monkeypatch.setattr(inputs, 'lateral_snapshot', lambda speed: None)
+  monkeypatch.setattr(inputs, 'lateral_snapshot', lambda speed, *, angle=False: None)
   # Isolate the adapter recovery while preserving actual physical native authority.
   # The full caller matrix above retains real wire/inventory/freshness qualification.
   monkeypatch.setattr(inputs, 'native_permission', lambda cp, max_age_ns: bool(safety.aol_get_permission_mask() & 1))
@@ -129,3 +129,15 @@ def test_early_pedal_admission_requires_exact_marked_angle_long_profile(ford_joi
     changed = structs.CarParams(**cp.to_dict())
     changed.safetyConfigs[-1].safetyParam ^= mask
     assert not early_native_long_withdrawal_supported(changed)
+
+
+@pytest.mark.parametrize('identity', [(CAR.FORD_MUSTANG_MACH_E_MK1, 18), (CAR.FORD_ESCAPE_MK4, 32), (CAR.FORD_F_150_MK14, 66)])
+@pytest.mark.parametrize('alpha', [False, True])
+@pytest.mark.parametrize('hands_free', [False, True])
+@pytest.mark.parametrize('topology', ['automatic', 'manual-multi'])
+def test_temporary_eps_recovery_with_gas_preserves_only_lateral_intent(ford_joined, monkeypatch):
+  # Route3b: cruise is off, gas remains pressed through a 150 ms EPS pulse.
+  # The actual native hook must still reject active output during that pulse.
+  monkeypatch.ford_nonzero = True
+  monkeypatch.ford_eps_gas = True
+  run_actual_producer(ford_joined, monkeypatch, scenario='configuration-parity')

@@ -280,6 +280,7 @@ class Soundd:
         sm.update(0)
         if self.native_audio is not None:
           self.native_audio.sync_owner()
+          self.native_audio.report_underflow_timing()
         self.log_pending_stream_status(stream)
         self.refresh_saved_volumes(time.monotonic())
         self.load_sounds()
@@ -298,7 +299,10 @@ class Soundd:
 
         rk.keep_time()
 
-        assert stream.active
+        active = stream.active
+        if not active and self.native_audio is not None:
+          self.native_audio.report_underflow_timing(closing=True)
+        assert active
 
 
 def main():

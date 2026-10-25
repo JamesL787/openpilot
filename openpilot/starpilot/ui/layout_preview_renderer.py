@@ -21,8 +21,8 @@ from openpilot.starpilot.ui.onroad_customization import (CAMERA_WIDGETS, PROFILE
                                                          validate_document, widget_size)
 from openpilot.starpilot.ui.onroad_widget_style import draw_widget_frame
 from openpilot.starpilot.curve_speed.status import CurveObservation
-from openpilot.starpilot.ui.onroad_state import ConditionalLead
 from openpilot.starpilot.ui.unified_speed_presentation import resolve_unified_speed
+from openpilot.starpilot.ui.onroad_state import ConditionalLead
 from openpilot.starpilot.ui.onroad_state import AlertSize, ObservationKind, OnroadAlert, OnroadState, SourceReading, SpeedLimitObservation
 from openpilot.starpilot.ui.appearance_preferences import CameraViewChoice, OnroadAppearance
 from openpilot.starpilot.ui.onroad_dm import draw_monitor_art, monitor_bounds, monitor_visible
@@ -339,7 +339,6 @@ class _Canvas:
     captures = []
     for key in RUNTIME_PREVIEW_WIDGETS[str(self.profile)]:
       logical_width, logical_height = widget_size(state.customization, self.profile, key)
-      # The restored compact US sign adds an offset row beyond its saved base size.
       compact_offset = (self.profile == Profile.COMPACT and key == 'speed_limit' and
                         not state.appearance.use_vienna_sign and bool(resolve_unified_speed(state).offset_text))
       if compact_offset:

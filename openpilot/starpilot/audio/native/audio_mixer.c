@@ -6,6 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
+
+#define DIAG_ROWS 32U
+#define DIAG_WORDS 22U
+#define DIAG_HEADER 10U
 
 #define SLOTS 16
 #define MAX_PCM 1440000U
@@ -24,6 +29,10 @@ struct audio {
   float gain;
   bool pending_stop;
   atomic_flag rendering;
+  // Bounded first-underflow timing. Callback is sole ring writer; getter reads atomics.
+  _Atomic uint64_t diag_seq, diag_frozen, diag_total, diag_first;
+  _Atomic uint64_t diag_abort_count, diag_clock_errors;
+  _Atomic uint64_t diag_rows[DIAG_ROWS][DIAG_WORDS];
 };
 static void free_bank(struct bank *b) { if (b) { for(unsigned i=0;i<SLOTS;i++) free(b->pcm[i]); free(b); } }
 unsigned audio_mixer_abi(void) { return 3; }
@@ -75,13 +84,70 @@ int audio_prepare(struct audio *a) {
   accept_command(a);
   return a->active!=NULL && a->applied_seq!=0;
 }
+// Diagnostic ABI1: clock failures are explicit, never fake valid timestamps.
+static uint64_t diag_clock(clockid_t clock, uint64_t bit, uint64_t *errors) {
+  struct timespec ts;
+  if(clock_gettime(clock,&ts)!=0) { *errors|=bit;return 0; }
+  return (uint64_t)ts.tv_sec*1000000000ULL+(uint64_t)ts.tv_nsec;
+}
+static uint64_t diag_double(double value) { uint64_t bits;memcpy(&bits,&value,sizeof(bits));return bits; }
+static void diag_finish(struct audio *a,uint64_t entry_mono,uint64_t entry_cpu,
+                        const struct pa_time *t,unsigned long frames,unsigned long flags,uint64_t errors) {
+  uint64_t exit_cpu=diag_clock(CLOCK_THREAD_CPUTIME_ID,4U,&errors);
+  uint64_t exit_mono=diag_clock(CLOCK_MONOTONIC,8U,&errors);
+  uint64_t ordinal=atomic_load(&a->diag_total)+1U;
+  uint64_t first=atomic_load(&a->diag_first);
+  if(!first && (flags&4U)) first=ordinal;
+  uint64_t values[DIAG_WORDS]={ordinal,entry_mono,entry_cpu,exit_mono,exit_cpu,
+    t?diag_double(t->input_adc):0,t?diag_double(t->current):0,t?diag_double(t->output_dac):0,
+    frames,flags,a->applied_seq,a->restart,a->sound,a->frame,a->active?a->active->revision:0,
+    a->status_count,a->underflows,a->last_flags,errors,t!=NULL,
+    atomic_load(&a->pending)!=NULL,atomic_load(&a->retired)!=NULL};
+  uint64_t seq=atomic_load(&a->diag_seq);atomic_store(&a->diag_seq,seq+1U);
+  unsigned index=(unsigned)((ordinal-1U)%DIAG_ROWS);
+  for(unsigned i=0;i<DIAG_WORDS;i++) atomic_store(&a->diag_rows[index][i],values[i]);
+  atomic_store(&a->diag_total,ordinal);atomic_store(&a->diag_first,first);
+  if(errors) atomic_fetch_add(&a->diag_clock_errors,1U); // Rows with any failed clock.
+  if(first && ordinal>=first+4U) atomic_store(&a->diag_frozen,1U);
+  atomic_store(&a->diag_seq,seq+2U);
+}
+unsigned audio_diagnostic_abi(void) { return 1; }
+// Returns words copied,0 if unavailable/too-small. At most3 attempts; no wait.
+unsigned audio_diagnostic_snapshot(struct audio *a,uint64_t *out,unsigned capacity) {
+  if(!a || !out || capacity<DIAG_HEADER+DIAG_ROWS*DIAG_WORDS) return 0;
+  for(unsigned attempt=0;attempt<3;attempt++) {
+    uint64_t seq=atomic_load(&a->diag_seq);if(seq&1U) continue;
+    uint64_t total=atomic_load(&a->diag_total),first=atomic_load(&a->diag_first);
+    uint64_t start=first?(first>16U?first-16U:1U):(total>DIAG_ROWS?total-DIAG_ROWS+1U:1U);
+    uint64_t count=total>=start?total-start+1U:0;
+    if(count>DIAG_ROWS) return 0;
+    out[0]=1;out[1]=DIAG_WORDS;out[2]=DIAG_ROWS;out[3]=total;out[4]=first;
+    out[5]=atomic_load(&a->diag_frozen);out[6]=start;out[7]=count;
+    out[8]=atomic_load(&a->diag_abort_count);out[9]=atomic_load(&a->diag_clock_errors);
+    for(uint64_t row=0;row<count;row++) {
+      unsigned index=(unsigned)((start+row-1U)%DIAG_ROWS);
+      for(unsigned col=0;col<DIAG_WORDS;col++) out[DIAG_HEADER+row*DIAG_WORDS+col]=atomic_load(&a->diag_rows[index][col]);
+    }
+    if(seq==atomic_load(&a->diag_seq)) return DIAG_HEADER+(unsigned)count*DIAG_WORDS;
+  }
+  return 0;
+}
 static int audio_callback(const void *input,void *output,unsigned long frames,const struct pa_time *t,unsigned long flags,void *user) {
-  (void)input;(void)t;struct audio *a=user;
-  if(!a || !output || frames>MAX_FRAMES || atomic_flag_test_and_set(&a->rendering)) return 2;
+  (void)input;struct audio *a=user;
+  if(!a) return 2;
+  if(!output || frames>MAX_FRAMES || atomic_flag_test_and_set(&a->rendering)) {
+    atomic_fetch_add(&a->diag_abort_count,1U);return 2;
+  }
+  bool diagnostic=!atomic_load(&a->diag_frozen);
+  uint64_t errors=0,entry_mono=0,entry_cpu=0;
+  if(diagnostic) {
+    entry_mono=diag_clock(CLOCK_MONOTONIC,1U,&errors);
+    entry_cpu=diag_clock(CLOCK_THREAD_CPUTIME_ID,2U,&errors);
+  }
   accept_command(a);
   float *out=output;memset(out,0,frames*sizeof(float));
   unsigned length=a->active?a->active->lengths[a->sound]:0;
-  if(a->alert && !length) { atomic_flag_clear(&a->rendering);return 2; }
+  if(a->alert && !length) { atomic_fetch_add(&a->diag_abort_count,1U);atomic_flag_clear(&a->rendering);return 2; }
   unsigned written=0;
   while(a->alert && written<frames && (a->loops<0 || a->frame/length<(uint64_t)a->loops)) {
     unsigned pos=(unsigned)(a->frame%length),n=length-pos;
@@ -99,6 +165,7 @@ static int audio_callback(const void *input,void *output,unsigned long frames,co
   atomic_store(&a->status[6],1U);atomic_store(&a->status[7],a->applied_seq);
   atomic_store(&a->status[8],a->restart);atomic_store(&a->status[9],a->sound);
   atomic_store(&a->status_seq,status_seq+2);
+  if(diagnostic) diag_finish(a,entry_mono,entry_cpu,t,frames,flags,errors);
   atomic_flag_clear(&a->rendering);return 0;
 }
 uintptr_t audio_callback_address(void) { return (uintptr_t)&audio_callback; }

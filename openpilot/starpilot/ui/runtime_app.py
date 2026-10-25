@@ -88,14 +88,14 @@ from openpilot.starpilot.feature_runtime import enabled as feature_enabled
 from openpilot.starpilot.conditional_mode.preferences import PreferenceError, SavedPreferences, decode_preferences
 from openpilot.starpilot.conditional_mode.policy import ModeChoice
 from openpilot.starpilot.conditional_mode.ui_action import ConditionalUiActionOwner
-from openpilot.starpilot.ui.settings_state import compact_menu, Destination, SettingsAction, SettingsActionKind, SettingsState
+from openpilot.starpilot.ui.settings_state import Destination, SettingsAction, SettingsActionKind
 from openpilot.starpilot.ui.shell import ShellInput, ShellMode, ShellRequest, ShellSnapshot, ShellView
 from openpilot.starpilot.ui.software_state import DownloadLabel, SoftwareAction, SoftwareRequest
 from openpilot.starpilot.ui.toggles_state import Personality, ToggleKey, ToggleRequest
 from openpilot.system.ui.lib.application import MouseEvent, MousePos, gui_app
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.list_view import button_item, text_item
-from openpilot.system.ui.widgets.nav_widget import NavWidget
+from openpilot.starpilot.ui.compact_settings_page import StarCompactSettings
 
 NATIVE_SETTINGS_PANELS = (Destination.DEVICE, Destination.SOFTWARE, Destination.BLUETOOTH, Destination.TOGGLES, Destination.DEVELOPER)
 _FEATURE_SETTINGS_PANES = {
@@ -312,7 +312,6 @@ class StarShellSession:
     if getattr(ui_state, "replay_clock", None) is not None:
       return False
     if getattr(self, "_projection_tap", False):
-      # Projected taps need live onroad state, regardless of this screen's page or visibility.
       return bool(ui_state.started and display_message(ui_state.sm, 'carState', time.monotonic_ns(),
                                                        after_frame=ui_state.started_frame) is not None)
     if self._mode != ShellMode.ONROAD:
@@ -1791,49 +1790,6 @@ class StarShellPage(Widget):
       self.session.camera_owner._bookmark_icon.hide_event()
     self._press_pos = None
     self._dragged = False
-    super().hide_event()
-
-
-class StarCompactSettings(NavWidget):
-  def __init__(self, session: StarShellSession):
-    NavWidget.__init__(self)
-    self.session, self.mode = session, ShellMode.SETTINGS
-    from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
-    self._panel = GuiScrollPanel2(horizontal=True)
-
-  def covers_camera(self, rect: rl.Rectangle) -> bool:
-    return bool(gui_app.get_active_widget() is self and self.enabled and self.is_visible and
-                not gui_app.mouse_events and not self.is_dismissing and self._drag_start_pos is None and
-                self._shown_callback is None and self._y_pos_filter.x == 0 and self._y_pos_filter.velocity.x == 0 and
-                self.rect.x == rect.x == 0 and self.rect.y == rect.y == 0 and
-                self.rect.width == rect.width == gui_app.width and self.rect.height == rect.height == gui_app.height)
-
-  def _update_state(self) -> None:
-    NavWidget._update_state(self)
-    target = -422 * round(-self._panel.get_offset() / 422)
-    # Project the pairing snapshot after rendering updates the panel offset.
-    paired = bool(self.session.adapter.ui_state.prime_state.is_paired())
-    self.session.compact_scroll_x = self._panel.update(self.rect, 20 + len(compact_menu(SettingsState(paired=paired))) * 422,
-                                                        snap_target=target)
-
-  def _render(self, rect) -> None:
-    self.session.render(self.mode, rect)
-
-  def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
-    NavWidget._handle_mouse_event(self, mouse_event)
-    if mouse_event.left_down and not mouse_event.left_pressed:
-      self.session.move(self.mode, mouse_event.pos.x - self.rect.x, mouse_event.pos.y - self.rect.y)
-    elif mouse_event.left_released and not rl.check_collision_point_rec(mouse_event.pos, self.rect):
-      self.session.cancel()
-
-  def _handle_mouse_press(self, mouse_pos: MousePos) -> None:
-    self.session.press(self.mode, mouse_pos.x - self.rect.x, mouse_pos.y - self.rect.y)
-
-  def _handle_mouse_release(self, mouse_pos: MousePos) -> None:
-    self.session.release(self.mode, mouse_pos.x - self.rect.x, mouse_pos.y - self.rect.y)
-
-  def hide_event(self) -> None:
-    self.session.cancel()
     super().hide_event()
 
 

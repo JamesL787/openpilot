@@ -82,6 +82,8 @@ def validate_camera(artifact: Path, version: str, camera: tuple[int, int], steps
                     gpu: bool, max_p95_ms: float | None = None, runner_factory=None, action_update=None, initial_action=None) -> dict:
   device_frames = runner_factory is None
   if runner_factory is None:
+    from openpilot.starpilot.models.runtime_bridge.runtime import prepare as prepare_model_runtime
+    prepare_model_runtime('driving')
     from openpilot.starpilot.models.runner import CatalogModelState, action_from_outputs
     from openpilot.cereal import log
     runner_factory, action_update = CatalogModelState, action_from_outputs

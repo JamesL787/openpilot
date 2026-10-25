@@ -11,6 +11,14 @@ _REQUIRED = (HyundaiFlags.CANFD | HyundaiFlags.EV | HyundaiFlags.CCNC | HyundaiF
 _IGNORED_EV_GEAR_FLAGS = HyundaiFlags.CANFD_ALT_GEARS | HyundaiFlags.CANFD_ALT_GEARS_2
 
 
+def metadata_qualified(cp):
+  """Common transport fields; each caller still checks its own LONG/stock mode."""
+  return (cp.carFingerprint in STOCK_SAFETY_PARAMS and cp.brand == "hyundai" and
+          not (cp.notCar or cp.passive or cp.dashcamOnly) and
+          int(cp.flags) & ~int(_IGNORED_EV_GEAR_FLAGS) == int(_REQUIRED) and
+          len(cp.safetyConfigs) == 1 and cp.safetyConfigs[0].safetyModel == structs.CarParams.SafetyModel.hyundaiCanfd)
+
+
 def qualified(cp):
   return (cp.carFingerprint in STOCK_SAFETY_PARAMS and cp.brand == "hyundai" and
           not (cp.notCar or cp.passive or cp.dashcamOnly or cp.openpilotLongitudinalControl) and cp.pcmCruise and

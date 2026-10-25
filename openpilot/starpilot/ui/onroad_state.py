@@ -332,7 +332,7 @@ def compact_sign_obscured_by_actions(state: OnroadState) -> bool:
 
 
 def speed_limit_bounds(profile: Profile, state: OnroadState) -> tuple[float, float, float, float] | None:
-  from openpilot.starpilot.ui.unified_speed_presentation import displayed_limit_mps
+  from openpilot.starpilot.ui.unified_speed_presentation import displayed_limit_mps, resolve_unified_speed
   if (displayed_limit_mps(state.speed_limit) is None or
       not state.appearance.show_speed_limit_sign and not state.speed_limit.action_enabled):
     return None
@@ -341,10 +341,8 @@ def speed_limit_bounds(profile: Profile, state: OnroadState) -> tuple[float, flo
   if not saved['enabled'] or profile == Profile.COMPACT and compact_sign_obscured_by_actions(state):
     return None
   x, y, width, height = LIMIT_RECTS[profile]
-  if profile == Profile.COMPACT and not state.appearance.use_vienna_sign:
-    from openpilot.starpilot.ui.unified_speed_presentation import resolve_unified_speed
-    if resolve_unified_speed(state).offset_text:
-      height += 44
+  if profile == Profile.COMPACT and not state.appearance.use_vienna_sign and resolve_unified_speed(state).offset_text:
+    height += 44
   dx, dy = offset(state.customization, profile, widget)
   return x + dx - 12, y + dy - 12, x + dx + width + 12, y + dy + height + 8
 

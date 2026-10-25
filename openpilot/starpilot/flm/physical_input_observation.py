@@ -60,7 +60,13 @@ def _large_sequence(value, depth=0):
   if type(value) in (tuple,list):
     return len(value)>256
   if type(value) is dict and depth<3:
-    return any(_large_sequence(child,depth+1) for child in value.values())
+    for child in value.values():
+      child_depth = depth + 1
+      if type(child) in (tuple,list):
+        if len(child)>256:
+          return True
+      elif type(child) is dict and _large_sequence(child,child_depth):
+        return True
   return False
 
 

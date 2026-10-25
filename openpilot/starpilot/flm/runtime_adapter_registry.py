@@ -670,9 +670,9 @@ def original_source_pose_observer(sm, cp, collector, now_ns, *, distinguish_pend
     return None
   from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 
-  def reject(reason):
+  def reject(reason, error=None):
     from openpilot.starpilot.flm.source_observation_report import record_refusal
-    record_refusal(collector, sm, now_ns, reason)
+    record_refusal(collector, sm, now_ns, reason, error=error)
     collector._original_source_pose_queue = ()
     collector.reset_original_source_capture('original_source_unavailable')
     return None
@@ -687,9 +687,9 @@ def original_source_pose_observer(sm, cp, collector, now_ns, *, distinguish_pend
       from openpilot.starpilot.flm.producer_clock_equivalence import sample_equivalence, source_interval
       try:
         equivalence = sample_equivalence()
-      except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+      except (AttributeError, TypeError, ValueError, OverflowError, OSError) as error:
         collector.reset_original_source_capture('original_clock_equivalence_discontinuity', hard=True)
-        return reject('clock_equivalence_sample')
+        return reject('clock_equivalence_sample', error)
       # This is a fresh receipt witness, never a cached/restamped old proof.
       collector._original_source_equivalence = equivalence
       boot_mono_offset = (equivalence.offset_lower_ns + equivalence.offset_upper_ns) // 2
@@ -907,5 +907,5 @@ def original_source_pose_observer(sm, cp, collector, now_ns, *, distinguish_pend
       return PendingPhysical(pose_ns if waiting is None else waiting.mono_ns,
         int(round(sm.recv_time['deviceMotion'] * 1e9)) if waiting is None else waiting.received_ns, context_changed)
     return None
-  except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
-    return reject('source_observation_exception')
+  except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as error:
+    return reject('source_observation_exception', error)

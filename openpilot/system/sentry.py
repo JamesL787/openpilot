@@ -58,7 +58,7 @@ def init(project: SentryProject = SentryProject.SELFDRIVE) -> bool:
       sdk.init(dsn=project.value, default_integrations=False, auto_enabling_integrations=False,
                integrations=[threading_module.ThreadingIntegration(propagate_scope=True)],
                transport=BoundedHttpTransport, transport_queue_size=TRANSPORT_QUEUE_SIZE,
-               shutdown_timeout=EXIT_FLUSH_TIMEOUT, enable_backpressure_handling=False,
+               shutdown_timeout=EXIT_FLUSH_TIMEOUT, enable_backpressure_handling=False, auto_session_tracking=False,
                max_value_length=8192, traces_sample_rate=0.0,
                release=os.getenv("GIT_COMMIT", "unknown"), environment="Release")
       _initialized_pid = os.getpid()
@@ -86,11 +86,9 @@ def init(project: SentryProject = SentryProject.SELFDRIVE) -> bool:
       sdk.set_tag(key, str(value) if value is not None else "unknown")
   except Exception:
     cloudlog.warning("Crash reporting metadata unavailable")
-  if fresh:
-    try:
-      sdk.start_session()
-    except Exception:
-      cloudlog.warning("Crash reporting session unavailable")
+  # Forked daemons must not close and upload an inherited manager session.
+  # Its deferred 60-second flush synchronizes background TLS work across them.
+  # Explicit exceptions retain the bounded transport and threading integration.
   return True
 
 

@@ -79,6 +79,7 @@ class HudRenderer(Widget):
     # Chestnut model source, same states as the mici HUD
     self._engaged: bool = False
     self._small_model_engaged = False
+    self._chestnut_drive_frame: int | None = None
     k = MODEL_SOURCE_ICON_SCALE
     self._txt_chestnut: rl.Texture = gui_app.texture('icons_mici/chestnut.png', 60 * k, 44 * k)
     self._txt_chestnut_green: rl.Texture = gui_app.texture('icons_mici/chestnut_green.png', 60 * k, 44 * k)
@@ -139,7 +140,6 @@ class HudRenderer(Widget):
     button_x = rect.x + rect.width - UI_CONFIG.border_size - UI_CONFIG.button_size
     button_y = rect.y + UI_CONFIG.border_size
     self._exp_button.render(rl.Rectangle(button_x, button_y, UI_CONFIG.button_size, UI_CONFIG.button_size))
-
     self._draw_model_source(rect)
 
   def _draw_model_source(self, rect: rl.Rectangle, box: "rl.Rectangle | None" = None) -> None:
@@ -147,7 +147,11 @@ class HudRenderer(Widget):
     green when it drives, orange when it failed or is not compiled, crossed out once engaged on the small model. Fitted
     into `box` (the StarPilot shell puts it under the steering wheel), else in the bottom-right corner."""
     loading = ui_state.chestnut_state == ChestnutState.LOADING
-    self._small_model_engaged &= ui_state.chestnut_state in (ChestnutState.FAILED, ChestnutState.DISCONNECTED)
+    # SGSP's false-fallback fix (baab9caf43): crossed out only on a drive where Chestnut was present
+    if ui_state.chestnut_present or (ui_state.replay_clock is not None and ui_state.chestnut_output_seen):
+      self._chestnut_drive_frame = ui_state.started_frame
+    self._small_model_engaged &= (self._chestnut_drive_frame == ui_state.started_frame and
+                                 ui_state.chestnut_state in (ChestnutState.FAILED, ChestnutState.DISCONNECTED))
     if loading:
       icon = self._txt_chestnut
       opacity = 0.35 + 0.65 * (0.5 - 0.5 * math.cos(rl.get_time() * 6.0))

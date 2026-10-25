@@ -23,7 +23,7 @@ def drawing(monkeypatch):
   for name in ('draw_rectangle_rounded_lines_ex', 'draw_rectangle_rounded', 'draw_line_ex', 'draw_circle', 'draw_ring', 'draw_circle_gradient'):
     calls[name] = Mock()
     monkeypatch.setattr(rl, name, calls[name])
-  for name in ('circle', 'arrow'):
+  for name in ('circle', 'arrow', 'outline'):
     calls[name] = Mock()
     monkeypatch.setattr(SpeedLimitShapes, name, calls[name])
   monkeypatch.setattr('openpilot.starpilot.ui.onroad_large_widgets.draw_control_card', Mock())
@@ -76,6 +76,28 @@ def test_both_renderers_show_small_latest_sign_and_offset(profile):
   assert '50' in texts and '+5' in texts and '40' not in texts
 
 
+@pytest.mark.parametrize('profile', list(Profile))
+@pytest.mark.parametrize('pending', [False, True])
+@pytest.mark.parametrize('vienna', [False, True])
+@pytest.mark.parametrize('offset', [False, True])
+@pytest.mark.parametrize('source, heading', [
+  ('dashboard', 'DASH'), ('map', 'OSM'), ('vision', 'VISION'), ('mapbox', 'NAV'),
+  ('online', 'SPEED'), ('unknown', 'SPEED'), ('none', 'SPEED'),
+])
+def test_sign_heading_identifies_the_displayed_source(profile, pending, vienna, offset, source, heading):
+  current = state(show_slc_offset=offset)
+  current = replace(current, appearance=replace(current.appearance, use_vienna_sign=vienna))
+  current = replace(current, speed_limit=replace(current.speed_limit, source=source,
+    accepted_source='vision' if source == 'dashboard' else 'dashboard',
+    pending_speed_limit_mps=current.speed_limit.pending_speed_limit_mps if pending else None))
+  font = fonts(profile)
+  SpeedLimitWidget(font, profile).render(current)
+  expected = [heading, '50'] if vienna else [heading, 'LIMIT', '50']
+  assert [call.args[0] for call in font.draw.call_args_list] == expected + (['+5'] if offset else [])
+  if vienna:
+    assert rgba_tuple(font.draw.call_args_list[0].args[-1]) == (0, 0, 0, 255)
+
+
 @pytest.mark.parametrize('metric', [False, True])
 @pytest.mark.parametrize('vienna', [False, True])
 @pytest.mark.parametrize('offset', [None, 0., .01, -.01])
@@ -88,7 +110,7 @@ def test_compact_sign_omits_missing_zero_and_rounded_zero_offsets(metric, vienna
   assert resolve_unified_speed(current).offset_text is None
   font = fonts(Profile.COMPACT)
   CompactHudRenderer(font, Mock())._speed_limit_sign(current)
-  assert [call.args[0] for call in font.draw.call_args_list] == (['65'] if vienna else ['SPEED', 'LIMIT', '65'])
+  assert [call.args[0] for call in font.draw.call_args_list] == (['OSM', '65'] if vienna else ['OSM', 'LIMIT', '65'])
 
 
 @pytest.mark.parametrize('profile', list(Profile))
@@ -106,7 +128,7 @@ def test_pending_sign_pulses_in_place_and_arrow_follows_vehicle_speed(profile, v
   assert all(after[text][3:5] == args[3:5] for text, args in before.items())
   if vienna:
     assert rgba_tuple(after['50'][-1]) == (0, 0, 0, 255)
-    assert drawing['circle'].call_args.args[:2] == ((389, 87) if profile == Profile.COMPACT else (328.05, 138.65))
+    assert drawing['circle'].call_args.args[:2] == ((389, 87) if profile == Profile.COMPACT else (345.75, 158.75))
     assert rgba_tuple(drawing['circle'].call_args.args[-1]) == (170, 115, 235, 255)
   else:
     assert rgba_tuple(after['50'][-1]) == (170, 115, 235, 255)
@@ -115,22 +137,25 @@ def test_pending_sign_pulses_in_place_and_arrow_follows_vehicle_speed(profile, v
   assert drawing['arrow'].call_args.args[3] == 1
 
 
+@pytest.mark.parametrize('profile', list(Profile))
+@pytest.mark.parametrize('vienna', [False, True])
 @pytest.mark.parametrize('reason', ['steady', 'automatic', 'equal_speed', 'unknown_speed'])
-def test_compact_us_heading_stays_centered_without_an_arrow(reason, drawing):
+def test_sign_text_stays_centered_without_an_arrow(profile, vienna, reason, drawing):
   current = state()
+  current = replace(current, appearance=replace(current.appearance, use_vienna_sign=vienna))
   if reason == 'steady':
     current = replace(current, speed_limit=replace(current.speed_limit, pending_speed_limit_mps=None))
   elif reason == 'automatic':
     current = replace(current, speed_limit=replace(current.speed_limit, automatic_adoption_pending=True))
   else:
     current = replace(current, speed_mps=55 / 3.6 if reason == 'equal_speed' else None)
-  font = fonts(Profile.COMPACT)
-  SpeedLimitWidget(font, Profile.COMPACT).render(current)
+  font = fonts(profile)
+  SpeedLimitWidget(font, profile).render(current)
   drawing['arrow'].assert_not_called()
   for call in font.draw.call_args_list:
     text, role, size, x, _, _ = call.args
     left, right = font.horizontal_ink(text, role, size)
-    assert x + (left + right) / 2 == 390
+    assert x + (left + right) / 2 == ((389 if vienna else 390) if profile == Profile.COMPACT else 345.75)
 
 
 @pytest.mark.parametrize('profile', list(Profile))
@@ -142,6 +167,26 @@ def test_only_set_speed_override_draws_cross(profile, drawing):
   assert drawing['draw_line_ex'].call_count == 0
   sign.render(replace(current, speed_limit=replace(current.speed_limit, driver_override_active=True)))
   assert len(foreground_calls(drawing['draw_line_ex'])) == 2
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+@pytest.mark.parametrize('vienna', [False, True])
+@pytest.mark.parametrize('latest_received', [False, True])
+@pytest.mark.parametrize('offset', [False, True])
+def test_retained_limits_are_marked_last_and_have_no_actions(profile, vienna, latest_received, offset, drawing):
+  current = state(show_slc_offset=offset)
+  observation = replace(current.speed_limit, kind=ObservationKind.STALE, speed_limit_mps=None,
+    pending_speed_limit_mps=None, last_received_speed_limit_mps=50/3.6 if latest_received else None,
+    last_received_adjusted_limit_mps=55/3.6 if latest_received else None, effective_cluster_target_mps=45/3.6)
+  current = replace(current, speed_limit=observation, appearance=replace(current.appearance, use_vienna_sign=vienna))
+  font = fonts(profile)
+  SpeedLimitWidget(font, profile).render(current)
+  texts = [call.args[0] for call in font.draw.call_args_list]
+  assert texts.count('LAST') == 1
+  assert ('50' if latest_received else '40') in texts
+  assert not {'SPEED', 'OSM', 'DASH', 'VISION', 'NAV'}.intersection(texts)
+  drawing['arrow'].assert_not_called()
+  assert slc_controls(profile, current) == ()
 
 
 def test_compact_set_speed_fades_after_adjustment_and_reappears_on_change():

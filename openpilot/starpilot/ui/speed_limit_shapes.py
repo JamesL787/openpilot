@@ -6,10 +6,11 @@ import pyray as rl
 
 
 ATLAS_PATH = Path(__file__).with_name('assets') / 'speed_limit_shapes.png'
-ATLAS_SIZE = (256, 176)
+ATLAS_SIZE = (384, 176)
 SPRITES = {
   'disc': (0, 0, 128, 128), 'ring': (128, 0, 128, 128),
   'arrow_large': (0, 128, 32, 40), 'arrow_compact': (32, 128, 16, 24),
+  'outline': (256, 0, 128, 144),
 }
 
 
@@ -18,6 +19,7 @@ class SpeedLimitShapes:
     self.scale = scale
     self._headless_context = headless_context
     self.texture = None
+    self.short_outline = None
     self.sources = {name: rl.Rectangle(*rect) for name, rect in SPRITES.items()}
     self.origins = {name: rl.Vector2(rect[2] * scale / 2, rect[3] * scale / 2) for name, rect in SPRITES.items()}
 
@@ -52,6 +54,22 @@ class SpeedLimitShapes:
   def circle(self, x, y, color):
     self._draw('disc', x, y, rl.WHITE)
     self._draw('ring', x, y, color)
+
+  def outline(self, x, y, color, *, short=False):
+    if not short:
+      self._draw('outline', x, y, color)
+      return
+    self._load()
+    if self.short_outline is None:
+      source = self.sources['outline']
+      # Remove only the straight middle: corners and border thickness stay intact.
+      self.short_outline = ((rl.Rectangle(source.x, source.y, source.width, 64), -64),
+                            (rl.Rectangle(source.x, source.y + 80, source.width, 64), 0))
+    origin = rl.Vector2(64 * self.scale, 0)
+    for source, dy in self.short_outline:
+      rl.draw_texture_pro(self.texture, source,
+                          rl.Rectangle(x, y + dy * self.scale, source.width * self.scale, source.height * self.scale),
+                          origin, 0, color)
 
   def arrow(self, size, x, y, direction, color):
     self._draw('arrow_large' if size == 'large' else 'arrow_compact', x, y, color, 180 if direction < 0 else 0)

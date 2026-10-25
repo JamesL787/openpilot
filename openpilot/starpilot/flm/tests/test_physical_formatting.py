@@ -167,3 +167,77 @@ def test_feedback_colliding_extra_key_falls_back_before_any_key_callback():
     outcomes.append((converter(record), tuple(log)))
   assert outcomes[0] == outcomes[1]
   assert outcomes[0][1] == ('early deepcopy',)
+
+
+def original_large_sequence(value, depth=0):
+  if type(value) in (tuple, list):
+    return len(value) > 256
+  if type(value) is dict and depth < 3:
+    return any(original_large_sequence(child, depth + 1) for child in value.values())
+  return False
+
+
+@pytest.mark.parametrize('length', (0, 1, 255, 256, 257, 258))
+@pytest.mark.parametrize('depth', range(6))
+def test_digest_size_selection_keeps_original_boundary_and_depth(length, depth):
+  for container in (list, tuple):
+    value = container(range(length))
+    for i in range(depth):
+      value = {str(i): value}
+    for initial_depth in range(5):
+      assert physical._large_sequence(value, initial_depth) is original_large_sequence(value, initial_depth)
+    assert physical._body_digest_python(value) == physical._body_digest_original(value)
+
+
+def test_digest_selection_preserves_custom_type_callbacks_and_iteration_failures():
+  calls = []
+  class Meta(type):
+    def __eq__(cls, other):
+      calls.append(other.__name__)
+      return False
+  class Custom(metaclass=Meta):
+    pass
+  for value in ({'first': Custom(), 'nested': {'second': Custom()}},
+                {'first': list(range(257)), 'unused': Custom()}):
+    expected = original_large_sequence(value)
+    original_calls = calls[:]
+    calls.clear()
+    assert physical._large_sequence(value) is expected
+    assert calls == original_calls
+    calls.clear()
+  def mutating_parent():
+    parent: dict[str, object] = {}
+    class MutatingMeta(type):
+      def __eq__(cls, other):
+        parent['new'] = 1
+        return False
+    class Mutating(metaclass=MutatingMeta):
+      pass
+    parent['first'] = Mutating()
+    return parent
+  for select in (original_large_sequence, physical._large_sequence):
+    parent = mutating_parent()
+    with pytest.raises(RuntimeError, match='dictionary changed size during iteration'):
+      select(parent)
+
+
+def test_digest_ordinary_nested_bodies_keep_original_bits_types_and_refusals():
+  import random
+  randomizer = random.Random(42)
+  def body(depth=0):
+    if depth == 5 or randomizer.random() < .5:
+      return randomizer.choice((None, True, False, randomizer.randrange(-10**15, 10**15),
+                                randomizer.uniform(-1, 1), -0., 'x\\ü🙂', '', b'\x00\xff'))
+    if randomizer.randrange(3) == 0:
+      return {str(k): body(depth + 1) for k in range(randomizer.randrange(6))}
+    values = [body(depth + 1) for _ in range(randomizer.randrange(8))]
+    return values if randomizer.randrange(2) else tuple(values)
+  for _ in range(4000):
+    value = body()
+    assert physical._large_sequence(value) is original_large_sequence(value)
+    assert physical._body_digest_python(value) == physical._body_digest_original(value)
+  for value in (float('inf'), float('nan'), {1: 0}, {'x': object()}, {'x': bytearray(b'x')}):
+    with pytest.raises(ValueError) as original:
+      physical._body_digest_original(value)
+    with pytest.raises(type(original.value), match=str(original.value)):
+      physical._body_digest_python(value)

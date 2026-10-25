@@ -119,13 +119,15 @@ class TestBoltDisableActivePedal(unittest.TestCase):
         self.assertEqual(card.CP.to_dict(), before)
 
   def test_parked_saved_owner_no_live_mutation(self):
+    import tempfile
     from openpilot.common.params import Params
     from openpilot.common.prefix import OpenpilotPrefix
     from openpilot.starpilot.ui.feature_settings_owner import FeatureSettingsOwner
     from openpilot.starpilot.ui.feature_settings_state import FeatureSettingsRequest
     for identity in IDS:
-      with OpenpilotPrefix():
-        settings = Params()
+      # A private root isolates native Params locking from parallel host tests.
+      with OpenpilotPrefix(), tempfile.TemporaryDirectory() as params_root:
+        settings = Params(params_root)
         cp = params(identity, present=True, pedal=True)
         allowed = [False]
         owner = FeatureSettingsOwner(settings, lambda group, allowed=allowed: allowed[0],

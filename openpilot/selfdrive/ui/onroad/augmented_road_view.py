@@ -50,7 +50,8 @@ class AugmentedRoadView(CameraView):
     self.alert_renderer = AlertRenderer()
     self.driver_state_renderer = DriverStateRenderer()
 
-  def render_model_source_layer(self, rect: rl.Rectangle, box: "rl.Rectangle | None" = None) -> None:
+  def render_model_source_layer(self, rect: rl.Rectangle, box: "rl.Rectangle | None" = None, *,
+                                show_long_indicator: bool | None = False) -> None:
     """The HUD's Chestnut model-source icon on its own, for the StarPilot shell's onroad overlays."""
     self._hud_renderer._update_state()
     self._hud_renderer._draw_model_source(rect, box)
