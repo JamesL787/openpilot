@@ -334,7 +334,9 @@ def test_tgg_vehicle_donor_with_h020_firmware_inverse():
   from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TGG_A120_RACK
   assert H020.rack == CIVIC_TGG_A120_RACK and H020.rack.ratio_v[0] == 15.09
   load = ff.column_load(10., 0., 5., 0., H020.load)
-  assert load == pytest.approx(-120.18)
+  assert load == pytest.approx(-7.8 * 10 - 0.157 * 10 * 25 + 75.77)  # H020 k0 -7.8, TGG k1 and bias
+  assert (H020.load.k0, H020.load.friction) == (-7.8, -285.0)
+  assert (H020.load.k1, H020.load.c) == (-0.157, -5.449)  # the TGG's, which the H020 fit agrees with
   r5 = ff.r5_for_motion(load, 0., H020, angle_deg=10.)
   assert ff.firmware_output(r5, 0., H020, 10.) == pytest.approx(load, abs=1e-8)
 
@@ -460,3 +462,73 @@ def test_carcontroller_unrelated_car_is_unchanged(monkeypatch, tmp_path):
   apply, active = drive(ci, monkeypatch, 60, 0.4, True, driver_torque=-2500)
   prm = CarControllerParams(ci.CP)
   assert active and apply == int(np.interp(-0.4 * prm.STEER_MAX, prm.STEER_LOOKUP_BP, prm.STEER_LOOKUP_V))  # res's own map, no override handling
+
+
+def run_initialize_torque_lateral_control(cp, enforce, nnlc):
+  """Execute sunnypilot's real _initialize_torque_lateral_control (the module needs the native Params binding, so only
+  that function is compiled out of the file)."""
+  tree = ast.parse((ROOT / "sunnypilot/selfdrive/car/interfaces.py").read_text())
+  fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_initialize_torque_lateral_control")
+  logged = []
+  ns = {"CarInterfaceBase": object, "structs": NS(CarParams=object), "is_h020": gate.is_h020, "cloudlog": NS(warning=logged.append)}
+  exec(compile(ast.fix_missing_locations(ast.Module([fn], [])), "interfaces", "exec"), ns)
+  CI = NS(configure_torque_tune=lambda fp, tuning: CarInterface.configure_torque_tune(fp, tuning))
+  ns["_initialize_torque_lateral_control"](CI, cp, enforce, nnlc)
+  return logged
+
+
+@pytest.mark.parametrize("enforce,nnlc", [(True, False), (False, True), (True, True)])
+def test_ui_enforce_torque_or_nnlc_cannot_swap_out_the_h020_tune(enforce, nnlc):
+  c = real_cp()
+  logged = run_initialize_torque_lateral_control(c, enforce, nnlc)
+  assert c.lateralTuning.which() == "pid" and use_honda_eps_controller(c)
+  assert logged and "H020" in logged[0]
+
+
+def test_enforce_torque_still_works_on_other_cars():
+  for version, fp in ((b"39990-TEA,H021\0\0", CAR.HONDA_CIVIC_BOSCH), (PTM_ID, CAR.HONDA_CIVIC)):
+    c = real_cp(version, fp)
+    assert run_initialize_torque_lateral_control(c, True, False) == []
+    assert c.lateralTuning.which() == "torque"
+  c = real_cp()
+  assert run_initialize_torque_lateral_control(c, False, False) == [] and c.lateralTuning.which() == "pid"
+
+
+def settled_controller(monkeypatch, tmp_path, name, files, frames=400):
+  """LatControlHondaEps after `frames` of a steady 25 deg right turn at 12 m/s with the wheel 3 deg short, its own
+  settings directory holding `files`."""
+  params_dir = tmp_path / name
+  params_dir.mkdir()
+  monkeypatch.setattr(gate, "PARAMS_DIR", params_dir)
+  for key, value in files.items():
+    write(params_dir, key, value)
+  ctrl = LatControlHondaEps(real_cp(), None, None)
+  lp = NS(roll=0., angleOffsetDeg=0.)
+  k = ctrl.rack.curvature_from_angle(-25., 12., 0.)
+  out = None
+  for _ in range(frames):
+    out, _, _ = ctrl.update(True, sensors(vEgo=12., steeringAngleDeg=-22.), None, lp, False, k, None, False)
+  return ctrl, out
+
+
+def test_feedforward_scale_file(monkeypatch, tmp_path):
+  base, out_base = settled_controller(monkeypatch, tmp_path, "a", {})
+  half, out_half = settled_controller(monkeypatch, tmp_path, "b", {"HondaEpsFeedforwardScale": 0.5})
+  assert abs(base.core.pid.f) > 0.05
+  assert half.core.pid.f == pytest.approx(0.5 * base.core.pid.f, rel=1e-3)
+  assert abs(out_half) < abs(out_base)
+
+
+def test_pid_scale_file(monkeypatch, tmp_path):
+  _, out1 = settled_controller(monkeypatch, tmp_path, "a", {"HondaEpsFeedforwardScale": 0.0})
+  _, out2 = settled_controller(monkeypatch, tmp_path, "b", {"HondaEpsFeedforwardScale": 0.0, "HondaEpsPidScale": 2.0})
+  assert abs(out1) > 0.01 and out2 == pytest.approx(2.0 * out1, rel=0.05)  # P-dominated with the feedforward off
+
+
+def test_scale_files_default_to_the_calibrated_behavior_and_clip(tmp_path):
+  s = gate.H020Settings(tmp_path)
+  assert (s.feedforward_scale, s.pid_scale) == (1.0, 1.0)
+  write(tmp_path, "HondaEpsFeedforwardScale", 9)
+  write(tmp_path, "HondaEpsPidScale", 0)
+  s.refresh()
+  assert (s.feedforward_scale, s.pid_scale) == (2.0, 0.25)

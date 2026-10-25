@@ -18,6 +18,9 @@ SETTINGS = {
   "HondaDriverOverrideThreshold": (1800.0, 500.0, 5000.0),  # STEER_TORQUE_SENSOR units; res's stock Civic Bosch value is 1200
   "HondaOverrideFadeDownSecs": (0.0, 0.0, 10.0),            # 0: torque is cut the moment an override is detected
   "HondaOverrideFadeUpSecs": (0.5, 0.0, 10.0),              # authority returns over this long after the override ends
+  # tuning levers for the controller (read by LatControlHondaEps): 1.0 is the calibrated behavior
+  "HondaEpsFeedforwardScale": (1.0, 0.0, 2.0),              # multiplies the firmware-inversion feedforward
+  "HondaEpsPidScale": (1.0, 0.25, 3.0),                     # multiplies the residual angle PID's P and I
 }
 REFRESH_FRAMES = 100  # re-read the files about once a second at 100 Hz
 
@@ -58,6 +61,14 @@ class H020Settings:
   @property
   def fade_up_s(self):
     return self.values["HondaOverrideFadeUpSecs"]
+
+  @property
+  def feedforward_scale(self):
+    return self.values["HondaEpsFeedforwardScale"]
+
+  @property
+  def pid_scale(self):
+    return self.values["HondaEpsPidScale"]
 
 
 def get_eps_modified_steering_pressed(raw_pressed, steering_torque, torque_cmd, filter_s, previous_pressed, dt=0.01):

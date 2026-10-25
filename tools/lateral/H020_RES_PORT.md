@@ -40,7 +40,8 @@ TGG-A120 vehicle calibration as the H020 baseline. The rev-b firmware (it report
 | P table, D 737, clamps 7373/1774/9000, A/B geometry, P/D and A280 code | identical to TGG-A120 rev-b |
 | Speed envelope | **Clarity limits** (1774 to 100 km/h, 1330 from 130 km/h); TGG rev-b row 0 is flat 1774. The one deliberate difference |
 | R6 | firmware-derived from H020 Table A and NORM 1650: -153.74 at centre (not measured on H020) |
-| Load, rack, P/I trims, base PID | TGG-A120 donor, **inferred on H020** |
+| Column load | TGG-A120 donor with `k0` -7.8 (TGG -15.67) and friction -285 (TGG -388.8) fitted on LiMing's first H020 route; `k1`, `c`, bias and roll are the TGG's |
+| Rack, P/I trims, base PID | TGG-A120 donor, **inferred on H020** |
 
 ## Driver-override settings (H020 only, set over SSH)
 
@@ -53,6 +54,8 @@ are clipped. They apply only to the H020 (Civic Bosch + `39990-TEA,H020`); every
 | `HondaDriverOverrideThreshold` | 1800 | 500-5000 | `STEER_TORQUE_SENSOR` units above which the wheel counts as pressed (`res` stock for the Civic Bosch is 1200) |
 | `HondaOverrideFadeDownSecs` | 0 | 0-10 | 0 cuts the torque request the moment an override is detected |
 | `HondaOverrideFadeUpSecs` | 0.5 | 0-10 | authority returns over this long after the override ends (and after every engage) |
+| `HondaEpsFeedforwardScale` | 1.0 | 0-2 | multiplies the firmware-inversion feedforward (the calibrated behavior is 1.0) |
+| `HondaEpsPidScale` | 1.0 | 0.25-3 | multiplies the residual PID's P and I |
 
 ```sh
 echo -n 1800 > /data/params/d/HondaDriverOverrideThreshold   # 1200 restores res's stock value
@@ -62,6 +65,17 @@ echo -n 0.5 > /data/params/d/HondaOverrideFadeUpSecs
 The override uses the source branch's detector (opposing or near-zero-command driver torque latches at once, same-direction torque after 0.28 s). While an
 override is latched LKAS is dropped (`STEER_TORQUE_REQUEST` off), so a fade-down above 0 only changes the controller's own state, not what the EPS is sent.
 The cut skips `res`'s 3/s torque delta limit, which would otherwise stretch a 0 s fade-down to 0.33 s. Outside an override that limit still applies.
+
+## Tuning on the car
+
+- **Timing.** `res` runs a plan model (his log: the action curvature equals the plan at the told delay + 0.1 s smoothing), so the delay the model is told is the
+  timing knob, 1:1. With Live Learning Steer Delay off the told delay is `steerActuatorDelay` (0.10 s for the Civic Bosch) + `LagdToggleDelay`:
+  `echo -n 0.03 > /data/params/d/LagdToggleDelay`. On his first route (told 0.25 s) the car ran 0.13 s early; its command-to-yaw lag was 0.24 s at 3-6 m/s,
+  0.18 at 6-9, 0.14 at 9-12 and 0.12 at 12-18. Set it over SSH: editing LAF or the delay in the UI used to flip `EnforceTorqueControl`.
+- **Enforce Torque / NNLC no longer replace the H020 tune** (`sunnypilot/selfdrive/car/interfaces.py`): on a Civic Bosch with `39990-TEA,H020` the PID tune stays and a
+  warning is logged. Every other car is unchanged.
+- **Column load.** `k0` and friction were refit on his first route (see the table above); the fit assumes the rev-b image, covers 3.7 min at 64 km/h or less,
+  and `bias` and roll are not identifiable from it.
 
 ## Not established
 

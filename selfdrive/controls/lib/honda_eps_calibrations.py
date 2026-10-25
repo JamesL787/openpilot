@@ -1,15 +1,19 @@
 """TEA-H020 rev-b (reports 39990-TEA,H020) calibration.
 
 Firmware fields are the tables of the delivered rev-b image (see tools/lateral/h020_firmware_evidence.json); the
-vehicle fields (load, rack, residual trims) are the TGG-A120 donor's, measured on that car and INFERRED on the H020.
+vehicle fields (rack, residual trims, most of the column load) are the TGG-A120 donor's, measured on that car and INFERRED on the H020.
+The column's stiffness (k0) and Coulomb friction are fitted on LiMing's first H020 route (00000004--a8cb4760f4).
 """
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import ColumnLoadModel, EpsFirmwareCalibration, computed_r6
 from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import PROFILE
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TGG_A120_RACK
 
 R6_CENTRE, R6_BP, R6_GAIN = computed_r6(PROFILE)
-# TGG-A120 donor: fitted on its owner's routes 0000000b-00000010 (73 min), in firmware-output units.
-H020_LOAD = ColumnLoadModel(k0=-15.67, k1=-0.157, c=-5.449, friction=-388.8, bias=75.77, kroll=-0.6084)
+# TGG-A120 donor (routes 0000000b-00000010, 73 min, firmware-output units) with k0 and friction from the H020's own route:
+# tools/lateral/fit_column_load.py --source e4 on 3.7 min gave k0 -7.83 (halves -5.2 / -7.9), friction -289 (-273 / -268), R^2 0.86;
+# the TGG column is about twice as stiff (k0 -15.67) and 30% more frictional (-388.8). k1 and c agree with the TGG's and are kept.
+# bias and kroll were not identifiable from that route (bias -25..+75, kroll -6.9..+2.7) and stay the TGG's. The fit assumes the rev-b image.
+H020_LOAD = ColumnLoadModel(k0=-7.8, k1=-0.157, c=-5.449, friction=-285.0, bias=75.77, kroll=-0.6084)
 H020 = EpsFirmwareCalibration(
   name="civic_tea_h020",
   e4_per_output=3840.0,
@@ -32,7 +36,7 @@ CALIBRATION_PROVENANCE = {
   "envelope": "Clarity limits (1330 from 130 km/h); the TGG rev-b row 0 envelope is flat 1774",
   "live_row": "firmware: all variant records select row 0",
   "r6": "firmware-derived from H020 Table A and NORM1650; not measured on H020",
-  "column_load": "transferred: TGG-A120 owner routes 83ccc6a9a4e14d0b/0000000b-00000010; inferred on H020",
+  "column_load": "TGG-A120 donor, with k0 and friction fitted on LiMing route 00000004--a8cb4760f4 (one 3.7 min route); bias/kroll not identifiable",
   "rack": "transferred: TGG-A120 yaw-fitted rack; H020 A/B tables equal the C020/TGG ones; gearing is a donor assumption",
   "residual_pid": "transferred: TGG-A120/Civic Bosch four-point base PID and P/I trims; not measured on H020",
   "command_delay": "none added: res plan/model pipeline unchanged, pending H020 timing measurement",

@@ -13,7 +13,7 @@ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import HondaEpsFirmw
 from openpilot.selfdrive.controls.lib.honda_eps_calibrations import H020
 from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import H020_VGR_INVERSE
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
-from opendbc.sunnypilot.car.honda.h020_ptm import is_h020
+from opendbc.sunnypilot.car.honda.h020_ptm import H020Settings, is_h020
 from openpilot.selfdrive.controls.lib.honda_eps_h020_override import get_eps_modified_steering_pressed
 
 RIDE_THROUGH_S = 0.1
@@ -31,6 +31,16 @@ def warn_if_h020_tune_replaced(CP, cloudlog):
                    "or NeuralNetworkLateralControl); steering with the generic controller on the H020 map")
 
 
+class ScaledFeedforward(HondaEpsFirmwareFeedforward):
+  """The firmware-inversion feedforward times a live scale; its own smoothing state is left unscaled."""
+  def __init__(self, dt, cal, scale):
+    super().__init__(dt, cal)
+    self.scale = scale
+
+  def update(self, *args):
+    return super().update(*args) * self.scale()
+
+
 class LatControlHondaEps(LatControl):
   def __init__(self, CP, CP_SP, CI):
     super().__init__(CP, CP_SP, CI)
@@ -39,8 +49,9 @@ class LatControlHondaEps(LatControl):
     self.dt = DT_CTRL
     self.calibration = H020
     pid = CP.lateralTuning.pid
+    self.settings = H020Settings()  # tuning scales from settings files (h020_ptm), re-read about once a second
     self.core = HondaEpsLateralCore(list(pid.kpBP), list(pid.kpV), list(pid.kiBP), list(pid.kiV), DT_CTRL,
-                                  HondaEpsFirmwareFeedforward(DT_CTRL, self.calibration))
+                                  ScaledFeedforward(DT_CTRL, self.calibration, lambda: self.settings.feedforward_scale))
     # res does not have the source branch's override fade; do not assume it does.
     self.core.override_fade_up_s = 0.0
     # Match the source wrapper default, rather than the numerical core's different defaults.
@@ -65,6 +76,10 @@ class LatControlHondaEps(LatControl):
     self.steering_pressed_prev = False
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, calibrated_pose, curvature_limited):
+    self.settings.tick()
+    s = self.settings.pid_scale
+    self.core.p_scale = tuple(x * s for x in self.calibration.p_scale)
+    self.core.i_scale = tuple(x * s for x in self.calibration.i_scale)
     pid_log = log.ControlsState.LateralPIDState.new_message()
     inputs = (CS.steeringAngleDeg, CS.steeringRateDeg, CS.vEgo, params.roll, params.angleOffsetDeg, desired_curvature, CS.steeringTorque)
     if not all(math.isfinite(float(x)) for x in inputs):

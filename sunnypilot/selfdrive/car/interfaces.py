@@ -8,6 +8,7 @@ from typing import Any
 
 from opendbc.car import structs
 from opendbc.car.interfaces import CarInterfaceBase
+from opendbc.sunnypilot.car.honda.h020_ptm import is_h020
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.selfdrive.controls.lib.nnlc.helpers import get_nn_model_path
@@ -65,6 +66,11 @@ def _initialize_intelligent_cruise_button_management(CP: structs.CarParams, CP_S
 
 
 def _initialize_torque_lateral_control(CI: CarInterfaceBase, CP: structs.CarParams, enforce_torque: bool, nnlc_enabled: bool) -> None:
+  if (nnlc_enabled or enforce_torque) and CP.carFingerprint == "HONDA_CIVIC_BOSCH" and is_h020(CP.carFw):
+    # The TEA-H020 rev-b runs LatControlHondaEps on its own PID tune; the torque tune would replace it, so the UI's
+    # Enforce Torque / NNLC (or editing LAF) must not swap it out.
+    cloudlog.warning("TEA-H020: keeping the H020 PID tune, ignoring Enforce Torque / NNLC")
+    return
   if nnlc_enabled or enforce_torque:
     CI.configure_torque_tune(CP.carFingerprint, CP.lateralTuning)
 
