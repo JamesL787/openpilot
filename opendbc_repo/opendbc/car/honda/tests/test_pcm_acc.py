@@ -13,32 +13,34 @@ T0 = 1_000_000_000
 DT = 10_000_000
 
 
+STOPPED = {"ENGINE_DATA": {"XMISSION_SPEED": 0},
+           "WHEEL_SPEEDS": {"WHEEL_SPEED_FL": 0, "WHEEL_SPEED_FR": 0, "WHEEL_SPEED_RL": 0, "WHEEL_SPEED_RR": 0}}
+
+
 class PcmAccPacker:
   """the interceptor tests' packer with POWERTRAIN_DATA ACC_STATUS set to the PCM state under test"""
-  def __init__(self, identity, acc_status):
+  def __init__(self, identity, acc_status, overrides=None):
     self.packer = CANPacker(DBC[identity][Bus.pt])
-    self.acc_status = acc_status
+    self.overrides = {**(overrides or {}), "POWERTRAIN_DATA": {"ACC_STATUS": acc_status}}
 
   def make_can_msg(self, name, bus, values):
-    if name == "POWERTRAIN_DATA":
-      values = {**values, "ACC_STATUS": self.acc_status}
-    return self.packer.make_can_msg(name, bus, values)
+    return self.packer.make_can_msg(name, bus, {**values, **self.overrides.get(name, {})})
 
 
-def _drive(keep, acc_status, ticks=50):
+def _drive(keep, acc_status, ticks=50, overrides=None):
   cp = factory(CAR.HONDA_CLARITY)
   ci = CarInterface(cp)
   ci.CC.keep_pcm_acc = ci.CS.keep_pcm_acc = keep
-  packer = PcmAccPacker(CAR.HONDA_CLARITY, acc_status)
+  packer = PcmAccPacker(CAR.HONDA_CLARITY, acc_status, overrides)
   for tick in range(ticks):
     cs = ci.update([(T0 + tick * DT, source_frames(cp, packer, tick))])
   return cp, ci, cs
 
 
-def _apply(ci, enabled, long_active, accel, cancel=False, ticks=20):
+def _apply(ci, enabled, long_active, accel, cancel=False, ticks=20, state="pid"):
   command = structs.CarControl(enabled=enabled, longActive=long_active)
   command.actuators.accel = accel
-  command.actuators.longControlState = "pid"
+  command.actuators.longControlState = state
   command.cruiseControl.cancel = cancel
   brake, hud = [], []
   for tick in range(ticks):
@@ -116,3 +118,34 @@ def test_without_the_mode_nothing_changes():
   assert brake and all(_cancel(f) for f in brake)
   values = _hud_values(hud[-1])
   assert values["PCM_GAS"] == 0 and values["PCM_SPEED"] == 0
+
+
+def _brake(frame):
+  # COMPUTER_BRAKE, or COMPUTER_BRAKE_HYBRID on a car fingerprinted as a hybrid
+  return max((frame[1][0] << 2) | (frame[1][1] >> 6), (frame[1][6] << 2) | (frame[1][7] >> 6))
+
+
+@pytest.mark.parametrize("keep", [False, True])
+def test_standstill_hold_floor_only_in_the_mode(keep):
+  _, ci, cs = _drive(keep, acc_status=1, overrides=STOPPED)
+  assert cs.standstill
+  brake, _ = _apply(ci, enabled=True, long_active=True, accel=-0.15, state="stopping", ticks=100)
+  floor = int((pcm_acc.STANDSTILL_HOLD_BRAKE - 0.02) * 256)  # less the 0.01 brake hysteresis gap and wind term
+  if keep:
+    assert _brake(brake[-1]) >= floor
+  else:
+    assert _brake(brake[-1]) < floor
+
+
+def test_standstill_hold_needs_the_stopping_state_and_a_stopped_car():
+  assert pcm_acc.standstill_hold(0.1, True, True) == pcm_acc.STANDSTILL_HOLD_BRAKE
+  assert pcm_acc.standstill_hold(0.6, True, True) == 0.6
+  assert pcm_acc.standstill_hold(0.1, False, True) == 0.1
+  assert pcm_acc.standstill_hold(0.1, True, False) == 0.1
+
+
+def test_launch_releases_the_hold():
+  _, ci, _ = _drive(True, acc_status=1, overrides=STOPPED)
+  _apply(ci, enabled=True, long_active=True, accel=-0.15, state="stopping", ticks=100)
+  brake, _ = _apply(ci, enabled=True, long_active=True, accel=1.0, state="starting", ticks=4)
+  assert _brake(brake[-1]) == 0

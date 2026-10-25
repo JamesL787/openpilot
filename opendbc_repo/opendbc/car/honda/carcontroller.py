@@ -142,6 +142,8 @@ class CarController(CarControllerBase):
     if CC.longActive:
       accel = actuators.accel
       gas, brake = compute_gas_brake(actuators.accel, CS.out.vEgo, self.CP)
+      if self.keep_pcm_acc:
+        brake = pcm_acc.standstill_hold(brake, CS.out.standstill, actuators.longControlState == LongCtrlState.stopping)
     else:
       accel = 0.0
       gas, brake = 0.0, 0.0

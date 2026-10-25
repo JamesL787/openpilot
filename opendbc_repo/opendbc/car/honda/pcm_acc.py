@@ -16,6 +16,12 @@ from opendbc.car import structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda.values import CAR, HondaFlags
 
+# Standstill hold floor while openpilot is stopping. The Clarity runs stopAccel 0.0 (StarPilot's entry), so with creep
+# gone the hold was only the creep term plus whatever request was left at the stop: 43-51 on the hybrid field
+# (00000039--a3fe07ccbe). Stock ACC holds at ~102 (0.40) once settled; nrdr-development, at upstream's stopAccel -2.0,
+# holds at ~107-145.
+STANDSTILL_HOLD_BRAKE = 0.40
+
 # stock ACC_HUD PCM_GAS while braking or coasting with PCM_SPEED 0, median by speed, made monotonic
 PCM_GAS_BP = [v * CV.MPH_TO_MS for v in (0., 2., 4., 6.5, 10., 18., 22., 27., 35.)]
 PCM_GAS_V = [38., 38., 48., 62., 66., 66., 74., 94., 98.]
@@ -24,6 +30,10 @@ PCM_GAS_V = [38., 38., 48., 62., 66., 66., 74., 94., 98.]
 def qualified(CP: structs.CarParams) -> bool:
   return (CP.carFingerprint == CAR.HONDA_CLARITY and CP.openpilotLongitudinalControl and not CP.pcmCruise and
           bool(CP.flags & HondaFlags.GAS_INTERCEPTOR) and not CP.flags & HondaFlags.BOSCH)
+
+
+def standstill_hold(brake: float, standstill: bool, stopping: bool) -> float:
+  return max(brake, STANDSTILL_HOLD_BRAKE) if standstill and stopping else brake
 
 
 def hud_gas(v_ego: float) -> int:
