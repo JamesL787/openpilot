@@ -137,11 +137,33 @@ def test_standstill_hold_floor_only_in_the_mode(keep):
     assert _brake(brake[-1]) < floor
 
 
-def test_standstill_hold_needs_the_stopping_state_and_a_stopped_car():
-  assert pcm_acc.standstill_hold(0.1, True, True) == pcm_acc.STANDSTILL_HOLD_BRAKE
-  assert pcm_acc.standstill_hold(0.6, True, True) == 0.6
-  assert pcm_acc.standstill_hold(0.1, False, True) == 0.1
-  assert pcm_acc.standstill_hold(0.1, True, False) == 0.1
+def test_standstill_hold_latches_through_standstill_flicker():
+  hold, floor = pcm_acc.StandstillHold(), pcm_acc.STANDSTILL_HOLD_BRAKE
+  assert hold.update(0.1, False, True) == 0.1          # still rolling while stopping: no hold yet
+  assert hold.update(0.1, True, True) == floor         # stopped
+  for standstill in (False, True, False, False, True):  # carState.standstill flickers at ~2 Hz while stopped
+    assert hold.update(0.1, standstill, True) == floor
+  assert hold.update(0.6, False, True) == 0.6          # a larger request still wins
+  assert hold.update(0.1, False, False) == 0.1         # leaving the stopping state releases it
+  assert hold.update(0.1, False, True) == 0.1          # and it waits for the next stop
+
+
+def test_hold_survives_a_standstill_flicker_on_the_real_interface():
+  cp, ci, _ = _drive(True, acc_status=1, overrides=STOPPED)
+  _apply(ci, enabled=True, long_active=True, accel=-0.1, state="stopping", ticks=100)
+  rolling = PcmAccPacker(CAR.HONDA_CLARITY, 1, {**STOPPED, "ENGINE_DATA": {"XMISSION_SPEED": 0.1}})
+  cs = ci.update([(T0 + 200 * DT, source_frames(cp, rolling, 200))])
+  assert not cs.standstill
+  brake, _ = _apply(ci, enabled=True, long_active=True, accel=-0.1, state="stopping", ticks=10)
+  assert min(_brake(f) for f in brake) >= int((pcm_acc.STANDSTILL_HOLD_BRAKE - 0.02) * 256)
+
+
+def test_gas_override_clears_the_hold():
+  _, ci, _ = _drive(True, acc_status=1, overrides=STOPPED)
+  _apply(ci, enabled=True, long_active=True, accel=-0.1, state="stopping", ticks=100)
+  assert ci.CC.standstill_hold.latched
+  _apply(ci, enabled=True, long_active=False, accel=0.0, ticks=2)
+  assert not ci.CC.standstill_hold.latched
 
 
 def test_launch_releases_the_hold():

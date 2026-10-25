@@ -111,6 +111,7 @@ class CarController(CarControllerBase):
     self.modified_eps_settings = None
     # Clarity with an interceptor: the PCM stays in ACC while openpilot is engaged (honda/pcm_acc.py)
     self.keep_pcm_acc = pcm_acc.qualified(CP)
+    self.standstill_hold = pcm_acc.StandstillHold()
 
     self.braking = False
     self.brake_steady = 0.
@@ -143,10 +144,11 @@ class CarController(CarControllerBase):
       accel = actuators.accel
       gas, brake = compute_gas_brake(actuators.accel, CS.out.vEgo, self.CP)
       if self.keep_pcm_acc:
-        brake = pcm_acc.standstill_hold(brake, CS.out.standstill, actuators.longControlState == LongCtrlState.stopping)
+        brake = self.standstill_hold.update(brake, CS.out.standstill, actuators.longControlState == LongCtrlState.stopping)
     else:
       accel = 0.0
       gas, brake = 0.0, 0.0
+      self.standstill_hold.latched = False
 
     # *** rate limit steer ***
     if _projection is not None:

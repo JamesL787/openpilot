@@ -33,8 +33,16 @@ def qualified(CP: structs.CarParams) -> bool:
           bool(CP.flags & HondaFlags.GAS_INTERCEPTOR) and not CP.flags & HondaFlags.BOSCH)
 
 
-def standstill_hold(brake: float, standstill: bool, stopping: bool) -> float:
-  return max(brake, STANDSTILL_HOLD_BRAKE) if standstill and stopping else brake
+class StandstillHold:
+  """Latched once the car stops while openpilot is stopping; released when openpilot leaves the stopping state.
+  carState.standstill flickers at ~2 Hz while stopped (XMISSION_SPEED noise around 0), and following it pumped the
+  brake between ~45 and ~80 twice a second (00000039--3b, stop at 86.9 s)."""
+  def __init__(self):
+    self.latched = False
+
+  def update(self, brake: float, standstill: bool, stopping: bool) -> float:
+    self.latched = stopping and (self.latched or standstill)
+    return max(brake, STANDSTILL_HOLD_BRAKE) if self.latched else brake
 
 
 def hud_gas(v_ego: float) -> int:
