@@ -184,7 +184,7 @@ def test_controller_logs_its_calibration_and_both_delays(monkeypatch):
   lac.update(True, CS, VM, params, False, 0.01, False, 0.33, None, None, SimpleNamespace())
   st = lac.starpilot_lateral_state
   assert st.epsCalibration == "clarity_trw_a020"
-  assert st.epsCommandDelay == pytest.approx(0.12) and st.epsModelDelay == pytest.approx(0.33)
+  assert st.epsCommandDelay == pytest.approx(0.20) and st.epsModelDelay == pytest.approx(0.33)
 
 
 def test_controller_reads_the_override_fade_time(monkeypatch):
@@ -735,8 +735,8 @@ def test_command_delay_hands_over_the_value_issued_that_long_ago():
 
 def test_command_delay_moves_from_its_town_to_its_highway_value():
   cal = eps_cal.CLARITY_TRW_A020
-  assert eps_ff.command_delay(cal, 0.0) == eps_ff.command_delay(cal, 10.0) == pytest.approx(0.12)
-  assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.11)
+  assert eps_ff.command_delay(cal, 0.0) == eps_ff.command_delay(cal, 10.0) == pytest.approx(0.20)
+  assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.15)
   assert eps_ff.command_delay(cal, 15.0) == eps_ff.command_delay(cal, 30.0) == pytest.approx(0.10)
   assert eps_ff.command_delay(eps_cal.INSIGHT_TXM_A040, 30.0) == 0.0
   assert honda_eps.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
@@ -755,16 +755,16 @@ def test_the_civics_hold_their_command_delay_on_the_highway():
 
 def test_every_vehicle_has_its_own_command_delay():
   delays = {cal.name: cal.cmd_delay_s for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()}
-  measured = {"clarity_trw_a020": 0.12, "civic_tba_c020": 0.15, "civic_teg_a010": 0.15}
+  measured = {"clarity_trw_a020": 0.20, "civic_tba_c020": 0.15, "civic_teg_a010": 0.15}
   same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15}
   inferred = {"insight_txm_a040": 0.15, "civic_tba_a030": 0.15}  # the A030: the TEG's (same Nidec image family)
   for name, delay in delays.items():
     assert delay == {**measured, **same_chassis_as_c020, **inferred}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
-  # the default is the smaller measured value, so an unmeasured car cannot be pushed late
-  assert eps_ff.CMD_DELAY_DEFAULT_S == min(measured.values())
+  # the default is at or below every measured value, so an unmeasured car cannot be pushed late
+  assert eps_ff.CMD_DELAY_DEFAULT_S <= min(measured.values())
 
 
-@pytest.mark.parametrize("v, late_frames", [(8.0, 12), (20.0, 10)])  # 0.12 s in town, 0.10 s on the highway
+@pytest.mark.parametrize("v, late_frames", [(8.0, 20), (20.0, 10)])  # 0.20 s in town, 0.10 s on the highway
 def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, v, late_frames):
   lac, VM, _ = _controller(monkeypatch)
   CS = car.CarState.new_message()

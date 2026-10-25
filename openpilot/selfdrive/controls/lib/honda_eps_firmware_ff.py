@@ -69,6 +69,9 @@ class ColumnLoadModel:
 # from starpilotModelV2.lateralSource). These values are the action-head ones, measured on action-head drives. Each
 # delay is sized at or below what was measured, so it cannot make a car late.
 # - Clarity (Cinque v3): 0.12-0.14 s early (route 37e); 0.12 s took entries from -0.25 to -0.11 s (route 380).
+#   Still early with 0.12 s on the 7.x drives, on every model (2026-10-25, town turns): routes 1a / 28 (MD v3) / 39
+#   (Flip Flop roundabout) -0.13 s, 32 (Flip Flop) / 33 -0.07 s, so 0.19-0.25 s in all; it takes 0.20 s, which can
+#   leave the two -0.07 s drives ~0.01 s late.
 # - Civic Bosch C020 (tsfdo): routes 290 / 293 / 289 -0.09 / -0.15 / -0.22 s, median -0.15. Checked with it on
 #   (routes 2b7 / 2c6 / 2d4): -0.14 / -0.11 / +0.03 s, -0.045 weighted, against -0.15 without it on 289 / 290 / 294.
 # - Insight: 0.15, inferred from a LatControlPID drive (see INSIGHT_TXM_A040).

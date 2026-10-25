@@ -70,9 +70,9 @@ def _delays(lac, VM, sources, v_ego=8.0):
 
 def test_an_action_head_and_an_unknown_source_take_the_calibrations_command_delay(monkeypatch):
   lac, VM, _ = _controller(monkeypatch)
-  assert _delays(lac, VM, [None] * 5)[-1] == pytest.approx(0.12)  # no message yet
-  assert _delays(lac, VM, ["actionHead"] * 5)[-1] == pytest.approx(0.12)
-  assert _delays(lac, VM, ["curvatureHead"] * 5)[-1] == pytest.approx(0.12)
+  assert _delays(lac, VM, [None] * 5)[-1] == pytest.approx(0.20)  # no message yet
+  assert _delays(lac, VM, ["actionHead"] * 5)[-1] == pytest.approx(0.20)
+  assert _delays(lac, VM, ["curvatureHead"] * 5)[-1] == pytest.approx(0.20)
 
 
 def test_a_plan_model_runs_with_no_command_delay_reached_by_a_ramp(monkeypatch):
@@ -81,8 +81,8 @@ def test_a_plan_model_runs_with_no_command_delay_reached_by_a_ramp(monkeypatch):
   delays = _delays(lac, VM, ["plan"] * (frames + 5))
   assert delays[-1] == pytest.approx(0.0, abs=1e-9)
   steps = [a - b for a, b in zip(delays, delays[1:], strict=False)]
-  assert max(steps) <= 0.12 * lac.dt / honda_eps.CMD_DELAY_RAMP_S + 1e-6  # no step: 0.12 s over 1 s (logged as float32)
-  assert delays[frames // 2] == pytest.approx(0.06, abs=0.002)
+  assert max(steps) <= 0.20 * lac.dt / honda_eps.CMD_DELAY_RAMP_S + 1e-6  # no step: 0.20 s over 1 s (logged as float32)
+  assert delays[frames // 2] == pytest.approx(0.10, abs=0.003)  # one ramp step is 0.002 s
 
 
 def test_a_model_swap_ramps_back(monkeypatch):
@@ -90,7 +90,7 @@ def test_a_model_swap_ramps_back(monkeypatch):
   frames = int(honda_eps.CMD_DELAY_RAMP_S / lac.dt)
   _delays(lac, VM, ["plan"] * (frames + 5))
   back = _delays(lac, VM, ["actionHead"] * (frames + 5))
-  assert back[0] < 0.01 and back[-1] == pytest.approx(0.12)
+  assert back[0] < 0.01 and back[-1] == pytest.approx(0.20)
 
 
 def test_the_command_delay_takes_its_highway_value_with_speed(monkeypatch):
