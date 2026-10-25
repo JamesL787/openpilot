@@ -109,7 +109,7 @@ class CarController(CarControllerBase):
     # read as safety limiting in controlsd and froze the lateral integrator. openpilot attaches modified_eps_settings.
     self.modified_eps_steering = ModifiedEpsSteering() if modified_eps(CP) else None
     self.modified_eps_settings = None
-    # Clarity interceptor PCM-ACC test mode (honda/pcm_acc.py); openpilot sets it from the ClarityPcmAccMode file
+    # Clarity interceptor PCM-ACC test mode (honda/pcm_acc.py); openpilot sets it from /data/ClarityPcmAccMode
     self.keep_pcm_acc = False
 
     self.braking = False
