@@ -1,4 +1,4 @@
-"""Clarity with a pedal interceptor: keep the PCM in ACC while openpilot is engaged (opt-in test mode).
+"""Clarity with a pedal interceptor: keep the PCM in ACC while openpilot is engaged.
 
 openpilot normally cancels the PCM's own cruise the moment it engages on a car without PCM cruise. Out of ACC the
 hybrid PCM creeps, and below ~2.5 mph that creep cancels most of our brake: -0.1 m/s2 against stock ACC's -0.5 with
@@ -8,7 +8,8 @@ time, and with it set the PCM stops creeping.
 openpilot still owns brake (BRAKE_COMMAND) and gas (interceptor). The PCM reads only our ACC_HUD, sent like stock's
 braking frame: PCM_SPEED 0 (no drive torque; stock coasts as with ACC off) and PCM_GAS at stock's per-speed value.
 The camera's standstill hold (CRUISE_STATES 8, CRUISE_SPEED 252, PCM_GAS 0) is never sent. Out of openpilot the PCM's
-ACC is cancelled exactly as before.
+ACC is cancelled exactly as before. On for every qualified Clarity; with openpilot off (passive) the PCM's cruise state
+is reported as it is.
 """
 import numpy as np
 

@@ -4,6 +4,7 @@ import pytest
 
 from opendbc.can import CANPacker
 from opendbc.car import Bus, gen_empty_fingerprint, structs
+from opendbc.car.honda import pcm_acc
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.nidec_interceptor import NidecInterceptor, create_command, pedal_crc, qualified
 from opendbc.car.honda.values import CAR, DBC, HondaFlags
@@ -195,7 +196,9 @@ def test_whole_parser_sensor_expiry_recovery_and_physical_threshold(identity):
         from opendbc.can import CANParser
         hud = CANParser(DBC[identity][Bus.pt], [("ACC_HUD", 10)], 0)
         hud.update([(2_600_000_000, [frame])])
-        assert hud.vl["ACC_HUD"]["PCM_GAS"] == 0
+        # the Clarity keeps its PCM in ACC with stock's braking-frame gas value (honda/pcm_acc.py)
+        expected_gas = pcm_acc.hud_gas(cs.vEgo) if pcm_acc.qualified(cp) else 0
+        assert hud.vl["ACC_HUD"]["PCM_GAS"] == expected_gas
         assert hud.vl["ACC_HUD"]["PCM_SPEED"] == 0
     for frame in pedal:
       assert frame[1][4] & 0x80 and frame[1][5] == pedal_crc(frame[1])

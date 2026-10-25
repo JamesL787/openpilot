@@ -149,3 +149,19 @@ def test_launch_releases_the_hold():
   _apply(ci, enabled=True, long_active=True, accel=-0.15, state="stopping", ticks=100)
   brake, _ = _apply(ci, enabled=True, long_active=True, accel=1.0, state="starting", ticks=4)
   assert _brake(brake[-1]) == 0
+
+
+@pytest.mark.parametrize("identity, sensor, expected", [(CAR.HONDA_CLARITY, True, True), (CAR.HONDA_CLARITY, False, False),
+                                                        (CAR.HONDA_CIVIC, True, False)])
+def test_on_by_default_only_for_a_clarity_with_an_interceptor(identity, sensor, expected):
+  ci = CarInterface(factory(identity, sensor=sensor))
+  assert ci.CC.keep_pcm_acc == expected and ci.CS.keep_pcm_acc == expected
+
+
+def test_passive_reports_the_pcm_cruise_state():
+  cp, ci, cs = _drive(True, acc_status=1)
+  assert not cs.cruiseState.enabled
+  cp.passive = True
+  packer = PcmAccPacker(CAR.HONDA_CLARITY, 1)
+  cs = ci.update([(T0 + 50 * DT, source_frames(cp, packer, 50))])
+  assert cs.cruiseState.enabled

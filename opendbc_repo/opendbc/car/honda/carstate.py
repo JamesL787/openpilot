@@ -5,6 +5,7 @@ from collections import defaultdict
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.honda import pcm_acc
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.modified_eps import current_settings, modified_eps, steering_pressed_threshold
 from opendbc.car.honda.yaw_rate import get_yaw_rate_calibration
@@ -52,9 +53,9 @@ class CarState(CarStateBase):
     self.brake_switch_active = False
     self.low_speed_alert = False
 
-    # Clarity interceptor PCM-ACC test mode (honda/pcm_acc.py, attached by openpilot): the controller holds the PCM
-    # in ACC while engaged, so cruiseState.enabled keeps reporting it off as before and pcm_acc_active carries the bit
-    self.keep_pcm_acc = False
+    # Clarity with an interceptor (honda/pcm_acc.py): the controller holds the PCM in ACC while engaged, so
+    # cruiseState.enabled keeps reporting it off as before and pcm_acc_active carries the bit. Not while passive.
+    self.keep_pcm_acc = pcm_acc.qualified(CP)
     self.pcm_acc_active = False
 
     self.dynamic_v_cruise_units = bool(self.CP.flags & (HondaFlags.BOSCH_RADARLESS | HondaFlags.BOSCH_ALT_RADAR | HondaFlags.BOSCH_CANFD))
@@ -233,7 +234,7 @@ class CarState(CarStateBase):
       ret.brakePressed = (powertrain_data["BRAKE_PRESSED"] != 0) or self.brake_switch_active
 
     self.pcm_acc_active = cp.vl["POWERTRAIN_DATA"]["ACC_STATUS"] != 0
-    ret.cruiseState.enabled = self.pcm_acc_active and not self.keep_pcm_acc
+    ret.cruiseState.enabled = self.pcm_acc_active and not (self.keep_pcm_acc and not self.CP.passive)
     ret.cruiseState.available = bool(cp.vl[self.car_state_scm_msg]["MAIN_ON"])
 
     if self.CP.flags & HondaFlags.BOSCH:
