@@ -50,7 +50,7 @@ def rlog_paths(args):
 
 
 def read(paths):
-  M, CS, LAT, Y = [], [], [], {}
+  M, CS, LAT, Y, SRC, CD = [], [], [], {}, [], []
   fingerprint = None
   for p in paths:
     raw = open(p, 'rb').read()
@@ -68,6 +68,12 @@ def read(paths):
           CS.append((t, e.carState.vEgo, e.carState.steeringPressed))
         elif w == 'carControl':
           LAT.append((t, e.carControl.latActive))
+        elif w == 'starpilotModelV2':
+          SRC.append((t, int(e.starpilotModelV2.lateralSource.raw)))
+        elif w == 'starpilotLateralState':
+          st = e.starpilotLateralState
+          # a build from before these fields reads 0 for both: no calibration name means not logged, not "no delay"
+          CD.append((t, st.epsCommandDelay if st.epsCalibration else np.nan))
         elif w == 'carParams' and fingerprint is None:
           fingerprint = str(e.carParams.carFingerprint)
         elif w == 'can':
@@ -76,21 +82,32 @@ def read(paths):
               Y.setdefault(c.src, []).append((t, (c.dat[0] << 2) | (c.dat[1] >> 6)))
     except Exception as ex:  # a truncated last segment
       print(f'  (partial read {p}: {ex})', file=sys.stderr)
-  return [np.array(x, float) for x in (M, CS, LAT)], {k: np.array(v, float) for k, v in Y.items()}, fingerprint
+  return [np.array(x, float) for x in (M, CS, LAT, SRC, CD)], {k: np.array(v, float) for k, v in Y.items()}, fingerprint
 
 
 def car_curvature(Y, CS, fingerprint):
   # scale and clockwise correction from opendbc's per-car calibration (GPS-checked); 0x94 is read on whichever bus
   # carries it (Clarity 0, Bosch 1). An uncalibrated car falls back to the nominal 0.25 deg/s per count.
-  scale, _, right = YAW_RATE_CALIBRATION.get(fingerprint, (0.25, 512.0, 0.0))
+  scale, cal_zero, right = YAW_RATE_CALIBRATION.get(fingerprint, (0.25, 512.0, 0.0))
   bus = max(Y, key=lambda b: len(Y[b]))
   y = Y[bus]
   v = np.interp(y[:, 0], CS[:, 0], CS[:, 1])
   stopped = v < 0.01
-  zero = y[stopped, 1].mean() if stopped.sum() > 100 else 512.0  # the zero drifts by unit and temperature
+  zero = y[stopped, 1].mean() if stopped.sum() > 100 else cal_zero  # the zero drifts by unit and temperature
   yaw = np.radians([yaw_rate_deg_s(c, scale, right) for c in y[:, 1] - zero])
   k = np.convolve(yaw / np.maximum(v, 0.5), np.ones(5) / 5, 'same')
   return y[:, 0] - VSA_LATENCY, k, bus, zero
+
+
+SOURCE_NAMES = {0: 'unknown', 1: 'plan', 2: 'actionHead', 3: 'curvatureHead'}  # custom.capnp LateralSource
+
+
+def step(arr, t, default):
+  # the latest logged value at each time (a zero-order hold); default before the first one or when nothing is logged
+  if not len(arr):
+    return np.full(len(t), default, float)
+  i = np.searchsorted(arr[:, 0], t, side='right') - 1
+  return np.where(i >= 0, arr[np.clip(i, 0, None), 1], default)
 
 
 def best_shift(tf, plan, yt, k):
@@ -104,7 +121,7 @@ def main():
   paths = rlog_paths(ap.parse_args().paths)
   if not paths:
     sys.exit('no rlogs found')
-  (M, CS, LAT), Y, fingerprint = read(paths)
+  (M, CS, LAT, SRC, CD), Y, fingerprint = read(paths)
   if len(M) < 100 or not Y:
     sys.exit('need modelV2 and the 0x94 yaw sensor in the logs')
   yt, k, bus, zero = car_curvature(Y, CS, fingerprint)
@@ -128,12 +145,24 @@ def main():
   where = os.path.dirname(paths[0]) or '.'
   print(f'{where}: {fingerprint}, {len(paths)} segments, {eng_min:.0f} engaged min, yaw bus {bus} (zero {zero:.1f}), '
         + f'model frame -> publish {np.median(tm - tf) * 1000:.0f} ms')
-  print('car vs the model\'s plan, s (negative = early):')
-  for name, m in phases.items():
-    if m.sum() < 150:
-      print(f'  {name:20s}       -   (only {m.sum()} frames)')
-      continue
-    print(f'  {name:20s} {best_shift(tf[m], plan[m], yt, k):+.2f}   ({m.sum()} frames)')
+  # The shift depends on how the controller ran the model: a plan model runs with no command delay, an action head
+  # with its calibration's. Report each lateral source on its own, with the command delay it actually ran.
+  src = step(SRC, tm, -1)
+  cmd = step(CD, tm, np.nan)
+  for code in np.unique(src):
+    sel = src == code
+    if not any((m & sel).any() for m in phases.values()):
+      continue  # e.g. the few frames before the first lateral-source message
+    name = SOURCE_NAMES.get(int(code), 'not logged')
+    c = cmd[sel & (v > 5) & (v < 12) & np.isfinite(cmd)]
+    applied = f'{np.median(c):.2f} s' if len(c) else 'not logged'
+    print(f"car vs the model's plan, s (negative = early): lateral source {name}, town command delay {applied}")
+    for phase, m in phases.items():
+      m = m & sel
+      if m.sum() < 150:
+        print(f'  {phase:20s}       -   (only {m.sum()} frames)')
+        continue
+      print(f'  {phase:20s} {best_shift(tf[m], plan[m], yt, k):+.2f}   ({m.sum()} frames)')
   print(f'takeovers: {takeovers} ({takeovers / max(eng_min, 0.1):.2f} per engaged minute)')
 
 
