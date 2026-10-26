@@ -257,7 +257,14 @@ static bool honda_tx_hook(const CANPacket_t *msg) {
   // BRAKE: safety check (nidec)
   if (msg_matches(msg, 0x1FAU, bus_pt)) {
     honda_brake = honda_nidec_brake(msg);
-    if (longitudinal_brake_checks(honda_brake, HONDA_NIDEC_LONG_LIMITS)) {
+    // COMPUTER_BRAKE keeps the Nidec 255. COMPUTER_BRAKE_HYBRID, read only by a hybrid's brake module (Clarity), may
+    // reach 320: the stock ACC camera's own ceiling on that field (00000042--6d427003af segs 5/10), where 255 left
+    // openpilot's hardest braking at ~-2.7 m/s2 against a -3.5 plan.
+    const LongitudinalLimits HONDA_NIDEC_HYBRID_LIMITS = {.max_brake = 320};
+    int brake_standard = (msg->data[0] << 2) + ((msg->data[1] >> 6) & 0x3U);
+    int brake_hybrid = (msg->data[6] << 2) + ((msg->data[7] >> 6) & 0x3U);
+    if (longitudinal_brake_checks(brake_standard, HONDA_NIDEC_LONG_LIMITS) ||
+        longitudinal_brake_checks(brake_hybrid, HONDA_NIDEC_HYBRID_LIMITS)) {
       tx = false;
     }
     if (honda_fwd_brake) {

@@ -343,13 +343,23 @@ class TestHondaNidecHybridSafety(TestHondaNidecPcmSafety):
     values = {"COMPUTER_BRAKE_HYBRID": brake, "AEB_REQ_1": aeb_req}
     return self.packer.make_can_msg_safety("BRAKE_COMMAND", bus, values)
 
-  def test_the_larger_brake_field_is_limited(self):
+  # the hybrid field may reach the stock ACC camera's ceiling; COMPUTER_BRAKE keeps the Nidec 255
+  MAX_BRAKE = 320
+  MAX_STANDARD_BRAKE = 255
+
+  def test_each_brake_field_has_its_own_limit(self):
     self.safety.set_controls_allowed(True)
-    for standard, hybrid in ((self.MAX_BRAKE, 0), (0, self.MAX_BRAKE), (self.MAX_BRAKE + 1, 0), (0, self.MAX_BRAKE + 1),
-                             (self.MAX_BRAKE + 1, self.MAX_BRAKE)):
+    std, hyb = self.MAX_STANDARD_BRAKE, self.MAX_BRAKE
+    for standard, hybrid, ok in ((std, 0, True), (0, hyb, True), (std + 1, 0, False), (0, hyb + 1, False),
+                                 (std, hyb, True), (std + 1, hyb, False), (0, 300, True)):
       values = {"COMPUTER_BRAKE": standard, "COMPUTER_BRAKE_HYBRID": hybrid}
       msg = self.packer.make_can_msg_safety("BRAKE_COMMAND", self.PT_BUS, values)
-      self.assertEqual(max(standard, hybrid) <= self.MAX_BRAKE, self._tx(msg), msg=(standard, hybrid))
+      self.assertEqual(ok, self._tx(msg), msg=(standard, hybrid))
+
+  def test_hybrid_brake_needs_controls_allowed(self):
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self._tx(self._send_brake_msg(1)))
+    self.assertTrue(self._tx(self._send_brake_msg(0)))
 
 
 class TestHondaNidecPcmAltSafety(TestHondaNidecPcmSafety):
