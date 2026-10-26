@@ -4,7 +4,7 @@
   PYTHONPATH=<repo>:<repo>/opendbc_repo python tools/lateral/eps_report.py <rlog.zst | route dir> ...
 
 Everything is judged in true units: car curvature = VSA yaw / vEgo, decoded as carstate does (the car's yaw_rate.py
-calibration, zero learned at standstill, clockwise under-read corrected, 0x94 on whichever bus carries it), 17 ms latency,
+calibration, zero learned at standstill, clockwise under-read corrected, 0x94 on whichever bus carries it), 2 ms latency,
 decoded straight from CAN so routes from before the carState.yawRate change work too. Sections:
   yaw sources   VSA zero on straights; livePose yaw (the comma's estimate) scale and lag against the VSA
   map           car curvature vs what the car's shipped rack map (its EpsFirmwareCalibration.rack) says the ACTUAL wheel
@@ -34,7 +34,10 @@ from openpilot.selfdrive.controls.lib.honda_eps_calibrations import select_eps_f
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import LAT_DELAY_SCHEDULE_DEFAULT
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 
-VSA_ADDR, VSA_LATENCY = 0x94, 0.017
+VSA_ADDR = 0x94
+# s. 0x94 is 1-5 ms behind the comma gyro on all seven cars (docs/research/lateral-timing-map-2026-10-26.md), not the 17 ms
+# of the rear wheel-speed yaw it was once read against.
+VSA_LATENCY = 0.002
 PIPELINE_OFFSET = 0.038  # logged action -> on-time execution (publish + smoothing), see the delay schedule
 WHEEL_TO_YAW_LAG = ([3.75, 7.0, 12.0, 20.0, 30.0], [0.08, 0.06, 0.06, 0.08, 0.10])  # s, measured
 SPEED_BANDS = ((2.5, 5), (5, 9), (9, 15), (15, 25), (25, 40))
