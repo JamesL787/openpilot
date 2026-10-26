@@ -341,7 +341,9 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
 )
 
 # Acura RDX 3G 39990-TJB-A220, the Route-A PTM, Trk1641 build with the runtime ROM CRC fix (RDX-PTM-101526-RomCRC.rwd,
-# RWD sha256 3dd8b91b = KB TJB_A220_PTM_ROUTE_A_20261014/BUILD_Trk1641). Not the Clarity's controller family: TJB runs
+# RWD sha256 3dd8b91b = KB TJB_A220_PTM_ROUTE_A_20261014/BUILD_Trk1641), as deployed with the Clarity fade match
+# (RDX-PTM-102026-RomCRC-FadeMatch.rwd, sha256 29f94990, 2026-10-20, KB tools/build.py): only the override fade and
+# helper governor tables (rows 0-3, primary and monitor shadow) change, so every table below is the same in both. Not the Clarity's controller family: TJB runs
 # THR (Odyssey) code shifted +0x9C, with its own units, and the build ports the Clarity's tables into them (Route A).
 # In the Clarity's units the law is the one honda_eps_firmware_ff inverts:
 # - key: TJB takes a = E4/4 (|a| <= 1024, E4 4096); the Clarity's key is q = trunc(E4 * 56756/32768 / 4) = 1.732 a, so
@@ -362,9 +364,10 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
 #   0.4812 x 32 x -7.8 = -120.1 per published deg/s at centre: 0.98 of the Clarity's. Its angle shape is the rate
 #   word's (the linear map's slope, as computed_r6). The drives cannot pin it by themselves: on routes c6 / c7 the
 #   load fit through the law was flat in R^2 from 0.5x to 2x R6, since R6 trades off against the viscous term.
-# - Helper A and the override fade (driver torque) stay stock, as the PTM rule keeps them: they back off harder than
-#   the Clarity's once a hand pushes, but on the owner's drives they keep 0.95-0.99 of LKAS on average, as the
-#   Clarity's tables would (1.00-1.015x); scale_q8 256 is the hands-off value as everywhere.
+# - Helper A and the override fade (driver torque): the fade-match build replaces the stock tables with the Clarity's
+#   row-0 curves at TJB's half torque scale (override X 0-1792 by 256, Y 256,256,218,141,64,0; helper X 0,128,304,410,
+#   512,666,896,1792, Y 256,251,243,230,218,166,49,49). The stock ones backed off harder once a hand pushed. The
+#   torque-fault rise debounce (0x57b16) is still stock, 3 ticks. scale_q8 256 is the hands-off value as everywhere.
 _, _, RDX_TJB_A220_R6_GAIN = computed_r6(HONDA_VGR_RDX_TJB_A220)
 RDX_TJB_A220_R6_CENTRE = -120.1
 _RDX_A = 56756 / 32768  # TJB a -> the Clarity's key q
@@ -543,7 +546,7 @@ REQUIRED_PTM_RWD = {
   "insight_txm_a040": "7ba37432",
   "crv_tla_a040": "2e6a8802",
   "crv_tla_a220": "2c992997",
-  "rdx_tjb_a220": "3dd8b91b",
+  "rdx_tjb_a220": "29f94990",  # the fade-match build (3dd8b91b plus the Clarity fade and helper tables)
 }
 
 
