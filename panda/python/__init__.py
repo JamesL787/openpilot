@@ -434,7 +434,7 @@ class Panda:
       handle.controlWrite(Panda.REQUEST_IN, 0xb2, i, 0, b'')
 
     # flash over EP2
-    STEP = 0x200
+    STEP = 0x10 if mcu_type == McuType.F4 else 0x200
     logger.info("flash: flashing")
     for i in range(0, len(code), STEP):
       handle.bulkWrite(2, code[i:i + STEP])
@@ -629,6 +629,10 @@ class Panda:
     # old bootstubs don't implement this endpoint, see comment in Panda.device
     if self._bcd_hw_type is not None and (ret is None or len(ret) != 1):
       ret = self._bcd_hw_type
+
+    # some clone bootstubs report 0x05 for the internal F4 panda, which is a DOS
+    if ret == b'\x05':
+      ret = Panda.HW_TYPE_DOS
 
     return ret
 

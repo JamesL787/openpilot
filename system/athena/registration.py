@@ -18,6 +18,7 @@ from openpilot.common.swaglog import cloudlog
 
 
 UNREGISTERED_DONGLE_ID = "UnregisteredDevice"
+IMEI_MAX_ATTEMPTS = 10
 
 def is_registered_device() -> bool:
   dongle = Params().get("DongleId")
@@ -53,15 +54,20 @@ def register(show_spinner=False, register_konik=False) -> str | None:
       spinner = Spinner()
       spinner.update("registering device")
 
-    # Block until we get the imei
+    # Wait for the imei, but give up after a bounded number of attempts (devices without a modem)
     serial = HARDWARE.get_serial()
     start_time = time.monotonic()
     imei1: str | None = None
     imei2: str | None = None
+    imei_attempts = 0
     while imei1 is None and imei2 is None:
       try:
         imei1, imei2 = HARDWARE.get_imei(0), HARDWARE.get_imei(1)
       except Exception:
+        imei_attempts += 1
+        if imei_attempts >= IMEI_MAX_ATTEMPTS:
+          cloudlog.error("Unable to get imei, continuing without it")
+          break
         cloudlog.exception("Error getting imei, trying again...")
         time.sleep(1)
 
