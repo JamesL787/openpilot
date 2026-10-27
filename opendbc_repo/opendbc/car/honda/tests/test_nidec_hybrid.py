@@ -37,16 +37,22 @@ def test_alt_brake_hold_message_sets_its_flag():
   assert not _clarity_params([]).flags & HondaFlags.HYBRID_ALT_BRAKEHOLD
 
 
-def test_hybrid_brake_map_is_unchanged_below_half_and_reaches_the_stock_ceiling():
+def test_hybrid_brake_map_follows_the_measured_curve_and_reaches_the_stock_ceiling():
   from opendbc.car.honda.carcontroller import HYBRID_BRAKE_MAX, hybrid_brake_command
-  for fraction in (0.0, 0.05, 0.2, 0.4, 0.49):
-    assert hybrid_brake_command(fraction) == int(fraction * 256)
-  assert hybrid_brake_command(0.5) == 128
-  assert hybrid_brake_command(0.70) == HYBRID_BRAKE_MAX == 320
-  assert hybrid_brake_command(4.0 / 4.8 - 0.13) >= 315   # -4.0 at 65 mph, after wind_brake
+  # measured (decel m/s2 -> command): regen-only and linear to ~52, the knee to ~112, friction above
+  for decel, command in ((0.0, 0), (1.0, 38), (1.27, 52), (1.7, 112), (2.55, 170)):
+    assert hybrid_brake_command(decel / 4.8) == command, decel
+  assert hybrid_brake_command(3.3 / 4.8) == HYBRID_BRAKE_MAX == 320
+  assert hybrid_brake_command(4.0 / 4.8 - 0.145) == 320   # -4.0 at 75 mph, after wind_brake
   assert hybrid_brake_command(1.0) == 320
-  values = [hybrid_brake_command(f / 100) for f in range(101)]
+  values = [hybrid_brake_command(f / 200) for f in range(201)]
   assert values == sorted(values)
+
+
+def test_standstill_hold_stays_at_the_stock_level_through_the_map():
+  from opendbc.car.honda import pcm_acc
+  from opendbc.car.honda.carcontroller import hybrid_brake_command
+  assert 98 <= hybrid_brake_command(pcm_acc.STANDSTILL_HOLD_BRAKE) <= 106
 
 
 def test_a_full_brake_request_reaches_320_on_a_hybrid_only():

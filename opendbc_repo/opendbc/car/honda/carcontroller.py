@@ -32,16 +32,20 @@ def compute_gb_honda_nidec(accel, speed):
 
 # A Nidec hybrid's COMPUTER_BRAKE_HYBRID reaches 320, the stock ACC camera's own ceiling (00000042--6d427003af segs
 # 5/10). Under the Nidec 255 the Clarity's hardest braking was ~-2.7 m/s2, mostly regen, against a -3.5 plan
-# (00000047--ac3b1f5def seg 6, the driver finished the stop at -6 to -9). The map is unchanged below a 0.5 brake fraction
-# (~-2.4 m/s2, so stops and the standstill hold are as before) and reaches 320 at 0.70: the -4.0 request less the
-# highway wind_brake (~0.13 at 65 mph), so the ceiling is reachable at the speeds where it matters.
-HYBRID_BRAKE_BP = [0.0, 0.5, 0.70]
-HYBRID_BRAKE_V = [0.0, 128.0, 320.0]
+# (00000047--ac3b1f5def seg 6, the driver finished the stop at -6 to -9).
+# The command is the inverse of the Clarity's measured brake curve (aEgo 0.15 s after the command, openpilot braking
+# alone, 00000042/43/47): regen alone and linear to ~52, a knee where regen saturates (~10k on 0x183) and friction
+# starts, then friction carries the rest. Decel = -1.24e-4*regen - 1.47*pressure - 0.34 explains 93% of it; the top
+# knot (320 <-> 3.3 m/s2) is that fit extrapolated (3.3-3.8 by speed), placed so -4.0 less wind_brake reaches the
+# ceiling up to ~75 mph.
+# The brake fraction (accel / 4.8, after wind_brake) is read as the brake's share of the decel in m/s2.
+HYBRID_DECEL_BP = [0.0, 0.3, 0.7, 1.0, 1.27, 1.5, 1.7, 1.85, 2.2, 2.55, 2.7, 3.3]
+HYBRID_COMMAND_V = [0.0, 8.0, 22.0, 38.0, 52.0, 95.0, 112.0, 130.0, 150.0, 170.0, 200.0, 320.0]
 HYBRID_BRAKE_MAX = 320
 
 
 def hybrid_brake_command(brake_fraction: float) -> int:
-  return int(np.clip(np.interp(brake_fraction, HYBRID_BRAKE_BP, HYBRID_BRAKE_V), 0, HYBRID_BRAKE_MAX))
+  return int(np.clip(np.interp(brake_fraction * 4.8, HYBRID_DECEL_BP, HYBRID_COMMAND_V), 0, HYBRID_BRAKE_MAX))
 
 
 def compute_gas_brake(accel, speed, CP):

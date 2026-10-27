@@ -19,9 +19,9 @@ from opendbc.car.honda.values import CAR, HondaFlags
 
 # Standstill hold floor while openpilot is stopping. The Clarity runs stopAccel 0.0 (StarPilot's entry), so with creep
 # gone the hold was only the creep term plus whatever request was left at the stop: 43-51 on the hybrid field
-# (00000039--a3fe07ccbe). Stock ACC holds at ~102 (0.40) once settled; nrdr-development, at upstream's stopAccel -2.0,
-# holds at ~107-145.
-STANDSTILL_HOLD_BRAKE = 0.40
+# (00000039--a3fe07ccbe). Stock ACC holds at ~102 once settled; nrdr-development, at upstream's stopAccel -2.0, holds
+# at ~107-145. 0.33 is ~102 through the hybrid brake map (carcontroller.hybrid_brake_command).
+STANDSTILL_HOLD_BRAKE = 0.33
 
 # stock ACC_HUD PCM_GAS while braking or coasting with PCM_SPEED 0, median by speed, made monotonic
 PCM_GAS_BP = [v * CV.MPH_TO_MS for v in (0., 2., 4., 6.5, 10., 18., 22., 27., 35.)]
