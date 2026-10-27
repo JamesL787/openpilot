@@ -182,6 +182,8 @@ procs = [
   PythonProcess("pandad", "openpilot.selfdrive.pandad.pandad", always_run),
   PythonProcess("paramsd", "openpilot.selfdrive.locationd.paramsd", only_onroad),
   PythonProcess("lagd", "openpilot.selfdrive.locationd.lagd", only_onroad),
+  # shadow mode: logs what timing it would set for the Honda EPS controller, changes nothing; idles on other cars
+  PythonProcess("lateral_timingd", "openpilot.selfdrive.locationd.lateral_timingd", only_onroad),
   PythonProcess("ubloxd", "openpilot.system.ubloxd.ubloxd", ublox, enabled=COMMA_HARDWARE),
   PythonProcess("pigeond", "openpilot.system.ubloxd.pigeond", ublox, enabled=COMMA_HARDWARE),
   PythonProcess("plannerd", "openpilot.selfdrive.controls.plannerd", not_long_maneuver),
