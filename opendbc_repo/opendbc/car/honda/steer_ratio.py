@@ -32,6 +32,7 @@ HONDA_VGR_PROFILE_BY_FW = {
   "39990-TLA-A040": HONDA_VGR_CRV_TLA_A040,
   # Same A table as the image above them, read from each image (see the tables below).
   "39990-TGG-A120": HONDA_VGR_CIVIC_TBA_C020,
+  "39990-TEA-H020": HONDA_VGR_CIVIC_TBA_C020,  # modified TEA-H020: its A/B tables equal the C020's and TGG's
   "39990-TBA-C120": HONDA_VGR_CIVIC_TBA_C120,
   "39990-TBA-A030": HONDA_VGR_CIVIC_TBA_C120,
   "39990-TEG-A010": HONDA_VGR_CIVIC_TBA_C120,

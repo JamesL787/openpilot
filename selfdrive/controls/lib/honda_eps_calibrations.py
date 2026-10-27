@@ -252,6 +252,28 @@ CIVIC_TGG_A120 = EpsFirmwareCalibration(
   lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
   rack=CIVIC_TGG_A120_RACK,
 )
+# Civic Bosch 39990-TEA,H020 (modified, reports the stock-looking ID with a comma), rev-b PTM: the TGG response resampled onto
+# H020's native key axis (0x13794 / 0x13812), the Clarity's limits, the TGG rev-b P table, Trk3200 (0f1f8aad; the Trk4250
+# build 334acfb3 has the same tables). Its A/B tables equal the C020's and the TGG-A120's, so R6 is the C020's. The vehicle
+# side is the TGG-A120 donor's, INFERRED on the H020: rack, trims, most of the column load. Only the column's stiffness and
+# Coulomb friction are fitted, on one 3.7 min route of the H020 owner (00000004--a8cb4760f4: k0 -7.83, friction -289,
+# R^2 0.86; the TGG column is about twice as stiff and 30% more frictional). bias and kroll were not identifiable there.
+# No H020 route has been road-validated against this controller.
+CIVIC_TEA_H020_LOAD = ColumnLoadModel(k0=-7.8, k1=-0.157, c=-5.449, friction=-285.0, bias=75.77, kroll=-0.6084)
+CIVIC_TEA_H020 = EpsFirmwareCalibration(
+  name="civic_tea_h020", e4_per_output=3840.0,
+  r5_key_bp=(0, 226, 311, 495, 656, 887, 1108, 1552, 1774), r5_v=(0, 3818, 5258, 8378, 11099, 15003, 18747, 26253, 30002),
+  key_clamp=1663,
+  # Clarity envelope (0x135E4 / 0x13662): 1774 to 100 km/h, 1330 from 130 km/h
+  envelope_bp=(0, 50, 100, 150, 200, 260, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330, 1330),
+  kp_key_bp=(0, 237, 473, 709, 946, 1182, 1419, 1655, 1892), kp_v=P_ROW_PMINUS5,
+  r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
+  load=CIVIC_TEA_H020_LOAD, p_scale=(1.15, 1.25, 1.15), i_scale=(0.75, 0.95, 1.0),
+  cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # the C020's (same Civic Bosch chassis), inferred
+  lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
+  rack=CIVIC_TGG_A120_RACK,
+  default_on=True,
+)
 # Insight 39990-TXM-A040, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (payload sha256 089a8a72, RWD 7ba37432;
 # KB PTM_FIX_FAMILY_20261016/out/TXM, proof/), on the released PTM 39990-TXM,A040-PTM.rwd (rwd 833a41bf, the 08-08 C020Surface Trk1-4000
 # Trk2-3869 build, full image 1f1cfe6b). The release wrote TargetMap-D, a curve made for the C020's axis, onto row 0's
@@ -409,6 +431,7 @@ EPS_FIRMWARE_CALIBRATIONS = {
   "39990-TBA-C020": ("HONDA_CIVIC_BOSCH", CIVIC_TBA_C020),
   "39990-TBA-C120": ("HONDA_CIVIC_BOSCH", CIVIC_TBA_C120),
   "39990-TGG-A120": ("HONDA_CIVIC_BOSCH", CIVIC_TGG_A120),
+  "39990-TEA-H020": ("HONDA_CIVIC_BOSCH", CIVIC_TEA_H020),
   "39990-TBA-A030": ("HONDA_CIVIC", CIVIC_TBA_A030),
   "39990-TEG-A010": ("HONDA_CIVIC", CIVIC_TEG_A010),
   "39990-TXM-A040": ("HONDA_INSIGHT", INSIGHT_TXM_A040),
@@ -491,6 +514,16 @@ CALIBRATION_PROVENANCE = {
     "model_delay": "inferred: the C020's (same chassis)",
     "rack": "measured: VSA yaw (GPS-checked scale), routes 0000000b-00000010",
   },
+  "civic_tea_h020": {
+    "row": "firmware: all variant records select row 0",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "firmware: computed from its A table (the C020's and TGG's); not measured on the H020",
+    "load": "measured: k0 and friction on one 3.7 min route of the owner (00000004--a8cb4760f4); the rest inferred from the TGG-A120",
+    "trims": "inferred: the C020 owner's",
+    "cmd_delay": "inferred: the C020's (same chassis)",
+    "model_delay": "inferred: the C020's (same chassis)",
+    "rack": "inferred: the TGG-A120's yaw-fitted rack (same A table, gearing a donor assumption)",
+  },
   "insight_txm_a040": {
     "row": "firmware: row 0 in every build and variant",
     "kp_axis": "firmware", "key_clamp": "firmware",
@@ -543,6 +576,7 @@ REQUIRED_PTM_RWD = {
   "civic_teg_a010": "04147917",
   "civic_tba_c120": "9261b8db",
   "civic_tgg_a120": "6640806d",
+  "civic_tea_h020": "0f1f8aad",  # revb Trk3200; the Trk4250 build 334acfb3 has the same tables
   "insight_txm_a040": "7ba37432",
   "crv_tla_a040": "2e6a8802",
   "crv_tla_a220": "2c992997",
