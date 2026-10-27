@@ -80,3 +80,13 @@ def test_a_full_brake_request_reaches_320_on_a_hybrid_only():
         if f[0] == 0x1FA:
           brake = _brake_fields(f[1])[1 if hybrid else 0]
     assert (310 <= brake <= 320) if hybrid else (brake <= 255), (hybrid, brake)
+
+
+def test_low_speed_keeps_the_road_tested_linear_floor():
+  from opendbc.car.honda.carcontroller import hybrid_brake_command
+  for fraction in (0.05, 0.1, 0.2, 0.33):
+    assert hybrid_brake_command(fraction, 0.0) >= int(fraction * 256)      # final stop / hold: never below the old command
+    assert hybrid_brake_command(fraction, 0.0) >= hybrid_brake_command(fraction, 10.0)
+  # above ~7 mph only the measured curve
+  assert hybrid_brake_command(0.1, 3.5) == hybrid_brake_command(0.1, 20.0)
+  assert hybrid_brake_command(0.1, 0.0) == int(0.1 * 256)

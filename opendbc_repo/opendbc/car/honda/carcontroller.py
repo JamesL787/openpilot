@@ -44,8 +44,12 @@ HYBRID_COMMAND_V = [0.0, 8.0, 22.0, 38.0, 52.0, 95.0, 112.0, 130.0, 150.0, 170.0
 HYBRID_BRAKE_MAX = 320
 
 
-def hybrid_brake_command(brake_fraction: float) -> int:
-  return int(np.clip(np.interp(brake_fraction * 4.8, HYBRID_DECEL_BP, HYBRID_COMMAND_V), 0, HYBRID_BRAKE_MAX))
+def hybrid_brake_command(brake_fraction: float, v_ego: float = 10.0) -> int:
+  measured = float(np.interp(brake_fraction * 4.8, HYBRID_DECEL_BP, HYBRID_COMMAND_V))
+  # The curve was measured at 5-35 mph. Below ~3 mph regen fades out and the brake is all friction, so the road-tested
+  # linear command (fraction * 256, the final-stop and hold behavior of 00000039/3a/3b) stays a floor, fading by ~7 mph.
+  linear_floor = brake_fraction * 256.0 * float(np.interp(v_ego, [1.3, 3.0], [1.0, 0.0]))
+  return int(np.clip(max(measured, linear_floor), 0, HYBRID_BRAKE_MAX))
 
 
 def compute_gas_brake(accel, speed, CP):
@@ -274,7 +278,7 @@ class CarController(CarControllerBase):
         else:
           brake_fraction = np.clip(self.brake_last - wind_brake, 0.0, 1.0)
           if self.CP.flags & HondaFlags.HYBRID:
-            apply_brake = hybrid_brake_command(brake_fraction)
+            apply_brake = hybrid_brake_command(brake_fraction, CS.out.vEgo)
           else:
             apply_brake = int(np.clip(brake_fraction * self.params.NIDEC_BRAKE_MAX, 0, self.params.NIDEC_BRAKE_MAX - 1))
           pump_on, self.last_pump_ts = brake_pump_hysteresis(apply_brake, self.apply_brake_last, self.last_pump_ts, ts)
