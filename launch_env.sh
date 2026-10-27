@@ -25,7 +25,7 @@ if [ -z "$AGNOS_VERSION" ]; then
 fi
 
 if [ -z "$AGNOS_ACCEPTED_VERSIONS" ]; then
-  export AGNOS_ACCEPTED_VERSIONS="$AGNOS_VERSION"
+  export AGNOS_ACCEPTED_VERSIONS="$AGNOS_VERSION 13.1"
 fi
 
 export STAGING_ROOT="/data/safe_staging"

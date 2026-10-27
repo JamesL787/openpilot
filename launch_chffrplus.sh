@@ -61,6 +61,11 @@ function agnos_init {
     fi
   done
 
+  # never flash AGNOS when this flag exists (clone hardware)
+  if [ -f /data/NO_AGNOS_FLASH ]; then
+    AGNOS_UPDATE_REQUIRED=0
+  fi
+
   if [ "$AGNOS_UPDATE_REQUIRED" = "1" ]; then
     AGNOS_PY="$DIR/system/hardware/tici/agnos.py"
     MANIFEST="$DIR/system/hardware/tici/agnos.json"
