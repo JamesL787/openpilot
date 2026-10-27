@@ -34,6 +34,7 @@ from collections import deque
 import numpy as np
 
 from cereal import custom, log
+from opendbc.car.honda.h020 import H020_OVERRIDE_FADE_UP_S
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, normalize_honda_eps_fw
 from opendbc.car.honda.values import HondaFlags
@@ -184,7 +185,9 @@ class LatControlHondaEps(LatControl):
       _get_param_float(self.params, key, HONDA_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0)
       for key in ("HondaTorqueOutputLpfTauLowSpeed", "HondaTorqueOutputLpfTauStandard", "HondaTorqueOutputLpfTauHighway")
     )
-    self.core.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs", OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)
+    # must match the carcontroller's fade, which the H020 shortens while its param is unset
+    fade_up_default = H020_OVERRIDE_FADE_UP_S if self.calibration.name == "civic_tea_h020" else OVERRIDE_FADE_UP_S_DEFAULT
+    self.core.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs", fade_up_default, 0.0, 10.0)
 
   def update_lateral_source(self, source: str) -> None:
     """controlsd: where the model's steering comes from (starpilotModelV2.lateralSource)."""

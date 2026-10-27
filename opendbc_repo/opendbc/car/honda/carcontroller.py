@@ -11,6 +11,8 @@ from opendbc.can import CANPacker
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, create_gas_interceptor_command, rate_limit, make_tester_present_msg, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import hondacan
+from opendbc.car.honda.h020 import H020_OVERRIDE_FADE_DOWN_S, H020_OVERRIDE_FADE_UP_S, H020_OVERRIDE_HOLD_S, is_h020_eps, \
+  param_or_default
 from opendbc.car.honda.values import (
   CAR,
   CruiseButtons,
@@ -539,6 +541,8 @@ class CarController(CarControllerBase):
     self.lat_active_prev = False
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_robust_prev = False
+    self.is_h020 = is_h020_eps(CP.carFw)
+    self.steering_pressed_hold_s = 0.0
     self.bosch_last_gas = 0.0
     self.bosch_braking = False
     if self.CP.carFingerprint in HONDA_BOSCH:
@@ -581,13 +585,23 @@ class CarController(CarControllerBase):
       self.steering_pressed_filter_s,
       self.steering_pressed_robust_prev,
     )
+    if self.is_h020:
+      # the H020 keeps an override latched for a moment after the driver torque drops
+      self.steering_pressed_hold_s = H020_OVERRIDE_HOLD_S if steering_pressed else max(self.steering_pressed_hold_s - DT_CTRL, 0.0)
+      steering_pressed = steering_pressed or self.steering_pressed_hold_s > 0.0
     self.steering_pressed_robust_prev = steering_pressed
     return steering_pressed
 
   def _get_live_tuning_params(self):
+    if self.is_h020:
+      override_fade_down_s = param_or_default(self.param_store, "HondaOverrideFadeDownSecs", H020_OVERRIDE_FADE_DOWN_S)
+      override_fade_up_s = param_or_default(self.param_store, "HondaOverrideFadeUpSecs", H020_OVERRIDE_FADE_UP_S)
+    else:
+      override_fade_down_s = self.param_store.get_float("HondaOverrideFadeDownSecs", default=0.0)
+      override_fade_up_s = self.param_store.get_float("HondaOverrideFadeUpSecs", default=1.5)
     return {
-      "override_fade_down_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeDownSecs", default=0.0), 0.0, 10.0)),
-      "override_fade_up_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeUpSecs", default=1.5), 0.0, 10.0)),
+      "override_fade_down_s": float(np.clip(override_fade_down_s, 0.0, 10.0)),
+      "override_fade_up_s": float(np.clip(override_fade_up_s, 0.0, 10.0)),
       "override_torque_scale": float(np.clip(self.param_store.get_int("HondaOverrideTorqueScale", default=0), 0, 100)) / 100.0,
       "driver_assist_during_override": self.param_store.get_bool("HondaDriverAssistDuringOverride", default=False),
       "steer_delta_limiter_enabled": self.param_store.get_bool("HondaSteerDeltaLimiter", default=False),
@@ -656,6 +670,7 @@ class CarController(CarControllerBase):
       self.override_ramp = 0.0
       self.steering_pressed_filter_s = 0.0
       self.steering_pressed_robust_prev = False
+      self.steering_pressed_hold_s = 0.0
 
     # Opt-in slew limit on the delivered command. Unlike a low-pass filter this genuinely
     # withholds authority for as long as it is saturated, so reporting it as limiting -- and

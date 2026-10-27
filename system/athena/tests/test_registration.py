@@ -4,7 +4,7 @@ from Crypto.PublicKey import RSA
 from pathlib import Path
 
 from openpilot.common.params import Params
-from openpilot.system.athena.registration import register, UNREGISTERED_DONGLE_ID
+from openpilot.system.athena.registration import register, IMEI_MAX_ATTEMPTS, UNREGISTERED_DONGLE_ID
 from openpilot.system.athena.tests.helpers import MockResponse
 from openpilot.system.hardware.hw import Paths
 
@@ -75,3 +75,34 @@ class TestRegistration:
     assert m.call_count == 1
     assert re.fullmatch(r"[a-z0-9]{16}", dongle)
     assert self.params.get("DongleId") == dongle
+
+  def test_imei_wait_is_bounded(self, mocker):
+    # no modem: get_imei raises forever, registration must still go ahead with empty IMEIs
+    self._generate_keys()
+    mocker.patch("openpilot.system.athena.registration.time.sleep")
+    get_imei = mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", side_effect=Exception("no modem"))
+    m = mocker.patch("openpilot.system.athena.registration.api_get", autospec=True)
+    m.return_value = MockResponse(json.dumps({'dongle_id': "DONGLE_ID_123"}), 200)
+    assert register() == "DONGLE_ID_123"
+    assert get_imei.call_count == IMEI_MAX_ATTEMPTS
+    assert m.call_args.kwargs["imei"] is None and m.call_args.kwargs["imei2"] is None
+
+  def test_imei_wait_is_bounded_when_registering_konik(self, mocker):
+    # the Konik path enters the IMEI loop even when a DongleId already exists
+    self._generate_keys()
+    self.params.put("DongleId", "DONGLE_ID_123")
+    mocker.patch("openpilot.system.athena.registration.time.sleep")
+    mocker.patch("openpilot.system.athena.registration.Spinner")
+    get_imei = mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", side_effect=Exception("no modem"))
+    m = mocker.patch("openpilot.system.athena.registration.api_get", autospec=True)
+    m.return_value = MockResponse(json.dumps({'dongle_id': "KONIK_ID"}), 200)
+    assert register(show_spinner=True, register_konik=True) == "KONIK_ID"
+    assert get_imei.call_count == IMEI_MAX_ATTEMPTS
+
+  def test_imei_is_used_when_available(self, mocker):
+    self._generate_keys()
+    mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", side_effect=lambda slot: f"imei{slot}")
+    m = mocker.patch("openpilot.system.athena.registration.api_get", autospec=True)
+    m.return_value = MockResponse(json.dumps({'dongle_id': "DONGLE_ID_123"}), 200)
+    register()
+    assert (m.call_args.kwargs["imei"], m.call_args.kwargs["imei2"]) == ("imei0", "imei1")

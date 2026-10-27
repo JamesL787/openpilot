@@ -370,7 +370,8 @@ def test_every_vehicle_tells_the_model_the_measured_schedule():
   # C020 have their own, and the same cars take theirs (the A030 the TEG's; the C120 and the TGG the C020's)
   own = {"civic_teg_a010": eps_cal.CIVIC_TEG_A010_LAT_DELAY_SCHEDULE, "civic_tba_a030": eps_cal.CIVIC_TEG_A010_LAT_DELAY_SCHEDULE,
          "civic_tba_c020": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE, "civic_tba_c120": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
-         "civic_tgg_a120": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE}
+         "civic_tgg_a120": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
+           "civic_tea_h020": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE}
   for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values():
     assert cal.lat_delay_schedule == own.get(cal.name, eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE), cal.name
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
@@ -489,6 +490,7 @@ CALIBRATION_CARS = [
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', eps_cal.CIVIC_TBA_C020),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00', eps_cal.CIVIC_TBA_C120),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TGG,A120\x00\x00', eps_cal.CIVIC_TGG_A120),
+  (CAR.HONDA_CIVIC_BOSCH, b'39990-TEA,H020\x00\x00', eps_cal.CIVIC_TEA_H020),
   (CAR.HONDA_CIVIC, b'39990-TBA,A030\x00\x00', eps_cal.CIVIC_TBA_A030),
   (CAR.HONDA_CIVIC, b'39990-TEG,A010\x00\x00', eps_cal.CIVIC_TEG_A010),
   (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', eps_cal.INSIGHT_TXM_A040),
@@ -504,7 +506,9 @@ def test_calibration_matches_the_cars_torque_map_and_is_selected_only_when_enabl
   CP = _params(fw, candidate)
   assert list(CP.lateralParams.torqueBP) == [0, cal.e4_per_output] == list(CP.lateralParams.torqueV)
   assert honda_eps.eps_firmware_calibration(CP, _Params(ON)) is cal
-  if candidate != CAR.HONDA_CLARITY:
+  if cal.default_on:  # the Clarity, and the H020 (its owner's params may be wiped on boot)
+    assert honda_eps.eps_firmware_calibration(CP, _Params()) is cal
+  else:
     assert honda_eps.eps_firmware_calibration(CP, _Params()) is None
 
 
@@ -695,7 +699,7 @@ def test_the_civics_hold_their_command_delay_on_the_highway():
 def test_every_vehicle_has_its_own_command_delay():
   delays = {cal.name: cal.cmd_delay_s for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()}
   measured = {"clarity_trw_a020": 0.12, "civic_tba_c020": 0.15, "civic_teg_a010": 0.15}
-  same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15}
+  same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15, "civic_tea_h020": 0.15}
   inferred = {"insight_txm_a040": 0.15, "civic_tba_a030": 0.15}  # the A030: the TEG's (same Nidec image family)
   for name, delay in delays.items():
     assert delay == {**measured, **same_chassis_as_c020, **inferred}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
