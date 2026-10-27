@@ -448,6 +448,22 @@ class DriverMonitoring:
     dm.wheeltouchPolicyState.driverInteracting = self.driver_interacting
     return dat
 
+  def run_step_without_camera(self, sm):
+    # no driver camera: wheeltouch policy only, with no face ever detected
+    enabled = sm['selfdriveState'].enabled or starpilot_aol_enabled(sm)
+    car_speed = sm['carState'].vEgo
+    lowspeed = car_speed < self.settings._ALERT_MIN_SPEED
+    wrong_gear = sm['carState'].gearShifter not in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low)
+    self.face_detected = False
+    self.is_model_uncertain = False
+    self._set_policy(MonitoringPolicy.wheeltouch)
+    self._update_events(
+      driver_engaged=sm['carState'].steeringPressed or sm['carState'].gasPressed,
+      op_engaged=enabled,
+      lowspeed=lowspeed,
+      wrong_gear=wrong_gear,
+    )
+
   def run_step(self, sm, demo=False):
     if demo:
       car_speed = 30

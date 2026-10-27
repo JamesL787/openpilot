@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import time
+
 import cereal.messaging as messaging
 from openpilot.common.params import Params
-from openpilot.common.realtime import config_realtime_process
+from openpilot.common.realtime import config_realtime_process, DT_DMON
+from openpilot.selfdrive.monitoring.driver_camera import DriverCameraDetector
 from openpilot.selfdrive.monitoring.policy import DriverMonitoring
 
 
@@ -15,12 +18,16 @@ def dmonitoringd_thread():
   params = Params()
   pm = messaging.PubMaster(['driverMonitoringState'])
   sm = messaging.SubMaster(
-    ['driverStateV2', 'liveCalibration', 'carState', 'selfdriveState', 'modelV2', 'starpilotCarState'],
+    ['driverStateV2', 'liveCalibration', 'carState', 'selfdriveState', 'modelV2', 'starpilotCarState',
+     'roadCameraState', 'wideRoadCameraState', 'driverCameraState'],
     poll='driverStateV2',
-    ignore_alive=['starpilotCarState'],
-    ignore_avg_freq=['starpilotCarState'],
-    ignore_valid=['starpilotCarState'],
+    ignore_alive=['starpilotCarState', 'roadCameraState', 'wideRoadCameraState', 'driverCameraState'],
+    ignore_avg_freq=['starpilotCarState', 'roadCameraState', 'wideRoadCameraState', 'driverCameraState'],
+    ignore_valid=['starpilotCarState', 'roadCameraState', 'wideRoadCameraState', 'driverCameraState'],
   )
+  camera_detector = DriverCameraDetector()
+  camera_less_services = ['liveCalibration', 'carState', 'selfdriveState', 'modelV2']
+  next_camera_less_step = time.monotonic()
 
   DM = DriverMonitoring(
     rhd_saved=params.get_bool("IsRhdDetected"),
@@ -31,7 +38,21 @@ def dmonitoringd_thread():
 
   # 20Hz <- dmonitoringmodeld
   while True:
-    sm.update()
+    camera_less = camera_detector.update(sm)
+    sm.update(int(DT_DMON * 500) if camera_less else 100)
+
+    if camera_less:
+      # no driver camera, so no driverStateV2 to wait on: step and publish on a 20Hz timer instead
+      now = time.monotonic()
+      if now < next_camera_less_step:
+        continue
+      next_camera_less_step = max(next_camera_less_step + DT_DMON, now - DT_DMON)
+      valid = sm.all_checks(camera_less_services)
+      if valid:
+        DM.run_step_without_camera(sm)
+      pm.send('driverMonitoringState', DM.get_state_packet(valid=valid))
+      continue
+
     if not sm.updated['driverStateV2']:
       # iterate when model has new output
       continue

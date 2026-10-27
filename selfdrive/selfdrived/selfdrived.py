@@ -24,6 +24,7 @@ from openpilot.common.gps import get_gps_location_service
 
 from openpilot.selfdrive.car.car_specific import CarSpecificEvents
 from openpilot.selfdrive.car.cruise_state import should_flag_cruise_mismatch
+from openpilot.selfdrive.monitoring.driver_camera import DriverCameraDetector
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.selfdrive.selfdrived.events import Events, ET
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
@@ -211,6 +212,9 @@ class SelfdriveD:
     # TODO: de-couple selfdrived with card/conflate on carState without introducing controls mismatches
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
 
+    self.driver_camera_detector = DriverCameraDetector()
+    self.driver_camera_dropped = False
+
     ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan']
     if SIMULATION:
       ignore += ['driverCameraState', 'managerState']
@@ -220,6 +224,7 @@ class SelfdriveD:
     # starpilotModelV2 is read for Jetlink's status only and is published with modelV2: its staleness is handled where it is
     # read (JetlinkEvents), not as a communication issue
     ignore += ['starpilotModelV2']
+    self.ignore = ignore
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'livePose', 'liveDelay',
                                    'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters',
@@ -704,6 +709,12 @@ class SelfdriveD:
       self.events.add(EventName.processNotRunning)
     else:
       if not SIMULATION and not self.rk.lagging:
+        if not self.driver_camera_dropped and self.driver_camera_detector.update(self.sm):
+          # no driver camera on this hardware, road and wide are still required
+          cloudlog.warning("no driver camera detected, not requiring driverCameraState")
+          self.camera_packets = [p for p in self.camera_packets if p != "driverCameraState"]
+          self.ignore.append("driverCameraState")
+          self.driver_camera_dropped = True
         if not self.sm.all_alive(self.camera_packets):
           self.events.add(EventName.cameraMalfunction)
         elif not self.sm.all_freq_ok(self.camera_packets):
