@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import errno
 import time
 from smbus2 import SMBus
 from collections import namedtuple
@@ -130,7 +131,11 @@ class Amplifier:
       try:
         self._set_configs(configs)
         return True
-      except OSError:
+      except OSError as e:
+        # no amp on the bus (or no bus at all), retrying only delays startup
+        if e.errno in (errno.ENODEV, errno.ENXIO, errno.ENOENT):
+          print(f"Amp not present, not setting config: {e}")
+          return False
         backoff += 0.1
         time.sleep(backoff)
         print(f"Failed to set amp config, {tries - i - 1} retries left")

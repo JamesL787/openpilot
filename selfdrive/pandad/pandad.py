@@ -128,12 +128,17 @@ def main() -> None:
   first_run = True
   params = Params()
   no_internal_panda_count = 0
+  start_time = time.monotonic()
 
   while not do_exit:
     try:
       count += 1
       cloudlog.event("pandad.flash_and_connect", count=count)
       params.remove("PandaSignatures")
+
+      # USB bring-up can be slow on older AGNOS, don't count a missing internal panda during the first 60s
+      if time.monotonic() - start_time < 60:
+        no_internal_panda_count = 0
 
       # Handle missing internal panda
       if no_internal_panda_count > 0:
