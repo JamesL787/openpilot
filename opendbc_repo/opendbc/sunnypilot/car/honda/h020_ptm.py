@@ -1,8 +1,9 @@
 """TEA-H020 rev-b PTM (modified EPS, comma in the firmware string) on the res architecture.
 
 Same rule as the source branch's EPS_MODIFIED handling: the modified firmware string selects the tune. Only the exact
-modified ID `39990-TEA,H020` (the rev-b image reports the same ID as every earlier PTM image) on a Civic Bosch gets the linear 3840 map and the H020 PID base gains; every other
-vehicle and firmware (including the stock and earlier modified H020 images) keeps res's existing behavior.
+modified ID `39990-TEA,H020` (the rev-b image reports the same ID as every earlier PTM image) on a Civic Bosch gets the
+linear 3840 map and the H020 PID base gains; every other vehicle and firmware (including the stock H020 image) keeps res's
+existing behavior.
 """
 
 import math
@@ -18,10 +19,15 @@ SETTINGS = {
   "HondaDriverOverrideThreshold": (1800.0, 500.0, 5000.0),  # STEER_TORQUE_SENSOR units; res's stock Civic Bosch value is 1200
   "HondaOverrideFadeDownSecs": (0.0, 0.0, 10.0),            # 0: torque is cut the moment an override is detected
   "HondaOverrideFadeUpSecs": (0.5, 0.0, 10.0),              # authority returns over this long after the override ends
+  "HondaOverrideHoldSecs": (0.5, 0.0, 2.0),                 # an override stays latched this long after its last above-threshold sample
   # tuning levers for the controller (read by LatControlHondaEps): 1.0 is the calibrated behavior
   "HondaEpsFeedforwardScale": (1.0, 0.0, 2.0),              # multiplies the firmware-inversion feedforward
   "HondaEpsPidScale": (1.0, 0.25, 3.0),                     # multiplies the residual angle PID's P and I
+  # command delay: the curvature command is applied this much later (city below 10 m/s, highway above 15 m/s)
+  "HondaEpsCmdDelayCity": (0.0, 0.0, 0.5),
+  "HondaEpsCmdDelayHighway": (0.0, 0.0, 0.5),
 }
+CMD_DELAY_SPEED_BP = (10.0, 15.0)  # m/s
 REFRESH_FRAMES = 100  # re-read the files about once a second at 100 Hz
 
 
@@ -61,6 +67,24 @@ class H020Settings:
   @property
   def fade_up_s(self):
     return self.values["HondaOverrideFadeUpSecs"]
+
+  @property
+  def hold_s(self):
+    return self.values["HondaOverrideHoldSecs"]
+
+  @property
+  def cmd_delay_city(self):
+    return self.values["HondaEpsCmdDelayCity"]
+
+  @property
+  def cmd_delay_highway(self):
+    return self.values["HondaEpsCmdDelayHighway"]
+
+  def command_delay(self, v_ego):
+    """Seconds of command delay at this speed: the city value, ramping to the highway value between 10 and 15 m/s."""
+    lo, hi = CMD_DELAY_SPEED_BP
+    f = min(max((v_ego - lo) / (hi - lo), 0.0), 1.0)
+    return self.cmd_delay_city + f * (self.cmd_delay_highway - self.cmd_delay_city)
 
   @property
   def feedforward_scale(self):

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from cereal import car, custom, log
 from collections import defaultdict
-from opendbc.car import Bus, structs
+from opendbc.car import Bus
 from opendbc.car.honda import hondacan
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR, CarControllerParams
@@ -222,7 +222,8 @@ def test_core_stays_bounded_and_freezes_on_driver_press():
   before = core.pid.i
   core.update(10, 0, 0, 12, 0, True, True)
   assert core.pid.i == before and core.ff_weight == 0
-  core.reset();assert core.output == 0 and core.pid.i == 0
+  core.reset()
+  assert core.output == 0 and core.pid.i == 0
 
 
 
@@ -237,14 +238,6 @@ def test_adapter_and_log_schema():
   controls = log.ControlsState.new_message()
   controls.lateralControlState.pidState = state
   assert controls.lateralControlState.which() == "pidState"
-
-
-def run(ctrl, frames, **kw):
-  cs, lp = sensors(), NS(roll=0., angleOffsetDeg=0.)
-  out = None
-  for i in range(frames):
-    out, ang, _ = ctrl.update(True, sensors(**kw), None, lp, False, -0.01 * min(i / 100, 1), None, False)
-  return out
 
 
 def hold(frames=300, pressed=None, torque_sign=1):
@@ -444,8 +437,10 @@ def test_carcontroller_override_cuts_torque_at_once_and_drops_lkas(monkeypatch, 
   drive(ci, monkeypatch, 80, 0.4, False)
   apply, active = drive(ci, monkeypatch, 1, 0.4, True, driver_torque=-2500)  # opposing the command: latched immediately
   assert apply == 0 and not active and ci.CC.last_torque == 0.0
-  apply, active = drive(ci, monkeypatch, 1, 0.4, False)  # released: authority returns over fade-up, LKAS requested again
-  assert active and 0 < abs(apply) < 0.4 * 3840 * 0.05
+  apply, active = drive(ci, monkeypatch, 1, 0.4, False)  # released: the 0.5 s hold keeps LKAS off
+  assert not active
+  apply, active = drive(ci, monkeypatch, 51, 0.4, False)  # hold over: LKAS requested again, authority returns over fade-up
+  assert active and 0 < abs(apply) < 0.4 * 3840 * 0.1
   assert drive(ci, monkeypatch, 60, 0.4, False)[0] == pytest.approx(-0.4 * 3840, abs=2)
 
 
@@ -532,3 +527,105 @@ def test_scale_files_default_to_the_calibrated_behavior_and_clip(tmp_path):
   write(tmp_path, "HondaEpsPidScale", 0)
   s.refresh()
   assert (s.feedforward_scale, s.pid_scale) == (2.0, 0.25)
+
+
+# --- command delay, override hold, get_lat_delay ---
+
+def test_command_delay_settings_ramp_between_city_and_highway(tmp_path):
+  write(tmp_path, "HondaEpsCmdDelayCity", 0.1)
+  write(tmp_path, "HondaEpsCmdDelayHighway", 0.2)
+  s = gate.H020Settings(tmp_path)
+  assert [round(s.command_delay(v), 4) for v in (0, 9.9, 10, 12.5, 15, 30)] == [0.1, 0.1, 0.1, 0.15, 0.2, 0.2]
+  assert gate.H020Settings(tmp_path / "none").command_delay(12.0) == 0.0  # default: off
+  write(tmp_path, "HondaEpsCmdDelayCity", 9)
+  s.refresh()
+  assert s.cmd_delay_city == 0.5  # clipped
+
+
+def test_command_delay_class_delays_and_interpolates():
+  from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import CommandDelay
+  cd = CommandDelay(0.01, 0.5)
+  out = [cd.update(1.0 if i >= 10 else 0.0, 0.05) for i in range(30)]
+  assert out[:15] == [0.0] * 15 and out[15] == pytest.approx(1.0) and out[16] == 1.0  # a step at frame 10 appears at frame 15
+  half = CommandDelay(0.01, 0.5)
+  vals = [half.update(float(i), 0.015) for i in range(10)]
+  assert vals[9] == pytest.approx(9 - 1.5)  # between frames: linear
+  assert CommandDelay(0.01, 0.5).update(0.7, 0.0) == 0.7
+
+
+def first_frame_desired_angle_moves(monkeypatch, tmp_path, name, files):
+  params_dir = tmp_path / name
+  params_dir.mkdir()
+  monkeypatch.setattr(gate, "PARAMS_DIR", params_dir)
+  for key, value in files.items():
+    write(params_dir, key, value)
+  ctrl = LatControlHondaEps(real_cp(), None, None)
+  lp = NS(roll=0., angleOffsetDeg=0.)
+  k = ctrl.rack.curvature_from_angle(-12., 8., 0.)
+  for _ in range(100):  # straight
+    ctrl.update(True, sensors(vEgo=8.), None, lp, False, 0.0, None, False)
+  for i in range(60):   # the model asks for a curve
+    _, angle, _ = ctrl.update(True, sensors(vEgo=8.), None, lp, False, k, None, False)
+    if abs(angle) > 1.0:
+      return i
+  return None
+
+
+def test_command_delay_setting_delays_the_curvature_command(monkeypatch, tmp_path):
+  base = first_frame_desired_angle_moves(monkeypatch, tmp_path, "a", {})
+  delayed = first_frame_desired_angle_moves(monkeypatch, tmp_path, "b", {"HondaEpsCmdDelayCity": 0.2})
+  assert base is not None and delayed is not None
+  assert delayed - base == pytest.approx(20, abs=1)  # 0.2 s at 100 Hz
+
+
+def test_command_delay_uses_the_highway_value_at_speed(monkeypatch, tmp_path):
+  monkeypatch.setattr(gate, "PARAMS_DIR", tmp_path)
+  write(tmp_path, "HondaEpsCmdDelayCity", 0.0)
+  write(tmp_path, "HondaEpsCmdDelayHighway", 0.2)
+  ctrl = LatControlHondaEps(real_cp(), None, None)
+  lp = NS(roll=0., angleOffsetDeg=0.)
+  k = ctrl.rack.curvature_from_angle(-12., 20., 0.)
+  for _ in range(100):
+    ctrl.update(True, sensors(vEgo=20.), None, lp, False, 0.0, None, False)
+  first = None
+  for i in range(60):
+    _, angle, _ = ctrl.update(True, sensors(vEgo=20.), None, lp, False, k, None, False)
+    if abs(angle) > 1.0:
+      first = i
+      break
+  assert first is not None and first >= 19  # 0.2 s late at 20 m/s; undelayed it moves on the first frame or two
+
+
+def test_override_hold_keeps_a_flickering_press_latched(monkeypatch, tmp_path):
+  ci = make_ci(monkeypatch, tmp_path)
+  drive(ci, monkeypatch, 80, 0.4, False)
+  active_seq = []
+  for i in range(40):  # raw press flickers: 3 frames on, 3 off, opposing the command
+    pressed = (i // 3) % 2 == 0
+    _, active = drive(ci, monkeypatch, 1, 0.4, pressed, driver_torque=-2500 if pressed else 0.0)
+    active_seq.append(active)
+  assert not any(active_seq)  # without the hold LKAS would be requested again in every gap
+  write(tmp_path, "HondaOverrideHoldSecs", 0.0)
+  ci2 = make_ci(monkeypatch, tmp_path)
+  drive(ci2, monkeypatch, 80, 0.4, False)
+  seq = []
+  for i in range(40):
+    pressed = (i // 3) % 2 == 0
+    _, active = drive(ci2, monkeypatch, 1, 0.4, pressed, driver_torque=-2500 if pressed else 0.0)
+    seq.append(active)
+  assert any(seq) and not all(seq)  # hold off: the request toggles
+
+
+def run_get_lat_delay(toggle, cache):
+  """Execute sunnypilot's real get_lat_delay (the module needs the native Params binding)."""
+  tree = ast.parse((ROOT / "sunnypilot/livedelay/helpers.py").read_text())
+  fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "get_lat_delay")
+  ns = {"Params": object}
+  exec(compile(ast.fix_missing_locations(ast.Module([fn], [])), "helpers", "exec"), ns)
+  params = NS(get_bool=lambda k: toggle, get=lambda k, return_default=False: cache)
+  return ns["get_lat_delay"](params, 0.30)
+
+
+def test_get_lat_delay_honors_the_software_delay_when_live_learning_is_off():
+  assert run_get_lat_delay(toggle=False, cache=0.135) == pytest.approx(0.135)  # software delay (steerActuatorDelay + LagdToggleDelay)
+  assert run_get_lat_delay(toggle=True, cache=0.135) == 0.30                   # live learning: the learned delay

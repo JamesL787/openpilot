@@ -122,6 +122,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.lat_active_prev = False
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
+    self.override_hold_frames = 0
 
   def _h020_override(self, CC, CS):
     """(torque to send, whether LKAS stays requested, driver override detected). A detected override cuts the torque
@@ -134,6 +135,13 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
         bool(CS.out.steeringPressed), float(CS.out.steeringTorque), torque, self.steering_pressed_filter_s,
         self.steering_pressed_prev, DT_CTRL)
       self.steering_pressed_prev = pressed
+      # keep the override latched for a short time after its last above-threshold sample, so a press that flickers
+      # around the threshold does not switch the torque request on and off
+      if pressed:
+        self.override_hold_frames = int(round(self.h020_settings.hold_s / DT_CTRL))
+      elif self.override_hold_frames > 0:
+        self.override_hold_frames -= 1
+        pressed = True
       if not self.lat_active_prev:
         self.override_ramp = 0.0
       self.override_ramp = override_ramp_step(self.override_ramp, pressed, self.h020_settings.fade_down_s,
@@ -143,6 +151,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
       self.override_ramp = 0.0
       self.steering_pressed_filter_s = 0.0
       self.steering_pressed_prev = False
+      self.override_hold_frames = 0
     self.lat_active_prev = CC.latActive
     return torque, CC.latActive and not pressed, pressed
 

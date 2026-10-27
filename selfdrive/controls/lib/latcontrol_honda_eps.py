@@ -5,6 +5,8 @@ with the linear 3840 map and a PID tune. The H020 vehicle coefficients are the T
 No StarPilot schema, new Params keys or global PID API are required.
 """
 import math
+from collections import deque
+
 import numpy as np
 from cereal import log
 from openpilot.common.realtime import DT_CTRL
@@ -19,6 +21,27 @@ from openpilot.selfdrive.controls.lib.honda_eps_h020_override import get_eps_mod
 RIDE_THROUGH_S = 0.1
 
 
+class CommandDelay:
+  """The value issued `delay` seconds ago, linearly interpolated between frames. Fed every frame, engaged or not, so the
+  history is already there at engagement; before it has enough history it returns the oldest value."""
+
+  def __init__(self, dt, max_delay):
+    self.dt = dt
+    self.buf = deque(maxlen=int(math.ceil(max_delay / dt)) + 2)
+
+  def update(self, value, delay):
+    self.buf.append(float(value))
+    if delay <= 0.0:
+      return float(value)
+    steps = delay / self.dt
+    i = int(steps)
+    frac = steps - i
+    n = len(self.buf)
+    newer = self.buf[max(n - 1 - i, 0)]
+    older = self.buf[max(n - 2 - i, 0)]
+    return newer + frac * (older - newer)
+
+
 def use_honda_eps_controller(CP):
   return (str(CP.carFingerprint) == "HONDA_CIVIC_BOSCH" and is_h020(CP.carFw) and CP.lateralTuning.which() == "pid"
           and list(CP.lateralParams.torqueBP) == [0, 3840] and list(CP.lateralParams.torqueV) == [0, 3840])
@@ -27,8 +50,7 @@ def use_honda_eps_controller(CP):
 def warn_if_h020_tune_replaced(CP, cloudlog):
   """setup_interfaces (EnforceTorqueControl / NNLC) runs after the tune is set and can replace it with the torque tune."""
   if str(CP.carFingerprint) == "HONDA_CIVIC_BOSCH" and is_h020(CP.carFw) and not use_honda_eps_controller(CP):
-    cloudlog.error("H020 rev-b EPS present but the H020 controller is not selected (tune replaced, e.g. EnforceTorqueControl "
-                   "or NeuralNetworkLateralControl); steering with the generic controller on the H020 map")
+    cloudlog.error("H020 rev-b EPS present but the H020 controller is not selected (the tune was replaced); using the generic controller")
 
 
 class ScaledFeedforward(HondaEpsFirmwareFeedforward):
@@ -49,6 +71,7 @@ class LatControlHondaEps(LatControl):
     self.dt = DT_CTRL
     self.calibration = H020
     pid = CP.lateralTuning.pid
+    self.cmd_delay = CommandDelay(DT_CTRL, 0.5)  # 0.5 s is the largest setting
     self.settings = H020Settings()  # tuning scales from settings files (h020_ptm), re-read about once a second
     self.core = HondaEpsLateralCore(list(pid.kpBP), list(pid.kpV), list(pid.kiBP), list(pid.kiV), DT_CTRL,
                                   ScaledFeedforward(DT_CTRL, self.calibration, lambda: self.settings.feedforward_scale))
@@ -89,6 +112,7 @@ class LatControlHondaEps(LatControl):
       return 0.0, 0.0, pid_log
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
+    desired_curvature = self.cmd_delay.update(desired_curvature, self.settings.command_delay(CS.vEgo))
     desired = self.rack.angle_from_curvature(desired_curvature, CS.vEgo, params.roll)
     if active:
       # Deliberate adaptation: initialize the source's slew limiter at the actual wheel on engagement.

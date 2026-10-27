@@ -8,7 +8,9 @@ from openpilot.common.params import Params
 
 
 def get_lat_delay(params: Params, stock_lat_delay: float) -> float:
-  if params.get_bool("LagdToggle"):
+  if not params.get_bool("LagdToggle"):
+    # Live Learning Steer Delay is off: use the software delay. lagd (LagdToggle.update) writes steerActuatorDelay +
+    # LagdToggleDelay to LagdValueCache in this mode; returning the live estimate here ignored the setting.
     return float(params.get("LagdValueCache", return_default=True))
 
   return stock_lat_delay
