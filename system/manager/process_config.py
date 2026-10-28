@@ -16,6 +16,9 @@ WEBCAM = os.getenv("USE_WEBCAM") is not None
 UI_WATCHDOG_MAX_DT = int(os.getenv("UI_WATCHDOG_MAX_DT", "10"))
 CAMERAD_WATCHDOG_MAX_DT = int(os.getenv("CAMERAD_WATCHDOG_MAX_DT", "5"))
 
+# MR.ONE clones report device type "tici" and carry a buzzer on GPIO 42
+BUZZER = TICI and HARDWARE.get_device_type() == "tici"
+
 def driverview(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
 
@@ -166,6 +169,7 @@ procs = [
   PythonProcess("proclogd", "system.proclogd", and_(allow_logging, only_onroad), enabled=platform.system() != "Darwin"),
   PythonProcess("journald", "system.journald", and_(allow_logging, only_onroad), platform.system() != "Darwin"),
   PythonProcess("micd", "system.micd", iscar),
+  PythonProcess("buzzerd", "system.hardware.tici.buzzerd", always_run, enabled=BUZZER),
   PythonProcess("timed", "system.timed", always_run, enabled=not PC),
 
   PythonProcess("modeld", "selfdrive.modeld.modeld", only_onroad),
