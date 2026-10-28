@@ -30,6 +30,9 @@ BUFFER_S = 180.0        # raw streams kept, enough for the longest turning windo
 STEP_S = 2.0            # how often the buffer is searched for finished windows
 CLOSE_MARGIN_S = 2.0    # a window is final once this much later data exists (steeringPressed look-ahead, model latency)
 STATE_LOG_S = 60.0
+# card publishes carState this long after the CAN packet it decodes (Clarity 7.x rlogs: median 4.3-4.6 ms, p10-p90
+# 4.0-5.3 ms): the yaw sample is that much older than carState's own time
+CARSTATE_LATENCY_S = 0.0045
 
 # controller settings target -> wheel depends on: a change re-learns S
 SETTINGS_KEYS = ("HondaTorqueOutputLowPassFilter", "HondaTorqueOutputLpfTauLowSpeed", "HondaTorqueOutputLpfTauStandard",
@@ -103,7 +106,6 @@ class LateralTimingRunner:
     self.s = Streams()
     self.frame_keys: deque = deque()       # (tp, model key) for each modelV2 row
     self.model: str | None = None
-    self.can_t: float | None = None
     self.source = "unknown"
     self.t1 = deque(maxlen=1200)
     self.told = {}                          # band -> recent told delays
@@ -117,12 +119,8 @@ class LateralTimingRunner:
 
   # -- input ------------------------------------------------------------------------------------------------------
   def handle(self, which: str, t: float, msg) -> None:
-    if which == "can":
-      self.can_t = t
-    elif which == "carState":
-      # card decodes each carState from the latest CAN packet: the yaw sample is as old as that packet's receipt
-      t_can = self.can_t if self.can_t is not None and 0.0 <= t - self.can_t < 0.05 else t
-      self.s.cs.append((t, msg.vEgo, msg.steeringAngleDeg, float(msg.steeringPressed), msg.yawRate, t_can))
+    if which == "carState":
+      self.s.cs.append((t, msg.vEgo, msg.steeringAngleDeg, float(msg.steeringPressed), msg.yawRate, t - CARSTATE_LATENCY_S))
     elif which == "carControl":
       self.s.cc.append((t, float(msg.latActive)))
     elif which == "controlsState":
@@ -181,7 +179,7 @@ class LateralTimingRunner:
       self.learner.drives += 1
       self.drive_counted = True
     event = self.learner.add_turn(rec, self.drive)
-    rec["event"] = event
+    rec["outcome"] = event   # not "event": that is cloudlog.event's own first argument
     if band is not None and rec.get("told") is not None:
       self.told.setdefault(band, deque(maxlen=50)).append(rec["told"])
     self.turns.append(rec)
@@ -252,7 +250,7 @@ def main():
                                log=cloudlog.event, save=lambda d: save_state(STATE_PATH, d))
   cloudlog.event("lateralTiming.start", keys=keys, drive=runner.drive, drives=runner.learner.drives)
 
-  services = ["can", "carState", "carControl", "controlsState", "modelV2", "starpilotLateralState", "vehicleParameters"]
+  services = ["carState", "carControl", "controlsState", "modelV2", "starpilotLateralState", "vehicleParameters"]
   sm = messaging.SubMaster(services, poll="carState", ignore_alive=services, ignore_valid=services)
   # modelIdentity carries Event.logMessage, which SubMaster would file under the wrong name: read it directly
   identity = messaging.sub_sock("modelIdentity", conflate=True)
@@ -268,7 +266,12 @@ def main():
       last_source = now
       src = params.get("ModelLateralSource")
       runner.set_source(src.decode() if isinstance(src, bytes) else (src or "unknown"))
-    runner.step(now)
+    try:
+      runner.step(now)
+    except Exception:
+      # shadow mode: a bug here must not crash-loop the process; log it and drop the buffered window
+      cloudlog.exception("lateralTiming.error")
+      runner.s.trim(now)
 
 
 if __name__ == "__main__":

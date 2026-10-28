@@ -4,10 +4,11 @@ from types import SimpleNamespace as NS
 import numpy as np
 import pytest
 
+from openpilot.common.logging_extra import json_robust_dumps
 from openpilot.selfdrive.locationd.lateral_timing import (BandLearner, AimLearner, Streams, TimingLearner, find_turns,
                                                            frame_aims, size_correction, slow_composite, ema_delay,
                                                            FREEZE_TURNS, MONITOR_TURNS, AIM_FREEZE_FRAMES, T_IDXS)
-from openpilot.selfdrive.locationd.lateral_timingd import LateralTimingRunner, model_key
+from openpilot.selfdrive.locationd.lateral_timingd import LateralTimingRunner, model_key, CARSTATE_LATENCY_S
 
 RAMP, CMD, TW, WY = 0.04, 0.12, 0.06, 0.05
 V = 7.0
@@ -42,7 +43,7 @@ def drive(duration=200.0, t_start=1000.0):
   C = k(tc - RAMP)
   tgt = k(tc - RAMP - CMD) * RATIO
   ang = k(tc - RAMP - CMD - TW) * RATIO
-  yaw = k(tc - RAMP - CMD - TW - WY) * V
+  yaw = k(tc - CARSTATE_LATENCY_S - RAMP - CMD - TW - WY) * V   # carState carries the CAN yaw sample from before it
   for i, t in enumerate(tc):
     rows.append(("carState", t, NS(vEgo=V, steeringAngleDeg=float(ang[i]), steeringPressed=False, yawRate=float(yaw[i]))))
     rows.append(("carControl", t, NS(latActive=True)))
@@ -56,7 +57,11 @@ def drive(duration=200.0, t_start=1000.0):
 
 def run(rows, step_every=None, state=None, drive_id="d1"):
   logs = []
-  r = LateralTimingRunner(conv, 0.1, {"car": "synthetic"}, state, log=lambda e, **kw: logs.append((e, kw)), drive=drive_id)
+
+  def log(event, *args, **kwargs):   # cloudlog.event's signature and encoder: a colliding or unencodable field fails here
+    json_robust_dumps({"event": event, **kwargs})
+    logs.append((event, kwargs))
+  r = LateralTimingRunner(conv, 0.1, {"car": "synthetic"}, state, log=log, drive=drive_id)
   last = None
   for which, t, msg in rows:
     r.handle(which, t, msg)

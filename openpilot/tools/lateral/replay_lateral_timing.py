@@ -75,9 +75,7 @@ def replay(paths, state, label):
   for e in events(paths):
     w = e.which()
     t = e.logMonoTime * 1e-9
-    if w == "can":
-      runner.handle("can", t, None)   # only its receipt time is used
-    elif w in SERVICES:
+    if w in SERVICES:
       runner.handle(w, t, getattr(e, w))
       if w == "carState":
         now = t
@@ -117,7 +115,7 @@ def main():
     ref = [o for o in offline if o.get("label") == label]
     for r in runner.turns:
       print(f"  {r['t0'] % 10000:7.1f} {r['v']:4.1f} {str(r['band']):5s} {fmt(r['ramp'])} {fmt(r['cmd'])} {fmt(r['tw'])} {fmt(r['wy'])} "
-            f"{fmt(r['ay'])} | {fmt(r['size_corr'])} {fmt(r['S'])} | {fmt(r['told'])} {fmt(r['aim'])}  {r['event'] or ''}")
+            f"{fmt(r['ay'])} | {fmt(r['size_corr'])} {fmt(r['S'])} | {fmt(r['told'])} {fmt(r['aim'])}  {r['outcome'] or ''}")
       match = [o for o in ref if abs(o["t"] - r["t0"]) < 0.3]
       if match:
         o = match[0]
