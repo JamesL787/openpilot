@@ -1722,9 +1722,13 @@ class SelfdriveD:
                         self.sm['driverMonitoringState'].alertLevel == AlertLevel.three)),
       pause_brake_mps=self.aol_settings.pause_brake_mps if self.aol_settings is not None else 0.0,
       gear_pause=reverse_pause,
+      # A pause speed of 0 is the setting off, as in decide_axes: a stopped car's vEgo reads slightly negative
+      # (-0.003 m/s), which was "below 0" and withdrew lateral with the brake held at a stop (Clarity
+      # 00000057--b294eba736 seg 24 50.2 s), and the withdrawal cleared the latch until an LKAS press.
       lateral_inhibit=self.aol_dm_lateral_inhibit or sng_standstill_lateral_inhibit(self.CP, CS) or any(
         sample.steerFaultTemporary or sample.brakePressed and not sample.standstill and
-        sample.vEgo < (self.aol_settings.pause_brake_mps if self.aol_settings is not None else 0.0)
+        self.aol_settings is not None and 0 < self.aol_settings.pause_brake_mps and
+        sample.vEgo < self.aol_settings.pause_brake_mps
         for sample, _ in getattr(self, 'car_state_samples', ())))
 
   def cold_gm_park_readiness(self, CS, intent, now_ns):
