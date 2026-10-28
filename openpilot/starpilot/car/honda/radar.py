@@ -9,6 +9,7 @@ import capnp
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.simple_kalman import KF1D
+from openpilot.starpilot.car.honda.radar_reversal_bound import ReversalBound
 
 if TYPE_CHECKING:
   from openpilot.selfdrive.controls.radard import KalmanParams
@@ -323,6 +324,7 @@ class BoschALeadPolicy:
     self._post_standstill_candidate_id = -1
     self._post_standstill_candidate_frames = 0
     self._last_tracks_frame = -1
+    self.reversal_bound = ReversalBound()
 
   def update_tracks(self, sm, rr, radar):
     self.ready = radar.ready
@@ -364,6 +366,8 @@ class BoschALeadPolicy:
       for index in range(2)
     ]
     output[0] = self._filter_post_standstill_lead(output[0])
+    output = self.reversal_bound.apply(output, leads, self.v_ego, model_v_ego,
+                                       [radar.lead_prob_filters[index].x for index in range(2)], self.tracks)
     for index, lead in enumerate(output):
       if lead.get('present', False) and lead.get('radar', False):
         identifier = int(lead.get('radarTrackId', -1))

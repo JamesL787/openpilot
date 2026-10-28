@@ -3,6 +3,7 @@ import math
 import numpy as np
 
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, DT_CTRL, structs
+from opendbc.car.honda.bosch_a_radar import VERIFIED_BOSCH_A_CARS
 from opendbc.car.honda.brake_onset import BrakeOnsetCompensation
 from opendbc.car.honda.bosch_gas_learner import CivicGasLearner, LEARN_VERSION, gas_lookup_accel
 from opendbc.car.honda.values import CAR, HondaFlags
@@ -10,6 +11,26 @@ from opendbc.car.honda.values import CAR, HondaFlags
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 BOSCH_BRAKE_FORCE_ON = -0.12
 BOSCH_BRAKE_FORCE_RELEASE = -0.02
+# Bosch-A stop-and-go brake cycling, measured on the Civic (STATUS 263/265, route 0000001f--39b2448f7d). At 2-4 m/s with a command of
+# -0.1..-0.3 the brake request toggled 15-25 times a minute: brake-on cut the gas from ~30-40 to 0, and every release
+# jumped the gas straight to the 60-unit cap. Replay of this class on 1f's logged command, open loop, 50 Hz, with
+# long-control drops resetting it, against the old path on the same harness (the state machine reproduces the
+# logged BRAKE_REQUEST on 90.4 % of frames; no closed-loop gap or jerk numbers):
+#   BOSCH_A_BRAKE_FORCE_ON: brake request only below -0.20, the bottom of the gas lookup, so the band between it and
+#     -0.12 coasts with the gas off instead of braking. The only change that cuts toggles: 3.69 -> 3.17 per minute
+#     (an earlier sim that ignored long-control drops said 2.11).
+#   BOSCH_A_BRAKE_MIN_HOLD_S: once on, the request stays on this long unless the command asks for real acceleration
+#     (above BOSCH_A_BRAKE_HOLD_ESCAPE). Holds under 1.5 s 27.6 % -> 16.7 %; the rest are long-control drops and the
+#     escape (about 0.2 per minute, each shortening a hold by 0.04-0.4 s).
+#   BOSCH_A_RELEASE_GAS_START / _RAMP_S: after a release the gas starts at most at 35 and reaches the lookup over 1 s,
+#     instead of the 60 cap. Gas on the release frame 60 -> 35; mean over the first second 121 -> 81.
+# Stopping still forces the request on, and a long-control drop still clears it, exactly as before.
+# Runs on every car with the Bosch-A radar harness (bosch_a_harness), owner 2026-10-24: the CR-V 5G is static only.
+BOSCH_A_BRAKE_FORCE_ON = -0.20
+BOSCH_A_BRAKE_MIN_HOLD_S = 1.5
+BOSCH_A_BRAKE_HOLD_ESCAPE = 0.2
+BOSCH_A_RELEASE_GAS_START = 35.0
+BOSCH_A_RELEASE_GAS_RAMP_S = 1.0
 
 CLASSIC_BOSCH_CARS = frozenset((
   CAR.HONDA_NBOX_2G,
@@ -51,8 +72,50 @@ def update_honda_bosch_braking(braking: bool, gas_pedal_force: float, stopping: 
     return gas_pedal_force <= BOSCH_BRAKE_FORCE_RELEASE
   return gas_pedal_force < BOSCH_BRAKE_FORCE_ON
 
+class BoschABrakeEdge:
+  """Bosch-A harness brake request with a deeper on threshold, a minimum hold and a gas ramp after release."""
+  def __init__(self, dt: float):
+    self.dt = dt
+    self.reset()
+
+  def reset(self):
+    self.braking = False
+    self.hold_s = 0.0
+    self.release_s = math.inf
+
+  def update(self, gas_pedal_force: float, stopping: bool, long_active: bool) -> bool:
+    if not long_active:
+      self.reset()
+      return False
+    was_braking = self.braking
+    if stopping:
+      self.braking = True
+    elif self.braking:
+      held = self.hold_s < BOSCH_A_BRAKE_MIN_HOLD_S and gas_pedal_force <= BOSCH_A_BRAKE_HOLD_ESCAPE
+      self.braking = held or gas_pedal_force <= BOSCH_BRAKE_FORCE_RELEASE
+    else:
+      self.braking = gas_pedal_force < BOSCH_A_BRAKE_FORCE_ON
+    if self.braking:
+      self.hold_s = self.hold_s + self.dt if was_braking else 0.0
+      self.release_s = math.inf
+    else:
+      self.release_s = 0.0 if was_braking else self.release_s + self.dt
+    return self.braking
+
+  def limit_gas(self, gas: float) -> float:
+    """Gas after a brake release rises from BOSCH_A_RELEASE_GAS_START to the lookup over BOSCH_A_RELEASE_GAS_RAMP_S."""
+    if self.braking or self.release_s >= BOSCH_A_RELEASE_GAS_RAMP_S or gas <= BOSCH_A_RELEASE_GAS_START:
+      return gas
+    return BOSCH_A_RELEASE_GAS_START + (gas - BOSCH_A_RELEASE_GAS_START) * self.release_s / BOSCH_A_RELEASE_GAS_RAMP_S
+
+
 def get_honda_bosch_wind_brake_mps2(v_ego: float) -> float:
   return float(np.interp(v_ego, [0.0, 13.4, 22.4, 31.3, 40.2], [0.0, 0.049, 0.136, 0.267, 0.441]))
+
+def bosch_a_harness(cp):
+  """A verified classic Bosch car running the Bosch-A radar harness (same car gate as BoschARadar)."""
+  return (cp.carFingerprint in VERIFIED_BOSCH_A_CARS and not cp.radarUnavailable and
+          not cp.flags & (HondaFlags.BOSCH_RADARLESS | HondaFlags.BOSCH_CANFD | HondaFlags.BOSCH_ALT_RADAR))
 
 def qualified(cp):
   return (cp.brand == "honda" and cp.carFingerprint in CLASSIC_BOSCH_CARS and cp.flags & HondaFlags.BOSCH and
@@ -75,8 +138,11 @@ class BoschLongitudinal:
     # Civic Bosch runs the ns live gas learner (bosch_gas_learner.py); every other car keeps the shared learner below.
     self.civic_learner = CivicGasLearner() if cp.carFingerprint == CAR.HONDA_CIVIC_BOSCH else None
     self.learner_version = LEARN_VERSION if self.civic_learner is not None else None
-    # Civic Bosch only: the fit in brake_onset.py is from this car. update() runs every other control frame.
-    self.brake_onset = BrakeOnsetCompensation(2 * DT_CTRL) if cp.carFingerprint == CAR.HONDA_CIVIC_BOSCH else None
+    # Bosch-A harness cars only (owner 2026-10-24). The brake_onset.py fit and the edge numbers are from the Civic;
+    # on the CR-V 5G they are static only. update() runs every other control frame.
+    bosch_a = bosch_a_harness(cp)
+    self.brake_onset = BrakeOnsetCompensation(2 * DT_CTRL) if bosch_a else None
+    self.brake_edge = BoschABrakeEdge(2 * DT_CTRL) if bosch_a else None
     self.set_factors(1.0, 1.0)
 
   def set_factors(self, gas, wind):
@@ -141,9 +207,9 @@ class BoschLongitudinal:
     gas_lookup_input = gas_pedal_force * self.bosch_gas_factor
     self.gas = float(np.interp(gas_lookup_input, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
     self.gas = min(self.gas, max(60.0, self.bosch_last_gas + 60.0))
-    self.bosch_last_gas = self.gas
     stopping = actuators.longControlState == LongCtrlState.stopping
-    self.bosch_braking = update_honda_bosch_braking(self.bosch_braking, gas_pedal_force, stopping, CC.longActive)
+    self.bosch_braking = self._update_braking(gas_pedal_force, stopping, CC.longActive)
+    self.bosch_last_gas = self.gas
     return self.accel, self.gas, gas_pedal_force, self.bosch_braking
 
   def _update_civic(self, CC, CS, hill_brake, wind_brake_mps2, min_gas):
@@ -160,7 +226,15 @@ class BoschLongitudinal:
     lookup = gas_lookup_accel(gas_pedal_force, hill_brake, learner.gasfactor, min_gas)
     self.gas = float(np.interp(lookup, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
     self.gas = min(self.gas, max(60.0, self.bosch_last_gas + 60.0))
-    self.bosch_last_gas = self.gas
     stopping = actuators.longControlState == LongCtrlState.stopping
-    self.bosch_braking = update_honda_bosch_braking(self.bosch_braking, gas_pedal_force, stopping, CC.longActive)
+    self.bosch_braking = self._update_braking(gas_pedal_force, stopping, CC.longActive)
+    self.bosch_last_gas = self.gas
     return self.accel, self.gas, gas_pedal_force, self.bosch_braking
+
+  def _update_braking(self, gas_pedal_force, stopping, long_active):
+    """Brake request; on Bosch-A harness cars also the minimum hold and the gas ramp after release (self.gas)."""
+    if self.brake_edge is None:
+      return update_honda_bosch_braking(self.bosch_braking, gas_pedal_force, stopping, long_active)
+    braking = self.brake_edge.update(gas_pedal_force, stopping, long_active)
+    self.gas = self.brake_edge.limit_gas(self.gas)
+    return braking
