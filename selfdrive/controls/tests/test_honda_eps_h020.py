@@ -7,7 +7,8 @@ import openpilot.selfdrive.controls.lib.honda_eps_calibrations as eps_cal
 import openpilot.selfdrive.controls.lib.latcontrol_honda_eps as honda_eps
 from opendbc.car.honda import steer_ratio as sr
 from opendbc.car.honda.carcontroller import CarController
-from opendbc.car.honda.h020 import H020_OVERRIDE_HOLD_S, is_h020_eps, param_or_default
+from opendbc.car.honda.h020 import H020_OVERRIDE_FADE_DOWN_S, H020_OVERRIDE_FADE_UP_S, H020_OVERRIDE_HOLD_S, H020_OVERRIDE_THRESHOLD, \
+  is_h020_eps, seed_h020_override_defaults
 from opendbc.car.honda.values import CAR, HondaFlags
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.tests.test_honda_eps_firmware_ff import _Params, _params
@@ -46,11 +47,33 @@ def test_calibration_values():
   assert prov["cmd_delay"].startswith("inferred") and prov["model_delay"].startswith("inferred")
 
 
-def test_param_or_default():
-  assert param_or_default(_Params(), "X", 0.5) == 0.5
-  assert param_or_default(_Params({"X": "1.5"}), "X", 0.5) == 1.5
-  assert param_or_default(_Params({"X": b"2.0"}), "X", 0.5) == 2.0
-  assert param_or_default(_Params({"X": "junk"}), "X", 0.5) == 0.5
+class _WritableParams(_Params):
+  def put(self, key, value):
+    self.values[key] = value
+
+
+def test_override_defaults_are_seeded_once_over_manager_defaults(tmp_path):
+  # manager has already filled the params_keys.h defaults (2400, 1.5 s) before the car is seen
+  params = _WritableParams({"NrdrDriverOverrideThreshold": 2400, "HondaOverrideFadeDownSecs": 0.1, "HondaOverrideFadeUpSecs": 1.5})
+  flag = tmp_path / "h020_override_defaults_v1"
+  assert seed_h020_override_defaults(params, flag)
+  assert params.values == {"NrdrDriverOverrideThreshold": H020_OVERRIDE_THRESHOLD,
+                           "HondaOverrideFadeDownSecs": H020_OVERRIDE_FADE_DOWN_S, "HondaOverrideFadeUpSecs": H020_OVERRIDE_FADE_UP_S}
+  assert flag.exists()
+
+  # a later user change sticks
+  params.put("NrdrDriverOverrideThreshold", 2000)
+  assert not seed_h020_override_defaults(params, flag)
+  assert params.values["NrdrDriverOverrideThreshold"] == 2000
+
+
+def test_failed_seed_is_retried(tmp_path):
+  class _Broken(_WritableParams):
+    def put(self, key, value):
+      raise OSError("read-only")
+  flag = tmp_path / "h020_override_defaults_v1"
+  assert not seed_h020_override_defaults(_Broken(), flag)
+  assert not flag.exists()
 
 
 def _controller(h020):

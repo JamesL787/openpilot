@@ -6,7 +6,6 @@ from openpilot.common.params import Params
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.honda.h020 import H020_OVERRIDE_THRESHOLD, is_h020_eps, param_or_default
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.yaw_rate import get_yaw_rate_calibration
 from opendbc.car.honda.values import CAR, DBC, STEER_THRESHOLD, HONDA_BOSCH, HONDA_BOSCH_ALT_RADAR, HONDA_BOSCH_CANFD, \
@@ -39,7 +38,6 @@ class CarState(CarStateBase):
     super().__init__(CP, FPCP)
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
     self.params = Params()
-    self.is_h020 = is_h020_eps(CP.carFw)
 
     if CP.transmissionType != TransmissionType.manual:
       self.gearbox_msg = "GEARBOX_AUTO"
@@ -229,8 +227,6 @@ class CarState(CarStateBase):
     steer_threshold = stock_threshold
 
     custom_threshold = self.params.get_int("NrdrDriverOverrideThreshold", default=2400)
-    if self.is_h020 and param_or_default(self.params, "NrdrDriverOverrideThreshold", None) is None:
-      custom_threshold = H020_OVERRIDE_THRESHOLD
     if custom_threshold > 0:
       steer_threshold = custom_threshold if stock_threshold == 1200 else stock_threshold * custom_threshold / 1200.0
 
