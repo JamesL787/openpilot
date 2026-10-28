@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import errno
+import os
 import time
 from smbus2 import SMBus
 from collections import namedtuple
@@ -100,6 +101,18 @@ CONFIGS = {
   ],
 }
 
+# MR.ONE clones report "tici" but carry the tizi codec wiring, so they use the tizi register set.
+# Creating this file restores the genuine tici set on a real comma 3.
+TICI_USES_TICI_CONFIG_FLAG = "/data/TICI_AMP_CONFIG"
+CONFIG_ALIASES = {"tici": "tizi"}
+
+
+def config_key(model: str) -> str:
+  if model in CONFIG_ALIASES and not os.path.exists(TICI_USES_TICI_CONFIG_FLAG):
+    return CONFIG_ALIASES[model]
+  return model
+
+
 class Amplifier:
   AMP_I2C_BUS = 0
   AMP_ADDRESS = 0x10
@@ -148,7 +161,7 @@ class Amplifier:
     cfgs = [
       self._get_shutdown_config(True),
       *BASE_CONFIG,
-      *CONFIGS[model],
+      *CONFIGS[config_key(model)],
       self._get_shutdown_config(False),
     ]
     return self.set_configs(cfgs)
