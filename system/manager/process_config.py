@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import operator
 import platform
@@ -18,6 +19,10 @@ CAMERAD_WATCHDOG_MAX_DT = int(os.getenv("CAMERAD_WATCHDOG_MAX_DT", "5"))
 
 # MR.ONE clones report device type "tici" and carry a buzzer on GPIO 42
 BUZZER = TICI and HARDWARE.get_device_type() == "tici"
+
+# the vision features import OpenCV, which comma's stock AGNOS (19.7, on the MR.ONE clone) does not ship:
+# without it they would crash-loop and block engagement through processNotRunning, so they stay off
+OPENCV_AVAILABLE = importlib.util.find_spec("cv2") is not None
 
 def driverview(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
@@ -115,7 +120,7 @@ def run_speed_limit_filler(started: bool, params: Params, CP: car.CarParams, sta
   return starpilot_toggles.speed_limit_filler
 
 def run_speed_limit_vision(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
-  return starpilot_toggles.vision_speed_limit_detection
+  return OPENCV_AVAILABLE and starpilot_toggles.vision_speed_limit_detection
 
 def run_navigationd(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started and params.get("NavDestination") is not None
@@ -142,7 +147,7 @@ def wheel_controls_enabled(started: bool, params: Params, CP: car.CarParams, sta
 
 
 def run_v_asm(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
-  return started and getattr(starpilot_toggles, "v_asm_enabled", False)
+  return OPENCV_AVAILABLE and started and getattr(starpilot_toggles, "v_asm_enabled", False)
 
 
 def big_device_ui_process() -> NativeProcess:
