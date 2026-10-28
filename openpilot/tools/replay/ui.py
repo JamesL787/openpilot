@@ -203,7 +203,7 @@ def ui_thread(addr):
     if sm.recv_frame['radarState']:
       plot_lead(sm['radarState'], top_down)
 
-    # draw all radar points, coloured by role: red lead one, orange lead two, green measured, grey coasted
+    # draw all radar points, colored by role: red lead one, orange lead two, green measured, grey coasted
     radar_roles = radar_track_roles(sm['radarState'])
     maybe_update_radar_points(sm['radarTracks'].points, top_down[1], radar_roles)
 

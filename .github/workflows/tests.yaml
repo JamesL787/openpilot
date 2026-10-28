@@ -6,6 +6,10 @@ on:
       - master
       - Domathon
       - SecretGoodStarPilot
+      # Night Star branches: every push gets CI, not only PRs
+      - night-star7
+      - night-star7-clean
+      - night-star7-vfn-personal-DONOTFLASH
   pull_request:
   workflow_dispatch:
   workflow_call:

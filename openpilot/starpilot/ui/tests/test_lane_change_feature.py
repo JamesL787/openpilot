@@ -143,7 +143,7 @@ class LaneChangeFeatureTests(unittest.TestCase):
     self.assertTrue(self.owner.apply(self.request(turn)))
     saved = read_saved(self.params)
     self.assertTrue(saved.policy.turn_desires)
-    self.assertEqual(json.loads(saved.raw)["version"], 5)
+    self.assertEqual(json.loads(saved.raw)["version"], 5)  # ty: ignore[invalid-argument-type]
     self.assertTrue(self.owner.apply(self.request(self.row(TURN_SPEED), -1)))
     self.assertAlmostEqual(read_saved(self.params).policy.turn_desire_speed_mps, 14 * 0.44704)
     self.assertEqual(self.row(TURN).value, "On")

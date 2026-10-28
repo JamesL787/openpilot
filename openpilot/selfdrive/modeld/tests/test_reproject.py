@@ -72,11 +72,11 @@ def test_startup_rotation_requires_completed_fit(monkeypatch):
   assert rotation.load_rotation() == rotation.POP_ROTATION
 
   # A completed Phase 1 fit is deliberately invalid under the new optical ABI.
-  FakeParams.value = {"fitted": True, "rotvec": [0.1, 0.2, 0.3]}
+  FakeParams.value = {"fitted": True, "rotvec": [0.1, 0.2, 0.3]}  # ty: ignore[invalid-assignment]
   assert rotation.read_rotation() == {}
   assert rotation.load_rotation() == rotation.POP_ROTATION
 
-  FakeParams.value = {
+  FakeParams.value = {  # ty: ignore[invalid-assignment]
     "fitted": True,
     "geometryVersion": rotation.GEOMETRY_VERSION,
     "rotvec": [0.1, 0.2, 0.3],
@@ -123,7 +123,7 @@ def test_dark_seam_fallback_holds_per_unit_terms():
   meter.state = np.array([1.0, 3.0, -4.0, 0.1, -0.2, 0.9, 1.0, 1.1, 1.2], dtype=np.float32)
   meter.n_calls, meter.every, meter.moving = 1, 2, False
   meter.alpha = 0.3
-  meter.measure = lambda _wide, _narrow: None
+  meter.measure = lambda _wide, _narrow: None  # ty: ignore[invalid-assignment]
 
   state = meter.update(np.zeros(1), np.zeros(1), model_gain=1.5)
 
@@ -180,32 +180,32 @@ def test_reproject_session_is_latched_across_chestnut_disconnect(monkeypatch):
   params = MemoryParams()
   _a_3x_with_a_big_model(monkeypatch)
   # manager may evaluate its predicate before modeld starts; the first evaluation selects and latches the session
-  assert reproject_process(True, params, None)
+  assert reproject_process(True, params, None)  # ty: ignore[invalid-argument-type]
   assert params.values[REPROJECT_SESSION_PARAM]
   # once latched, neither the predicate nor a restarted modeld re-probes a Chestnut that dropped for a moment
   _a_3x_with_a_big_model(monkeypatch, chestnut=False)
-  assert reproject_expected(params)
-  assert select_reproject_session(params)
-  assert reproject_process(True, params, None)
-  assert not reproject_process(False, params, None)
+  assert reproject_expected(params)  # ty: ignore[invalid-argument-type]
+  assert select_reproject_session(params)  # ty: ignore[invalid-argument-type]
+  assert reproject_process(True, params, None)  # ty: ignore[invalid-argument-type]
+  assert not reproject_process(False, params, None)  # ty: ignore[invalid-argument-type]
 
 
 def test_no_chestnut_or_no_big_model_means_no_reproject_session(monkeypatch):
   params = MemoryParams()
   _a_3x_with_a_big_model(monkeypatch)
-  assert not select_reproject_session(params, chestnut_ready=False)
+  assert not select_reproject_session(params, chestnut_ready=False)  # ty: ignore[invalid-argument-type]
   _a_3x_with_a_big_model(monkeypatch, big=False)
-  assert not select_reproject_session(params, chestnut_ready=True)
-  assert not reproject_expected(params)
+  assert not select_reproject_session(params, chestnut_ready=True)  # ty: ignore[invalid-argument-type]
+  assert not reproject_expected(params)  # ty: ignore[invalid-argument-type]
 
 
 def test_only_a_3x_gets_the_virtual_comma_4_path(monkeypatch):
   params = MemoryParams()
   monkeypatch.setattr(reproject_config, "_device_supported", lambda: False)
   monkeypatch.setattr(reproject_config, "_big_model_selected", lambda ready: True)
-  assert not select_reproject_session(params, chestnut_ready=True)
+  assert not select_reproject_session(params, chestnut_ready=True)  # ty: ignore[invalid-argument-type]
   params.values[REPROJECT_SESSION_PARAM] = True
-  assert not reproject_expected(params)
+  assert not reproject_expected(params)  # ty: ignore[invalid-argument-type]
 
 
 def test_qcom_priority_is_only_raised_by_reprojectd():

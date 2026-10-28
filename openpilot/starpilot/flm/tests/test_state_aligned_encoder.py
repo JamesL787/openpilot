@@ -17,10 +17,6 @@ def captured_event(platform, *, modified=False):
   firmware = (structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps, address=0x18DA30F1, subAddress=0,
     fwVersion=b'39990-TGG,A020\x00\x00', brand='honda'),) if modified else ()
   ci = make_interface(platform, firmware)
-  if modified:
-    # Night Star port: FLM is off on modified-EPS Hondas (steering_projection._modified_eps_honda)
-    assert not install_observer(ci)
-    pytest.skip('FLM does not run on modified-EPS Hondas')
   assert install_observer(ci)
   settle(ci, control(0.))
   requested = .8 if platform in (HONDA.HONDA_CIVIC, HONDA.HONDA_CIVIC_BOSCH) else .1
@@ -93,7 +89,8 @@ def test_unsupported_paired_projection_fails_without_advancing_candidate_native_
 
 
 def test_honda_normalized_pre_lookup_comparison_and_modified_filter_shadow_is_pure():
-  for platform, modified in ((HONDA.HONDA_CIVIC, False), (HONDA.HONDA_CIVIC_BOSCH, True)):
+  # Night Star port: FLM is off on modified-EPS Hondas (test_modified_eps_honda_refuses_observer), so stock EPS only
+  for platform, modified in ((HONDA.HONDA_CIVIC, False),):
     event = captured_event(platform, modified=modified)
     witness = event.witness
     branch = EncoderBranch(quality_contract=STATE_ALIGNED_DEBT)
@@ -119,24 +116,3 @@ def test_honda_normalized_pre_lookup_comparison_and_modified_filter_shadow_is_pu
     assert branch.previous == expected
     assert len(shapes) >= 3 and all(shape == candidate_shape for shape in shapes)
 
-
-def test_honda_nonfinite_reference_and_paired_original_pressed_fail_closed():
-  event = captured_event(HONDA.HONDA_CIVIC_BOSCH, modified=True)
-  branch = EncoderBranch(quality_contract=STATE_ALIGNED_DEBT)
-  branch.previous = event.witness.previous_torque - .001
-  def bad_reference(row, request, shape):
-    return float('nan') if float32(request) == row.requested_torque else _shaped_input(row, request, shape)
-  with mock.patch('openpilot.starpilot.flm.torque_emission_replay._shaped_input', side_effect=bad_reference), \
-       pytest.raises(ValueError, match='paired native request support'):
-    branch.step(event, .7)
-  # Real pressed predicate: candidate−.2 agrees with driver−1 and remains below
-  # its .8s trigger; ORIGINAL+.8 opposes driver and crosses its .1s trigger.
-  shape = tuple(event.witness.shape[:4]) + (18., True, -1.)
-  event = replace(event, witness=event.witness._replace(shape=shape))
-  branch = EncoderBranch(quality_contract=STATE_ALIGNED_DEBT)
-  branch.previous = event.witness.previous_torque
-  branch.civic = (1., -.2, .095, False)
-  before = branch.previous, branch.civic, branch.last_frame, branch.last_apply_ns
-  with pytest.raises(ValueError, match='driver override'):
-    branch.step(event, -.2)
-  assert (branch.previous, branch.civic, branch.last_frame, branch.last_apply_ns) == before

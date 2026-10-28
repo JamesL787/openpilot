@@ -109,7 +109,8 @@ def test_full_lkas_long_only_actual_owners_output_and_presentation(alt, prearmed
       assert decision.desired_lateral == expected_lateral
       assert decision.desired_longitudinal and decision.longitudinal_active
       assert decision.lateral_active == (expected_lateral and native_lateral)
-      model = messaging.new_message('modelV2', valid=True, logMonoTime=now)   # Night Star port: controlsd steers only while a driving model is publishing (stopped-model guard)
+      # Night Star port: controlsd steers only while a driving model is publishing (stopped-model guard)
+      model = messaging.new_message('modelV2', valid=True, logMonoTime=now)
       controls.sm.update_msgs(now / 1e9, [captured['carState'], captured['selfdriveState'], captured['aolAxisState'], safety.as_reader(),
                                           model.as_reader()])
       with patch('openpilot.selfdrive.controls.controlsd.time.monotonic_ns', return_value=now):

@@ -204,7 +204,7 @@ CIVIC_TBA_A030 = EpsFirmwareCalibration(
 # Civic Bosch 39990-TBA-C120, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 9261b8db; KB
 # PTM_FIX_FAMILY_20261016/out/C120), a data-only fix of the Drive C120 release (tracker-1 4250 and tracker-2 5968, as the
 # 08-11 C020Profile build). Its variants select rows 0-4; each row keeps its own key axis and carries the Clarity's R5
-# for each key, and P sits on the Clarity's knots, so every row makes the same command. Row 1 (= row 2) is modelled.
+# for each key, and P sits on the Clarity's knots, so every row makes the same command. Row 1 (= row 2) is modeled.
 # Flat envelope. E4 = -3840 * u: opendbc sends HONDA_CIVIC_BOSCH 3840, the C120's own key clamp. Not
 # measured: load (R6 is computed from its A table). Both builds report 39990-TBA,C120: a car on an earlier image must be reflashed.
 # Its rack map is predicted from the 2019-21 Civic sedan's specs through its own A table (no C120 yaw fit yet).

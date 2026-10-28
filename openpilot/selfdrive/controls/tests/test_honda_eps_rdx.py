@@ -68,7 +68,7 @@ def test_its_linear_map_quickens_as_the_rack_does():
   slope = lambda a: (np.interp(a + 5, physical, linear) - np.interp(max(a - 5, 0), physical, linear)) / (a + 5 - max(a - 5, 0))  # noqa: E731
   assert slope(2.5) == pytest.approx(1.0, abs=0.03)
   assert slope(200) == pytest.approx(9.58 / 7.8, rel=0.01)   # the 0x18F rate word, centre to plateau
-  assert CAL.r6_angle_gain[0] == 1.0 and max(CAL.r6_angle_gain) == pytest.approx(9.58 / 7.8, rel=0.02)
+  assert CAL.r6_angle_gain[0] == 1.0 and max(CAL.r6_angle_gain) == pytest.approx(9.58 / 7.8, rel=0.02)  # ty: ignore[not-subscriptable,invalid-argument-type]
 
 
 @pytest.mark.parametrize("v", [3.0, 15.0, 30.0])

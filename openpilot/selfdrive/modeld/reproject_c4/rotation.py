@@ -26,7 +26,8 @@ def load_rotation() -> tuple[float, float, float]:
   """Use the fitted rotation, then the persisted model seed, then the fleet median."""
   d = read_rotation()
   if d:
-    return tuple(float(v) for v in d["rotvec"])
+    x, y, z = (float(v) for v in d["rotvec"])
+    return x, y, z
 
   try:
     from openpilot.cereal import log

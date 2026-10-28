@@ -90,7 +90,7 @@ def read(files):
       for e in log.Event.read_multiple_bytes(raw):
         w = e.which()
         t = e.logMonoTime * 1e-9
-        if pending:
+        if pending and last_t is not None:
           offset, pending = last_t + ROUTE_GAP_S - t, False
         t += offset
         last_t = t if last_t is None else max(last_t, t)

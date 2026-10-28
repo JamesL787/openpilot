@@ -57,7 +57,8 @@ class TestLaneChangeAlert(unittest.TestCase):
     def status(turn, frame=77, engaged=True):
       return encode(LaneChangeStatus("session", 1, frame, 10_000_000_000, 1_000_000_000, 1_100_000_000,
                                      Phase.MANUAL_REQUIRED, Direction.NONE, False, engaged, turn))
-    texts = lambda raw, **kw: [a.alert_text_1 for a in self._run_alert(raw, every=True, **kw)]
+    def texts(raw, **kw):
+      return [a.alert_text_1 for a in self._run_alert(raw, every=True, **kw)]
     self.assertIn("Turning Right", texts(status(Direction.RIGHT)))
     self.assertIn("Turning Left", texts(status(Direction.LEFT)))
     self.assertFalse([t for t in texts(status(Direction.NONE)) if t.startswith("Turning")])

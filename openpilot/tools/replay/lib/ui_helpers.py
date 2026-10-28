@@ -198,7 +198,7 @@ def plot_lead(rs, top_down):
 
 
 def maybe_update_radar_points(lt, lid_overlay, roles=None):
-  """Draw the radar points; with ``roles`` (radar_debug.radar_track_roles) each point is coloured by what it is: lead one,
+  """Draw the radar points; with ``roles`` (radar_debug.radar_track_roles) each point is colored by what it is: lead one,
   lead two, measured, or coasted/estimated. Without it, every point is white as before."""
   from openpilot.tools.replay.lib.radar_debug import point_measured, radar_track_style
   for track in lt or ():
@@ -206,9 +206,9 @@ def maybe_update_radar_points(lt, lid_overlay, roles=None):
     px, py = to_topdown_pt(track.dRel, -track.yRel)
     if px == -1:
       continue
-    colour = radar_track_style(int(track.trackId), point_measured(track), roles)[1] if roles is not None else 255
+    color = radar_track_style(int(track.trackId), point_measured(track), roles)[1] if roles is not None else 255
     lid_overlay[px - 4 : px + 4, py - 4 : py + 4] = 0
-    lid_overlay[px - 2 : px + 2, py - 2 : py + 2] = colour
+    lid_overlay[px - 2 : px + 2, py - 2 : py + 2] = color
 
 
 def get_blank_lid_overlay(UP):

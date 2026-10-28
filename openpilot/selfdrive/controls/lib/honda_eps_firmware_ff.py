@@ -306,7 +306,7 @@ def firmware_kp(r5: float, cal: EpsFirmwareCalibration) -> float:
 def firmware_r6(steering_rate_deg_s: float, angle_deg: float, cal: EpsFirmwareCalibration) -> float:
   """The firmware's rate feedback for a published steering rate at a published angle, clamped where the firmware
   clamps it (+/-32765: from ~185 deg/s on the Civics, ~260 on the Clarity)."""
-  gain = 1.0 if cal.r6_angle_bp is None else float(np.interp(abs(angle_deg), cal.r6_angle_bp, cal.r6_angle_gain))
+  gain = 1.0 if cal.r6_angle_bp is None or cal.r6_angle_gain is None else float(np.interp(abs(angle_deg), cal.r6_angle_bp, cal.r6_angle_gain))
   return max(min(cal.r6_per_deg_s * gain * steering_rate_deg_s, R6_CLAMP), -R6_CLAMP)
 
 

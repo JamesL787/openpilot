@@ -78,9 +78,9 @@ def read_route(pattern):
     out = arr[np.clip(i, 0, None), col].copy()
     out[i < 0] = np.nan
     return out
-  d = dict(t=t, v=A['cs'][:, 1], ang=A['cs'][:, 2], rate=A['cs'][:, 3], tq=A['cs'][:, 4], pr=A['cs'][:, 5],
-           lat=np.nan_to_num(at(A['cc'], 1)), des=at(A['ctl'], 1), e4=np.nan_to_num(at(A['e4'], 1)),
-           off=np.nan_to_num(at(A['lp'], 1)), roll=np.nan_to_num(at(A['lp'], 2)))
+  d = {'t': t, 'v': A['cs'][:, 1], 'angle': A['cs'][:, 2], 'rate': A['cs'][:, 3], 'tq': A['cs'][:, 4], 'pr': A['cs'][:, 5],
+       'lat': np.nan_to_num(at(A['cc'], 1)), 'des': at(A['ctl'], 1), 'e4': np.nan_to_num(at(A['e4'], 1)),
+       'off': np.nan_to_num(at(A['lp'], 1)), 'roll': np.nan_to_num(at(A['lp'], 2))}
   return d
 
 
@@ -136,8 +136,8 @@ def closed_loop(d, wins, cal, plant, cmd_lag):
   for s, e in wins:
     core = F.HondaEpsLateralCore(*KP, *KI, DT, ff=F.HondaEpsFirmwareFeedforward(DT, cal))
     core.output_lpf_enabled = False
-    plant.reset(float(d['ang'][s]), float(d['rate'][s]))
-    meas, q = float(d['ang'][s]), deque([0.0] * cmd_lag)
+    plant.reset(float(d['angle'][s]), float(d['rate'][s]))
+    meas, q = float(d['angle'][s]), deque([0.0] * cmd_lag)
     for k in range(s, e):
       v, ro, off = float(d['v'][k]), float(d['roll'][k]), float(d['off'][k])
       q.append(core.update(float(d['des'][k]) - off, off, meas, v, ro, False, False))
@@ -146,16 +146,16 @@ def closed_loop(d, wins, cal, plant, cmd_lag):
   return th_s
 
 
-def loop_gain(d, ang, wins, vlo, vhi, lo=1.0, hi=2.0, warm=200):
+def loop_gain(d, angle, wins, vlo, vhi, lo=1.0, hi=2.0, warm=200):
   num = den = 0.0
   err = []
   for s, e in wins:
     a = s + warm
     if e - a < 400 or not (vlo <= d['v'][a:e].mean() < vhi):
       continue
-    x, y = band(d['des'][a:e] - d['off'][a:e], lo, hi), band(ang[a:e] - d['off'][a:e], lo, hi)
+    x, y = band(d['des'][a:e] - d['off'][a:e], lo, hi), band(angle[a:e] - d['off'][a:e], lo, hi)
     num, den = num + np.sum(y ** 2), den + np.sum(x ** 2)
-    err.append(ang[a:e] - d['des'][a:e])
+    err.append(angle[a:e] - d['des'][a:e])
   if not den:
     return float('nan'), float('nan')
   return math.sqrt(num / den), float(np.sqrt(np.mean(np.concatenate(err) ** 2)))
@@ -167,9 +167,9 @@ def open_loop(d, plant, cmd_lag, vlo, vhi, n=2000):
     for a in range(s, e - n, n):
       if not (vlo <= d['v'][a:a + n].mean() < vhi):
         continue
-      plant.reset(float(d['ang'][a]), float(d['rate'][a]))
+      plant.reset(float(d['angle'][a]), float(d['rate'][a]))
       y = np.array([plant.frame(d['e4'][k - cmd_lag], d['v'][k], d['roll'][k]) for k in range(a, a + n)])
-      yb, mb = band(y, 0.6, 2.5), band(d['ang'][a:a + n], 0.6, 2.5)
+      yb, mb = band(y, 0.6, 2.5), band(d['angle'][a:a + n], 0.6, 2.5)
       gains.append(np.std(yb) / max(np.std(mb), 1e-6))
       corrs.append(np.corrcoef(yb, mb)[0, 1])
   return len(gains), (float(np.median(gains)) if gains else float('nan')), (float(np.median(corrs)) if corrs else float('nan'))
@@ -194,13 +194,13 @@ def main():
     for vlo, vhi in bands:
       n, g, c = open_loop(d, plant, a.cmd_lag, vlo, vhi)
       print(f"  open loop {vlo:.0f}-{vhi:.0f} m/s: {n} x 20 s, 0.6-2.5 Hz wheel sim/measured {g:.2f}, correlation {c:.2f}")
-    rows = [('measured', d['ang'])]
+    rows = [('measured', d['angle'])]
     rows.append(('sim, trimless', closed_loop(d, wins, trimless, plant, a.cmd_lag)))
     rows.append((f'sim, {cal.name}', closed_loop(d, wins, cal, plant, a.cmd_lag)))
-    for name, ang in rows:
+    for name, angle in rows:
       cells = []
       for vlo, vhi in bands:
-        g, rms = loop_gain(d, ang, wins, vlo, vhi)
+        g, rms = loop_gain(d, angle, wins, vlo, vhi)
         cells.append(f"{vlo:.0f}-{vhi:.0f} m/s: 1-2 Hz {g:.2f}, RMS {rms:.2f} deg")
       print(f"  {name:22s} " + ' | '.join(cells))
 

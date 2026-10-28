@@ -70,7 +70,7 @@ def read_route(pattern, bus):
           rows.append((e.logMonoTime * 1e-9, c.vEgo, c.aEgo, c.steeringAngleDeg, c.steeringRateDeg, st['y'], st['off'], st['roll']))
     except Exception:
       pass
-  return dict(zip(['t', 'v', 'a', 'ang', 'rate', 'y', 'off', 'roll'], np.array(rows, float).T, strict=True))
+  return dict(zip(['t', 'v', 'a', 'angle', 'rate', 'y', 'off', 'roll'], np.array(rows, float).T, strict=True))
 
 
 def samples(d, scale, right):
@@ -82,10 +82,10 @@ def samples(d, scale, right):
   ramp = np.clip((counts - RIGHT_LOSS_BP[0]) / (RIGHT_LOSS_BP[1] - RIGHT_LOSS_BP[0]), 0.0, 1.0)
   yaw = -np.radians(counts * scale + right * ramp)            # clockwise-positive decode -> left-positive like the wheel
   k = np.convolve(yaw, np.ones(10) / 10, 'same') / np.maximum(v, 0.1)
-  ang = np.interp(t - np.interp(v, *WHEEL_TO_YAW_LAG), t, d['ang'] - d['off'])
-  m = ok & (v > 2.5) & (np.abs(d['a']) < 2) & (np.abs(d['rate']) < 120) & (np.abs(ang) >= 3) & (np.sign(k) == np.sign(ang))
+  angle = np.interp(t - np.interp(v, *WHEEL_TO_YAW_LAG), t, d['angle'] - d['off'])
+  m = ok & (v > 2.5) & (np.abs(d['a']) < 2) & (np.abs(d['rate']) < 120) & (np.abs(angle) >= 3) & (np.sign(k) == np.sign(angle))
   idx = np.flatnonzero(m)[::5]
-  return zero, np.c_[v[idx], ang[idx], k[idx], d['roll'][idx]]
+  return zero, np.c_[v[idx], angle[idx], k[idx], d['roll'][idx]]
 
 
 class Fit:

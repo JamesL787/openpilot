@@ -395,7 +395,7 @@ def main(demo=False):
   # ... and keeps vfn's 0.1 s curvature smoothing; every runner's action (bundled, catalog, Jetlink) reads this module's
   # LAT_SMOOTH_SECONDS, and the manager runs modeld by its module name, so they all see it
   global LAT_SMOOTH_SECONDS
-  LAT_SMOOTH_SECONDS = lateral_smooth_seconds(CP, LAT_SMOOTH_SECONDS)
+  LAT_SMOOTH_SECONDS = lateral_smooth_seconds(CP, LAT_SMOOTH_SECONDS)  # ty: ignore[invalid-assignment]
   from openpilot.starpilot.car.subaru.smoothing import read_frozen, seconds as subaru_smooth_seconds, filter_action
   subaru_smoothing = read_frozen(CP, params)
 

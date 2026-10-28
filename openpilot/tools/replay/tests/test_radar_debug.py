@@ -41,9 +41,9 @@ def test_points_are_drawn_in_their_role_colour():
   overlay = get_blank_lid_overlay(UP)
   points = [_point(12, True, d_rel=20.0), _point(44, False, d_rel=40.0)]
   maybe_update_radar_points(points, overlay, {12: ("leadOne",)})
-  for point, colour in ((points[0], RADAR_PALETTE["leadOne"]), (points[1], RADAR_PALETTE["estimated"])):
+  for point, color in ((points[0], RADAR_PALETTE["leadOne"]), (points[1], RADAR_PALETTE["estimated"])):
     px, py = to_topdown_pt(point.dRel, -point.yRel)
-    assert overlay[px, py] == colour
+    assert overlay[px, py] == color
   # without roles every point stays white, as on stock 7.0
   plain = get_blank_lid_overlay(UP)
   maybe_update_radar_points(points, plain)

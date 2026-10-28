@@ -199,8 +199,9 @@ class LatControlHondaEps(LatControl):
   def __init__(self, CP, CI, dt, calibration: EpsFirmwareCalibration | None = None):
     super().__init__(CP, CI, dt)
     self.params = Params()
-    self.calibration = calibration if calibration is not None else eps_firmware_calibration(CP)
-    assert self.calibration is not None, f"no EPS firmware calibration for {CP.carFingerprint}"
+    calibration = calibration if calibration is not None else eps_firmware_calibration(CP)
+    assert calibration is not None, f"no EPS firmware calibration for {CP.carFingerprint}"
+    self.calibration: EpsFirmwareCalibration = calibration
     required = REQUIRED_PTM_RWD.get(self.calibration.name)
     cloudlog.info(f"LatControlHondaEps: {CP.carFingerprint} steering with EPS calibration {self.calibration.name} " +
                   f"({provenance_summary(self.calibration)})" +

@@ -29,7 +29,7 @@ def _build(monkeypatch, values):
   CP.dashcamOnly = True
   CI = CarInterface(CP)
   lac = LatControlHondaModifiedPID(CP.as_reader(), CI, DT_CTRL)
-  lac.params = _Params(values)
+  lac.params = _Params(values)  # ty: ignore[invalid-assignment]
   params = log.VehicleParameters.new_message()
   params.steerRatio = CP.steerRatio
   params.stiffnessFactor = 1.0

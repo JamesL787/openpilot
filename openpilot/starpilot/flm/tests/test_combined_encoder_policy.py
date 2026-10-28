@@ -16,7 +16,8 @@ def shadow_branch():
   return EncoderBranch(quality_contract=STATE_ALIGNED_RELIEF, identification_policy=NATIVE_SHADOW_IDENTIFICATION)
 
 
-@pytest.mark.parametrize('platform', (TOYOTA.TOYOTA_COROLLA_TSS2, GM.GMC_ACADIA, HONDA.HONDA_CIVIC, HONDA.HONDA_CIVIC_BOSCH))
+# Night Star port: no HONDA_CIVIC_BOSCH modified-EPS cases; FLM is off there (test_modified_eps_honda_refuses_observer)
+@pytest.mark.parametrize('platform', (TOYOTA.TOYOTA_COROLLA_TSS2, GM.GMC_ACADIA, HONDA.HONDA_CIVIC))
 def test_real_native_shadow_bounded_outward_request_still_fails_final_quality(platform):
   event = captured_event(platform, modified=platform == HONDA.HONDA_CIVIC_BOSCH)
   # Both requests lie in a flat native rate limit. No unlimited torque is emitted.
@@ -57,7 +58,7 @@ def test_real_driver_measured_unwind_relief_is_weaker_and_final_only(platform):
     EncoderBranch(quality_contract=STATE_ALIGNED_RELIEF).step(replace(event, limited=False), candidate)
 
 
-@pytest.mark.parametrize('platform', (TOYOTA.TOYOTA_COROLLA_TSS2, HONDA.HONDA_CIVIC_BOSCH))
+@pytest.mark.parametrize('platform', (TOYOTA.TOYOTA_COROLLA_TSS2,))
 def test_shadow_unsupported_projection_and_chronology_still_fail_closed(platform):
   event = captured_event(platform, modified=platform == HONDA.HONDA_CIVIC_BOSCH)
   with mock.patch('opendbc.car.steering_projection.project_request', return_value=None), pytest.raises(ValueError):
@@ -68,16 +69,6 @@ def test_shadow_unsupported_projection_and_chronology_still_fail_closed(platform
     branch.step(event, 1.)
   with pytest.raises((ValueError, OverflowError)):
     shadow_branch().step(event, float('nan'))
-
-
-def test_shadow_modified_civic_driver_override_remains_a_veto():
-  event = captured_event(HONDA.HONDA_CIVIC_BOSCH, modified=True)
-  witness = event.witness._replace(shape=tuple(event.witness.shape[:4]) + (18., True, -1.))
-  branch = shadow_branch()
-  branch.previous = witness.previous_torque
-  branch.civic = (1., -.2, .095, False)
-  with pytest.raises(ValueError, match='driver override'):
-    branch.step(replace(event, witness=witness), .8)
 
 
 @pytest.mark.parametrize('platform', (TOYOTA.TOYOTA_COROLLA_TSS2, GM.GMC_ACADIA))
@@ -95,10 +86,8 @@ def test_shadow_can_measure_new_clipped_flat_region_but_final_cannot_admit_it(pl
     EncoderBranch(quality_contract=STATE_ALIGNED_RELIEF).step(event, 1.)
 
 
-@pytest.mark.parametrize('platform,modified', ((HONDA.HONDA_CIVIC, False), (HONDA.HONDA_CIVIC_BOSCH, True)))
+@pytest.mark.parametrize('platform,modified', ((HONDA.HONDA_CIVIC, False),))
 def test_real_honda_unwind_uses_decoded_output_and_full_filter(platform, modified):
-  if modified:
-    pytest.skip('Night Star port: FLM does not run on modified-EPS Hondas')
   from opendbc.car import structs
   from opendbc.car.steering_projection import normalized_applied_command
   firmware = (structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps, address=0x18DA30F1, subAddress=0,

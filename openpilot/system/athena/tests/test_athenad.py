@@ -15,6 +15,7 @@ from websocket._exceptions import WebSocketConnectionClosedException
 
 from openpilot.common.parameterized import parameterized
 from openpilot.common.test import OpenpilotTestCase
+from openpilot.starpilot.connect.testing import use_comma_provider
 from openpilot.cereal import messaging
 
 from openpilot.common.params import Params
@@ -60,6 +61,7 @@ def host():
 
 class TestAthenadMethods(OpenpilotTestCase):
   def setup_method(self):
+    use_comma_provider()
     athenad.Api = MockApi  # ty: ignore[invalid-assignment]  # test double
     self.default_params = {
       "DongleId": "0000000000000000",
