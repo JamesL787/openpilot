@@ -28,6 +28,12 @@ def mock_time(mocker):
   mocker.patch("time.monotonic", mock_time_monotonic)
 
 
+@pytest.fixture(autouse=True)
+def not_a_clone(mocker):
+  # a tici defaults to no power down, the other tests exercise the stock policy
+  mocker.patch("openpilot.system.hardware.power_monitoring.HARDWARE.get_device_type", return_value="tizi")
+
+
 class TestPowerMonitoring:
   def setup_method(self):
     self.params = Params()
@@ -224,6 +230,46 @@ class TestPowerMonitoring:
       if i % 10 == 0:
         assert not pm.should_shutdown(ignition, False, ssb, False, self.toggles())
     assert not pm.should_shutdown(ignition, False, ssb, False, self.toggles())
+
+  def _exhausted_pm(self):
+    pm = PowerMonitoring()
+    pm.car_battery_capacity_uWh = 0
+    pm.calculate(VOLTAGE_BELOW_PAUSE_CHARGING, False)
+    return pm
+
+  def _shutdown_after_delay(self, pm):
+    start_time = ssb
+    while ssb < start_time + DELAY_SHUTDOWN_TIME_S + 1:
+      pm.shutdown_reason(False, True, start_time, True, self.toggles())
+    return pm.shutdown_reason(False, True, start_time, True, self.toggles())
+
+  def test_tici_defaults_to_no_power_down(self, mocker):
+    mocker.patch("openpilot.system.hardware.power_monitoring.HARDWARE.get_device_type", return_value="tici")
+    self.params.remove("DisablePowerDown")
+    pm = self._exhausted_pm()
+    assert self._shutdown_after_delay(pm) is None
+
+  def test_tici_explicit_param_wins(self, mocker):
+    mocker.patch("openpilot.system.hardware.power_monitoring.HARDWARE.get_device_type", return_value="tici")
+    self.params.put_bool("DisablePowerDown", False)
+    try:
+      assert self._shutdown_after_delay(self._exhausted_pm()) == "battery_capacity_exhausted"
+    finally:
+      self.params.remove("DisablePowerDown")
+
+  def test_tici_force_power_down_still_works(self, mocker):
+    mocker.patch("openpilot.system.hardware.power_monitoring.HARDWARE.get_device_type", return_value="tici")
+    self.params.remove("DisablePowerDown")
+    self.params.put_bool("ForcePowerDown", True)
+    try:
+      pm = PowerMonitoring()
+      assert pm.shutdown_reason(False, True, ssb, True, self.toggles()) == "forced_power_down"
+    finally:
+      self.params.remove("ForcePowerDown")
+
+  def test_other_devices_keep_stock_default(self):
+    self.params.remove("DisablePowerDown")
+    assert self._shutdown_after_delay(self._exhausted_pm()) == "battery_capacity_exhausted"
 
   def test_delay_shutdown_time(self):
     pm = PowerMonitoring()

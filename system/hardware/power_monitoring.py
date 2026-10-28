@@ -24,6 +24,8 @@ VOLTAGE_SHUTDOWN_SUSTAINED_TIME_S = 30.0
 class PowerMonitoring:
   def __init__(self):
     self.params = Params()
+    # MR.ONE clones report device type tici and a constant 5120 mV car voltage, so they default to no power down
+    self.power_down_disabled_by_default = HARDWARE.get_device_type() == "tici"
     self.last_measurement_time = None           # Used for integration delta
     self.last_save_time = 0                     # Used for saving current value in a param
     self.power_used_uWh = 0                     # Integrated power usage in uWh since going into offroad
@@ -114,6 +116,11 @@ class PowerMonitoring:
   def get_car_battery_capacity(self) -> int:
     return int(self.car_battery_capacity_uWh)
 
+  def power_down_disabled(self) -> bool:
+    if self.params.get("DisablePowerDown") is None:
+      return self.power_down_disabled_by_default
+    return self.params.get_bool("DisablePowerDown")
+
   # See if we need to shutdown
   def shutdown_reason(self, ignition: bool, in_car: bool, offroad_timestamp: float | None,
                       started_seen: bool, starpilot_toggles: SimpleNamespace) -> str | None:
@@ -146,7 +153,7 @@ class PowerMonitoring:
 
     should_shutdown = reason is not None
     should_shutdown &= not ignition
-    should_shutdown &= (not self.params.get_bool("DisablePowerDown"))
+    should_shutdown &= (not self.power_down_disabled())
     should_shutdown &= in_car
     should_shutdown &= offroad_time > DELAY_SHUTDOWN_TIME_S
 
