@@ -25,7 +25,8 @@ if [ -z "$AGNOS_VERSION" ]; then
 fi
 
 if [ -z "$AGNOS_ACCEPTED_VERSIONS" ]; then
-  export AGNOS_ACCEPTED_VERSIONS="$AGNOS_VERSION 13.1"
+  # 13.1: MR.ONE res clones; 19.7: comma's AGNOS 19.7 that the same clones boot after an nrdr install (stock comma xbl dd45)
+  export AGNOS_ACCEPTED_VERSIONS="$AGNOS_VERSION 13.1 19.7"
 fi
 
 export STAGING_ROOT="/data/safe_staging"

@@ -13,10 +13,10 @@ def _launch_env(**env):
                         env={"PATH": "/usr/bin:/bin", **env}).stdout.split("|")
 
 
-def test_launch_env_accepts_13_1_by_default():
+def test_launch_env_accepts_the_clone_os_versions_by_default():
   version, accepted = _launch_env()
   assert version in accepted.split()
-  assert "13.1" in accepted.split()
+  assert "13.1" in accepted.split() and "19.7" in accepted.split()
 
 
 def test_launch_env_respects_an_explicit_list():
