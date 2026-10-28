@@ -275,6 +275,7 @@ FW_VERSIONS = {
       b'77959-TBA-A060\x00\x00',
       b'77959-TBG-A050\x00\x00',
       b'77959-TEA-G020\x00\x00',
+      b'77959-TEA-H820\x00\x00',
       b'77959-TGG-A020\x00\x00',
       b'77959-TGG-A030\x00\x00',
       b'77959-TGG-E010\x00\x00',
@@ -288,6 +289,7 @@ FW_VERSIONS = {
     (Ecu.fwdRadar, 0x18dab0f1, None): [
       b'36802-TBA-A150\x00\x00',
       b'36802-TBA-A160\x00\x00',
+      b'36802-TET-H140\x00\x00',
       b'36802-TFJ-G060\x00\x00',
       b'36802-TGG-A050\x00\x00',
       b'36802-TGG-A060\x00\x00',
@@ -303,6 +305,7 @@ FW_VERSIONS = {
     (Ecu.fwdCamera, 0x18dab5f1, None): [
       b'36161-TBA-A130\x00\x00',
       b'36161-TBA-A140\x00\x00',
+      b'36161-TET-H120\x00\x00',
       b'36161-TFJ-G070\x00\x00',
       b'36161-TGG-A060\x00\x00',
       b'36161-TGG-A080\x00\x00',
