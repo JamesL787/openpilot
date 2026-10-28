@@ -99,6 +99,48 @@ class TestRegistration:
     assert register(show_spinner=True, register_konik=True) == "KONIK_ID"
     assert get_imei.call_count == IMEI_MAX_ATTEMPTS
 
+  def _fake_clock(self, mocker):
+    now = [0.]
+
+    def sleep(s):
+      now[0] += s
+    mocker.patch("openpilot.system.athena.registration.time.sleep", side_effect=sleep)
+    mocker.patch("openpilot.system.athena.registration.time.monotonic", side_effect=lambda: now[0])
+    return now
+
+  def test_konik_registration_gives_up(self, mocker):
+    # unreachable server: no endless retry, spinner closed, nothing written, caller sees None
+    self._generate_keys()
+    self.params.put("DongleId", "DONGLE_ID_123")
+    now = self._fake_clock(mocker)
+    spinner = mocker.patch("openpilot.system.athena.registration.Spinner")
+    mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", side_effect=lambda slot: f"imei{slot}")
+    m = mocker.patch("openpilot.system.athena.registration.api_get", autospec=True, side_effect=Exception("unreachable"))
+    assert register(show_spinner=True, register_konik=True) is None
+    assert 60 <= now[0] < 75
+    assert m.call_count > 1
+    spinner.return_value.close.assert_called_once()
+    assert self.params.get("DongleId") == "DONGLE_ID_123"
+    assert self.params.get("KonikDongleId") is None
+
+  def test_konik_registration_succeeds_after_failures(self, mocker):
+    self._generate_keys()
+    self._fake_clock(mocker)
+    mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", side_effect=lambda slot: f"imei{slot}")
+    m = mocker.patch("openpilot.system.athena.registration.api_get", autospec=True)
+    m.side_effect = [Exception("down"), Exception("down"), MockResponse(json.dumps({'dongle_id': "KONIK_ID"}), 200)]
+    assert register(register_konik=True) == "KONIK_ID"
+
+  def test_stock_registration_keeps_retrying(self, mocker):
+    # only the Konik path is bounded
+    self._generate_keys()
+    now = self._fake_clock(mocker)
+    mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", side_effect=lambda slot: f"imei{slot}")
+    m = mocker.patch("openpilot.system.athena.registration.api_get", autospec=True)
+    m.side_effect = [Exception("down")] * 30 + [MockResponse(json.dumps({'dongle_id': "DONGLE_ID_123"}), 200)]
+    assert register() == "DONGLE_ID_123"
+    assert now[0] > 60
+
   def test_imei_is_used_when_available(self, mocker):
     self._generate_keys()
     mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", side_effect=lambda slot: f"imei{slot}")

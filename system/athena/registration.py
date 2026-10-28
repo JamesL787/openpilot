@@ -19,6 +19,7 @@ from openpilot.common.swaglog import cloudlog
 
 UNREGISTERED_DONGLE_ID = "UnregisteredDevice"
 IMEI_MAX_ATTEMPTS = 10
+KONIK_REGISTER_TIMEOUT_S = 60
 
 def is_registered_device() -> bool:
   dongle = Params().get("DongleId")
@@ -50,6 +51,8 @@ def register(show_spinner=False, register_konik=False) -> str | None:
     dongle_id = UNREGISTERED_DONGLE_ID
     cloudlog.warning("missing public key")
   elif dongle_id is None or register_konik:
+    # an unreachable Konik server must not hold up manager init, it is retried on the next boot
+    konik_deadline = time.monotonic() + KONIK_REGISTER_TIMEOUT_S
     if show_spinner:
       spinner = Spinner()
       spinner.update("registering device")
@@ -94,6 +97,14 @@ def register(show_spinner=False, register_konik=False) -> str | None:
       except Exception:
         cloudlog.exception("failed to authenticate")
         backoff = min(backoff + 1, 15)
+        if register_konik:
+          remaining = konik_deadline - time.monotonic()
+          if remaining <= 0:
+            cloudlog.error("Konik registration timed out, will retry next boot")
+            if show_spinner:
+              spinner.close()
+            return None
+          backoff = min(backoff, remaining)
         time.sleep(backoff)
 
       if time.monotonic() - start_time > 60 and show_spinner:
