@@ -6,7 +6,7 @@ from copy import deepcopy
 import time
 
 from opendbc.car import structs
-from opendbc.car.hyundai.values import CAR, HyundaiSafetyFlags
+from opendbc.car.hyundai.values import CAR, HyundaiFlags, HyundaiSafetyFlags
 from opendbc.car.hyundai.canfd_owner import config_index
 from opendbc.car.isotp_parallel_query import IsoTpParallelQuery
 
@@ -34,6 +34,13 @@ def stock_copy(cp):
     stock = reader.as_builder()
   stock.openpilotLongitudinalControl = False
   stock.pcmCruise = True
+  if cp.openpilotLongitudinalControl and stock.carFingerprint in (
+      CAR.KIA_CARNIVAL_4TH_GEN, CAR.KIA_CARNIVAL_2025,
+      CAR.KIA_CARNIVAL_HEV_4TH_GEN, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN):
+    for config in stock.safetyConfigs:
+      config.safetyParam &= ~0x2000
+      if stock.carFingerprint in (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN) and stock.flags & HyundaiFlags.CANFD_ALT_BUTTONS:
+        config.safetyParam |= 0x2000
   for config in stock.safetyConfigs:
     if stock.carFingerprint == CAR.GENESIS_GV60_EV_1ST_GEN and config.safetyParam in (0x9015, 0x9095):
       config.safetyParam &= ~0x9000
@@ -188,7 +195,8 @@ class HyundaiECUStartup:
       expected = deepcopy(cast(PreparedParams, self.prepared_cp))
       configs = expected.get('safetyConfigs', [])
       owner = config_index(ci.CP)
-      if owner is None or len(configs) != owner + 1 or configs[owner]['safetyParam'] != 0x15 or expected['alternativeExperience'] != 0:
+      prepared_word = 0x2015 if gv70_eligible(ci.CP) else 0x15
+      if owner is None or len(configs) != owner + 1 or configs[owner]['safetyParam'] != prepared_word or expected['alternativeExperience'] != 0:
         raise RuntimeError('Captured ADRV prepared LONG profile cannot be finalized')
       configs[owner]['safetyParam'] |= 0x0800
       expected['alternativeExperience'] = 32

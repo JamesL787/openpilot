@@ -62,6 +62,7 @@ class CarState(CarStateBase):
     self.cluster_min_speed = CV.KPH_TO_MS / 2.
 
     self.loopback_lka_steering_cmd_updated = False
+    self.loopback_lka_steering_cmd_counter = 0
     self.loopback_lka_steering_cmd_ts_nanos = 0
     self.pt_lka_steering_cmd_counter = 0
     self.cam_lka_steering_cmd_counter = 0
@@ -75,6 +76,8 @@ class CarState(CarStateBase):
     self.pedal_sensor_counter = None
     self.pedal_packer = CANPacker(DBC[CP.carFingerprint][Bus.pt]) if CP.flags & GMFlags.PEDAL_LONG.value else None
     self.stock_acc_status_ts_nanos = 0
+    self.bolt_acc_brake_clock_ns = 0
+    self.bolt_acc_brake_clock_counter = 0
     self.bolt_pedal_removed_sources = ()
     self.bolt_pedal_removed_stock_ts_nanos = 0
     self.bolt_pedal_stock_active = False
@@ -368,6 +371,7 @@ class CarState(CarStateBase):
     # Variables used for avoiding LKAS faults
     self.loopback_lka_steering_cmd_updated = len(loopback_cp.vl_all["ASCMLKASteeringCmd"]["RollingCounter"]) > 0
     if self.loopback_lka_steering_cmd_updated:
+      self.loopback_lka_steering_cmd_counter = loopback_cp.vl["ASCMLKASteeringCmd"]["RollingCounter"]
       self.loopback_lka_steering_cmd_ts_nanos = loopback_cp.ts_nanos["ASCMLKASteeringCmd"]["RollingCounter"]
     if (self.CP.networkLocation == NetworkLocation.fwdCamera and
         not (is_conventional_cc_pedal_profile(self.CP) and self.CP.flags & GMFlags.NO_CAMERA) and
@@ -504,6 +508,10 @@ class CarState(CarStateBase):
 
     # 1 - latched
     ret.seatbeltUnlatched = pt_cp.vl["BCMDoorBeltStatus"]["LeftSeatBelt"] == 0
+    if int(self.CP.safetyConfigs[0].safetyParam) == 0x1CD and is_bolt_pedal_profile(self.CP):
+      self.bolt_acc_brake_clock_ns = cam_cp.ts_nanos["EBCMFrictionBrakeCmd"]["RollingCounter"]
+      self.bolt_acc_brake_clock_counter = int(cam_cp.vl["EBCMFrictionBrakeCmd"]["RollingCounter"])
+
     ret.leftBlinker = pt_cp.vl["BCMTurnSignals"]["TurnSignals"] == 1
     ret.rightBlinker = pt_cp.vl["BCMTurnSignals"]["TurnSignals"] == 2
 
@@ -877,6 +885,9 @@ class CarState(CarStateBase):
       pt_messages = [(name, frequency) for name, frequency in pt_messages if name != "ASCMLKASteeringCmd"]
     if hybrid is not None:
       cam_messages = [] if hybrid.removed else [("ASCMLKASteeringCmd", 10), ("AEBCmd", 10)]
+
+    if int(CP.safetyConfigs[0].safetyParam) == 0x1CD and is_bolt_pedal_profile(CP):
+      cam_messages.append(("EBCMFrictionBrakeCmd", 25))
 
     gps = get_car_gps_config(CP)
     if gps is not None:

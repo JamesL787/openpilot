@@ -11,7 +11,7 @@ import json
 import pyray as rl
 
 from openpilot.starpilot.ui.onroad_customization import offset, rgba, widget_size
-from openpilot.starpilot.ui.onroad_state import OnroadState, speed_limit_bounds
+from openpilot.starpilot.ui.onroad_state import OnroadState, manual_slc_confirmation, speed_limit_bounds
 from openpilot.starpilot.ui.onroad_widget_style import draw_control_card
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
 from openpilot.starpilot.ui.wheel_feedback import WheelFeedbackFade
@@ -64,7 +64,7 @@ class UnifiedSpeedWidget:
         draw_text(self.fonts, text, role, font_size, box.x + (box.width - width) / 2, y, color)
 
   def render(self, content: rl.Rectangle, state: OnroadState) -> None:
-    from openpilot.starpilot.ui.large_speed_geometry import GAP, WIDTH, PADDING, SOURCE_ROW_HEIGHT, card_height
+    from openpilot.starpilot.ui.large_speed_geometry import GAP, WIDTH, PADDING, SOURCE_ROW_HEIGHT, SOURCE_TOP, card_height
     from openpilot.starpilot.ui.onroad_customization import placement
     shown = resolve_unified_speed(state)
     if shown.mode == 'hidden':
@@ -78,17 +78,29 @@ class UnifiedSpeedWidget:
     border = rl.Color(*rgba(state.customization, 'cardBorder', 'large', 'cruise_limits'))
     text = rl.Color(*rgba(state.customization, 'text', 'large', 'cruise_limits'))
     if shown.mode != 'limit_only':
-      x = rect.x + PADDING
-      draw_caption(self.fonts, 'SET', x, rect.y + 19, unit=shown.unit)
-      size = 120
-      while size > 72 and self.fonts.measure(shown.max_text, FontRole.SET_SPEED, size).width > 148:
-        size -= 1
-      draw_ink(self.fonts, shown.max_text, FontRole.SET_SPEED, size, x, rect.y + 51, text)
-    self.sign.render(state)
+      if manual_slc_confirmation(Profile.LARGE, state):
+        x = rect.x + PADDING
+        draw_caption(self.fonts, 'SET', x, rect.y + 19, unit=shown.unit, size=32)
+        size = 120
+        while size > 72 and self.fonts.measure(shown.max_text, FontRole.SET_SPEED, size).width > 148:
+          size -= 1
+        draw_ink(self.fonts, shown.max_text, FontRole.SET_SPEED, size, x, rect.y + 51, text)
+      else:
+        center = rect.x + 120
+        draw_caption(self.fonts, 'SET', center, rect.y + 15, unit=shown.unit, centered=True)
+        size = 114.28
+        size *= min(1, 200 / max(1, self.fonts.measure(shown.max_text, FontRole.SET_SPEED, size).width))
+        left, right = self.fonts.horizontal_ink(shown.max_text, FontRole.SET_SPEED, size)
+        top, bottom = self.fonts.vertical_ink(shown.max_text, FontRole.SET_SPEED, size)
+        # The pinned DINish dash has 15 inked rows in its 200-pixel atlas cell.
+        number_height = size * self.fonts.profile.font_scale * 15 / 200 if shown.max_text == '–' else bottom - top
+        draw_ink(self.fonts, shown.max_text, FontRole.SET_SPEED, size, center - (left + right) / 2,
+                 rect.y + 101 - number_height / 2, text)
+    self.sign.render(state, defer_confirmation=True)
     if shown.mode == 'limit_only' and (bounds := speed_limit_bounds(Profile.LARGE, state)) is not None:
       draw_ink(self.fonts, shown.unit, FontRole.NORMAL, 24, bounds[2], bounds[3] - 32)
     if sources:
-      row = rl.Rectangle(rect.x, rect.y + height + (GAP if separate else 0), WIDTH, SOURCE_ROW_HEIGHT)
+      row = rl.Rectangle(rect.x, rect.y + max(height, SOURCE_TOP) + (GAP if separate else 0), WIDTH, SOURCE_ROW_HEIGHT)
       if separate:
         draw_control_card(row, fill=fill, border=border, border_width=1, roundness=.2)
       else:
@@ -111,9 +123,9 @@ class CurrentSpeedHud:
     _center(self.fonts, speed, FontRole.SPEED, 176, rect, content.y + 42 + dy + old_top - number_top,
             rl.Color(*rgba(state.customization, 'text', 'large', 'current_speed')))
     unit = 'km/h' if state.metric else 'mph'
-    unit_top, _ = self.fonts.vertical_ink(unit, FontRole.NORMAL, 44)
+    unit_top, _ = self.fonts.vertical_ink(unit, FontRole.NORMAL, 28)
     red, green, blue, alpha = rgba(state.customization, 'text', 'large', 'current_speed')
-    _center(self.fonts, unit, FontRole.NORMAL, 44, rect, content.y + 42 + dy + old_bottom + 20 - unit_top,
+    _center(self.fonts, unit, FontRole.NORMAL, 28, rect, content.y + 42 + dy + old_bottom + 20 - unit_top,
             rl.Color(red, green, blue, int(alpha * 200 / 255)))
 
 

@@ -1,6 +1,6 @@
 {
-  "reviewed_schema_commit": "83a90e89b4ff7e656c0964f90832b6bce6bb1407",
-  "reviewed_schema_sha256": "495664ec8d6e9def2419d910399efc30dc1899930a50648d11812323a5d8cdf5",
+  "reviewed_schema_commit": "632fa395624275e900b072309950624d36b0184f",
+  "reviewed_schema_sha256": "ce728d3074ad43da2f8782cedae4665c118412f5758b011350d747ea6fbb93a0",
   "incumbent_fixture_sha256": "a36ab54c00b5bbe61d520873d24aadfb8f33babd70c31a07046516d5545838d9",
   "types": {
     "0xf35cc4560bbf6ec2": {
@@ -18,7 +18,7 @@
       },
       "new_storage": {
         "dataWordCount": 3,
-        "pointerCount": 5,
+        "pointerCount": 6,
         "preferredListEncoding": "inlineComposite",
         "isGroup": false,
         "discriminantCount": 0,
@@ -44,6 +44,26 @@
           "ordinal": {
             "explicit": 37
           }
+        },
+        {
+          "slot": {
+            "offset": 5,
+            "type": {
+              "struct": {
+                "typeId": 10457083163342666783
+              }
+            },
+            "defaultValue": {
+              "schemaValueHex": "00000000040000000000000002000100100000000000000000000000000000000000000000000000"
+            },
+            "hadExplicitDefault": false
+          },
+          "name": "toyotaCruise",
+          "codeOrder": 38,
+          "discriminantValue": 65535,
+          "ordinal": {
+            "explicit": 38
+          }
         }
       ]
     },
@@ -61,7 +81,7 @@
         "discriminantOffset": 0
       },
       "new_storage": {
-        "dataWordCount": 17,
+        "dataWordCount": 18,
         "pointerCount": 21,
         "preferredListEncoding": "inlineComposite",
         "isGroup": false,
@@ -157,6 +177,24 @@
           "discriminantValue": 65535,
           "ordinal": {
             "explicit": 55
+          }
+        },
+        {
+          "slot": {
+            "offset": 17,
+            "type": {
+              "uint64": null
+            },
+            "defaultValue": {
+              "uint64": 0
+            },
+            "hadExplicitDefault": false
+          },
+          "name": "acceptedMonoTime",
+          "codeOrder": 56,
+          "discriminantValue": 65535,
+          "ordinal": {
+            "explicit": 56
           }
         }
       ]

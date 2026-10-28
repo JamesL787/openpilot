@@ -93,7 +93,7 @@ class TestCemInputAcquisitionOrder(unittest.TestCase):
         feature_runtime.slc_runtime_settings(params, cp, {}),
         feature_runtime.enabled(params, cp, 'vision', {}),
         feature_runtime.vision_control_enabled(params, cp),
-        feature_runtime.enabled(params, cp, 'vision', {}))
+        feature_runtime.enabled(params, cp, 'vision', {}), params.get_bool('IsMetric'))
       reads = []
       def read(params):
         reads.append(True)

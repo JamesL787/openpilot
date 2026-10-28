@@ -65,6 +65,8 @@ class TestBoltPedalMovingStop(unittest.TestCase):
         controls.LaC = NS(reset=lambda: None, update=lambda *args, log=log: (0., 0., log))
         card.CP, card.CI, card.volt_cc_selected = cp, ci, False
         packer = CANPacker(DBC[candidate][Bus.pt])
+        if candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
+          ci.update([(base - 42_000_000, [packer.make_can_msg('EBCMFrictionBrakeCmd', 2, {'RollingCounter': 0})])])
         for warm in (2, 1):
           warm_frames = physical_frames(packer, speed=speed, gear=6)
           warm_frames.append(pedal_fixtures.TestBoltPedalMessages.sensor(packer, 0., 16 - warm))
@@ -82,6 +84,8 @@ class TestBoltPedalMovingStop(unittest.TestCase):
           engine = packer.make_can_msg("ECMEngineStatus", 0, {"CruiseMainOn": 1, "BrakePressed": int(tick == 24)})
           frames = [m for m in frames if m[0] != engine[0]] + [engine]
           frames += [packer.make_can_msg(name, 2, {}) for name in ('ASCMLKASteeringCmd', 'AEBCmd', 'ASCMActiveCruiseControlStatus')]
+          if candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and tick % 4 == 0:
+            frames.append(packer.make_can_msg('EBCMFrictionBrakeCmd', 2, {'RollingCounter': (tick // 4 + 1) % 4}))
           out = ci.update([(now - 2_000_000, frames)])
           self.assertTrue(out.canValid)
           self.assertTrue(ci.CS.pedal_sensor_healthy)

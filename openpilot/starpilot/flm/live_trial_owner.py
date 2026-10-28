@@ -133,6 +133,17 @@ class TrackingTrialOwner:
     )
     return True
 
+  def rejected_pending(self, *, control_ns):
+    """Current consumer refusal only; never an applied or confirmed target."""
+    offer = self.offer
+    if (offer is None or offer.phase != 'trial' or not self.interrupted or self.source is not None
+        or type(control_ns) is not int or control_ns <= 0):
+      return None
+    actual = tuple((name, self.applied_full[name]) for name in NAMES)
+    return LiveTrialApplication(1, self.binding, offer.trial_id, offer.sequence, control_ns,
+      'rejected', actual, full_profile_sha256(self.binding.baseline_revision, actual), '',
+      'pending_trial_interrupted', offer.target_sequence)
+
   def prepare_restore(self, offer, prior, *, now_ns, permission, binding):
     from openpilot.starpilot.flm.live_trial_contract import LiveRestoreOffer
     from openpilot.starpilot.flm.live_trial_store import LiveConfirmedPrior, scope, stable_binding

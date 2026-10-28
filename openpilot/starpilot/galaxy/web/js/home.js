@@ -26,7 +26,7 @@ const distance = (meters, isMetric) => measure(meters === null ? null : meters /
 const hours = (seconds) => measure(seconds === null ? null : seconds / 3600, " h", 1)
 const percent = (value) => measure(value, "%")
 const duration = (seconds) => {
-  if (seconds === null) return "Unavailable"
+  if (seconds == null) return "Unavailable"
   const minutes = Math.round(seconds / 60)
   return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m` : `${minutes}m`
 }
@@ -51,6 +51,11 @@ export function driveSummary(feed) {
   if (!data) return null
   const isMetric = data.isMetric
   const last = data.lastDrive
+  const analysisStatus = (drive) => {
+    const failure = data.analysis.failures?.find((item) => item.routeId === drive.routeId)
+    return { analysisLabel: failure?.retryStopped ? "Analysis paused" : failure ? "Retry scheduled" : "Analysis pending",
+      analysisError: failure?.reason || drive.reason || "" }
+  }
   const maximum = Math.max(1, ...data.week.days.map((day) => day.distanceMeters ?? 0))
   const models = data.models.slice(0, 3)
   const modelTotal = models.reduce((sum, model) => sum + (model.distanceMeters ?? 0), 0)
@@ -64,20 +69,23 @@ export function driveSummary(feed) {
   })
   return {
     analysis: data.analysis,
-    last: last && { routeId: last.routeId, date: driveDate(last.startTime, last.endTime), complete: last.complete,
+    last: last && { ...analysisStatus(last), routeId: last.routeId, date: driveDate(last.startTime, last.endTime), complete: last.complete,
       distance: distance(last.distanceMeters, isMetric), duration: duration(last.durationSeconds), engaged: percent(last.engagedPercent),
+      aol: percent(last.aolPercent), aolDuration: duration(last.aolSeconds),
       average: measure(last.distanceMeters === null || !(last.durationSeconds > 0) ? null : last.distanceMeters / last.durationSeconds * (isMetric ? 3.6 : 2.236936), isMetric ? " km/h" : " mph"),
       model: shown(last.model), distracted: last.distractedMoments === null ? "Unavailable" : String(last.distractedMoments),
       unresponsive: last.unresponsiveMoments === null ? "Unavailable" : String(last.unresponsiveMoments) },
     totals: { distance: distance(data.totals.distanceMeters, isMetric), duration: hours(data.totals.durationSeconds),
-      engaged: duration(data.totals.engagedSeconds), drives: data.totals.drives },
+      engaged: duration(data.totals.engagedSeconds), drives: data.totals.drives,
+      aol: duration(data.totals.aolSeconds), aolDrives: data.totals.aolDrives ?? 0 },
     week: { timezone: data.week.timezone || "UTC", distance: distance(data.week.distanceMeters, isMetric), duration: hours(data.week.durationSeconds),
       engaged: percent(data.week.engagedPercent), progress: data.week.engagedPercent ?? 0, drives: data.week.drives,
+      aol: percent(data.week.aolPercent), aolDrives: data.week.aolDrives ?? 0,
       days: data.week.days.map((day) => ({ date: day.date, label: dayLabel(day.date),
         distance: distance(day.distanceMeters, isMetric), height: day.distanceMeters === null ? 0 : day.distanceMeters / maximum * 100 })) },
-    recent: data.recentDrives.slice(0, 5).map((drive) => ({ routeId: drive.routeId, date: driveDate(drive.startTime, drive.endTime),
+    recent: data.recentDrives.slice(0, 5).map((drive) => ({ ...analysisStatus(drive), routeId: drive.routeId, date: driveDate(drive.startTime, drive.endTime),
       complete: drive.complete, ignored: drive.ignored, distance: distance(drive.distanceMeters, isMetric),
-      duration: duration(drive.durationSeconds), engaged: percent(drive.engagedPercent), model: shown(drive.model) })),
+      duration: duration(drive.durationSeconds), engaged: percent(drive.engagedPercent), aol: percent(drive.aolPercent), model: shown(drive.model) })),
     records: data.records.map((record) => ({ id: record.id, label: record.label, display: recordDisplay(record, isMetric) })),
     models: models.map((model, index) => ({ name: model.name, distance: distance(model.distanceMeters, isMetric),
       drives: model.drives, color: colors[index] })),
@@ -181,11 +189,12 @@ export const Home = {
           <p v-else-if="!driving.last">No saved drives yet.</p>
           <template v-else>
             <p class="gx-home__date">{{ driving.last.date }}</p>
-            <p v-if="!driving.last.complete" class="gx-home__subtle">This drive is still being analyzed.</p>
+            <p v-if="!driving.last.complete" class="gx-home__subtle">{{ driving.last.analysisLabel }}{{ driving.last.analysisError ? ": " + driving.last.analysisError : "" }}</p>
             <div class="gx-home__four"><div><strong>{{ driving.last.distance }}</strong><span>distance</span></div>
               <div><strong>{{ driving.last.duration }}</strong><span>duration</span></div>
               <div><strong>{{ driving.last.engaged }}</strong><span>engaged</span></div>
               <div><strong>{{ driving.last.average }}</strong><span>average speed</span></div></div>
+            <p class="gx-home__subtle">{{ driving.last.aol }} AOL steering only · {{ driving.last.aolDuration }}</p>
             <div class="gx-home__attention"><span class="gx-home__model-tag"><i class="bi bi-cpu"></i> {{ driving.last.model }}</span><span><i class="bi bi-eye"></i> {{ driving.last.distracted === "Unavailable" ? "Attention data unavailable" : driving.last.distracted + " distracted " + (driving.last.distracted === "1" ? "moment" : "moments") }}</span>
               <span><i class="bi bi-exclamation-triangle"></i> {{ driving.last.unresponsive }} unresponsive {{ driving.last.unresponsive === "1" ? "moment" : "moments" }}</span></div>
           </template>
@@ -197,7 +206,7 @@ export const Home = {
           <div class="gx-home__section-title"><span></span>Your driving</div>
           <div class="gx-home__totals">
             <section class="gx-card"><h2>Saved History</h2><strong>{{ driving.totals.distance }}</strong><span>{{ counted(driving.totals.drives, "drive") }}</span></section>
-            <section class="gx-card"><h2>Time on the Road</h2><strong>{{ driving.totals.duration }}</strong><span>{{ driving.totals.engaged }} engaged</span></section>
+            <section class="gx-card"><h2>Time on the Road</h2><strong>{{ driving.totals.duration }}</strong><span>{{ driving.totals.engaged }} engaged</span><span>{{ driving.totals.aol }} AOL steering only · {{ driving.totals.aolDrives }}/{{ driving.totals.drives }} drives measured</span></section>
             <section class="gx-card"><h2>This Week</h2><strong>{{ driving.week.distance }}</strong><span>{{ counted(driving.week.drives, "drive") }} · {{ driving.week.duration }}</span></section>
           </div>
           <div class="gx-home__pair">
@@ -205,6 +214,7 @@ export const Home = {
               <div class="gx-home__week-top"><div class="gx-home__donut" :style="{ '--gx-home-progress': driving.week.progress + '%' }">
                 <strong>{{ driving.week.engaged }}</strong><span>engaged</span></div>
                 <div><strong>{{ driving.week.distance }}</strong><span>across {{ counted(driving.week.drives, "drive") }}</span></div></div>
+              <p class="gx-home__subtle">{{ driving.week.aol }} AOL steering only · {{ driving.week.aolDrives }}/{{ driving.week.drives }} drives measured</p>
               <h3>Distance per day · {{ driving.week.timezone }}</h3>
               <div class="gx-home__bars"><div v-for="day in driving.week.days" :key="day.date" :aria-label="day.date + ': ' + day.distance" :title="day.date + ': ' + day.distance">
                 <div class="gx-home__bar-track"><span :style="{ height: day.height + '%' }"></span></div><small>{{ day.label }}</small><small>{{ day.distance }}</small></div></div>
@@ -214,12 +224,15 @@ export const Home = {
               <div v-for="record in driving.records" :key="record.id" class="gx-home__record"><span class="gx-home__record-art" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path v-for="(path, index) in recordArt(record.id)" :key="index" :d="path" /></svg></span><span class="gx-home__record-label">{{ record.label }}</span><strong>{{ record.display }}</strong></div>
             </section>
           </div>
+          <GxNotice tone="danger" v-if="driving.analysis.failed">{{ driving.analysis.failed }} drive analysis failure{{ driving.analysis.failed === 1 ? '' : 's' }}{{ driving.analysis.quarantined ? ' · automatic retries paused for ' + driving.analysis.quarantined : '' }}.
+            <div v-for="failure in driving.analysis.failures" :key="failure.routeId">{{ failure.routeId }}: {{ failure.reason }}</div>
+          </GxNotice>
           <section class="gx-card gx-home__recent"><div class="gx-section__header"><i class="bi bi-clock-history"></i><h2 class="gx-section__title">Recent Drives</h2></div>
             <p v-if="!driving.recent.length" class="gx-home__subtle">No saved drives yet.</p>
             <div v-for="drive in driving.recent" :key="drive.routeId" class="gx-home__drive" :class="{ 'is-ignored': drive.ignored }">
               <div><strong>{{ drive.date }}</strong><small>{{ drive.model }}</small></div>
-              <div><strong>{{ drive.complete ? drive.distance : 'Analyzing' }}</strong><small>{{ drive.duration }} · {{ drive.engaged }} engaged</small></div>
-              <div><small>{{ drive.ignored ? 'Excluded from totals' : drive.complete ? 'Included in totals' : 'Waiting for analysis' }}</small>
+              <div><strong>{{ drive.complete ? drive.distance : drive.analysisLabel }}</strong><small>{{ drive.duration }} · {{ drive.engaged }} engaged</small><small>{{ drive.aol }} AOL steering only</small></div>
+              <div><small>{{ drive.ignored ? 'Excluded from totals' : drive.complete ? 'Included in totals' : drive.analysisError || drive.analysisLabel }}</small>
                 <button type="button" class="gx-home__link" :inert="drives.busy" :aria-busy="drives.busy || undefined" @click="ignoreDrive(drive)">
                   {{ drive.ignored ? 'Include in stats' : 'Ignore drive stats' }}</button></div>
             </div>

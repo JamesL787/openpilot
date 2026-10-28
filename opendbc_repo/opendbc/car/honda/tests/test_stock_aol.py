@@ -333,8 +333,11 @@ def test_actual_card_active_observation_requires_fresh_selfdrive_state(monkeypat
   host.car_gps_publisher = SimpleNamespace(update=lambda *args: None)
   host.observe_ioniq6_long_authority = lambda *args: None
   host.update_vehicle_state_context = lambda *args: None
-  host.update_cruise_speed = lambda *args: None
-  host.v_cruise_helper = SimpleNamespace(slc_consumed_button=None)
+
+  def update_cruise_speed(_state, _pending, *, approved=None):
+    assert approved is None
+  host.update_cruise_speed = update_cruise_speed
+  host.v_cruise_helper = SimpleNamespace(slc_consumed_button=None, toyota=None)
   host.startup_panda_configured = lambda: True
   host.can_sock = object()
   host.pm = None

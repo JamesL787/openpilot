@@ -18,7 +18,7 @@ def test_selected_gv70_long_owner_preserves_factory_configuration(pandas):
   cp.safetyConfigs[-1].safetyParam |= policy.safety_param_addition
   cp.alternativeExperience |= policy.alternative_experience_addition
   assert qualified_long(cp, marked_only=True) and config_index(cp) == pandas - 1
-  assert native_accepts_cp(cp, int(structs.CarParams.SafetyModel.hyundaiCanfd), 0x815)
+  assert native_accepts_cp(cp, int(structs.CarParams.SafetyModel.hyundaiCanfd), 0x2815)
   assert not native_accepts_cp(cp, int(structs.CarParams.SafetyModel.noOutput), 0)
   assert not native_accepts_cp(cp, int(structs.CarParams.SafetyModel.hyundaiCanfd), 0x895)
   marked = cp.to_dict()
@@ -28,14 +28,18 @@ def test_selected_gv70_long_owner_preserves_factory_configuration(pandas):
   assert marked['alternativeExperience'] == 32
 
 
-@pytest.mark.parametrize('fault', ['aux_word', 'aux_model', 'order', 'extra_slot', 'owner_model', 'owner_word',
+@pytest.mark.parametrize('fault', ['missing_damping', 'aux_word', 'aux_model', 'order', 'extra_slot', 'owner_model', 'owner_word',
                                   'experience', 'foreign_identity', 'angle', 'alt_lka', 'alt_buttons', 'camera',
                                   'ccnc', 'hybrid', 'passive', 'dashcam', 'not_car', 'pcm', 'missing_long', 'steer_type'])
 def test_two_panda_gv70_long_refuses_unqualified_configuration(fault):
   cp, _, _ = factory(CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN)
-  cp.safetyConfigs[-1].safetyParam = 0x815
+  cp.safetyConfigs[-1].safetyParam = 0x2815
   cp.alternativeExperience = 32
-  if fault == 'aux_word':
+  assert qualified_long(cp, marked_only=True)
+  assert native_accepts_cp(cp, int(structs.CarParams.SafetyModel.hyundaiCanfd), 0x2815)
+  if fault == 'missing_damping':
+    cp.safetyConfigs[-1].safetyParam = 0x815
+  elif fault == 'aux_word':
     cp.safetyConfigs[0].safetyParam = 1
   elif fault == 'aux_model':
     cp.safetyConfigs[0].safetyModel = 'silent'
@@ -46,7 +50,7 @@ def test_two_panda_gv70_long_refuses_unqualified_configuration(fault):
   elif fault == 'owner_model':
     cp.safetyConfigs[-1].safetyModel = 'hyundai'
   elif fault == 'owner_word':
-    cp.safetyConfigs[-1].safetyParam = 0x895
+    cp.safetyConfigs[-1].safetyParam = 0x2895
   elif fault == 'experience':
     cp.alternativeExperience = 0
   elif fault == 'foreign_identity':
@@ -68,4 +72,4 @@ def test_two_panda_gv70_long_refuses_unqualified_configuration(fault):
   elif fault == 'steer_type':
     cp.steerControlType = 'angle'
   assert not qualified_long(cp, marked_only=True)
-  assert not native_accepts_cp(cp, int(structs.CarParams.SafetyModel.hyundaiCanfd), 0x815)
+  assert not native_accepts_cp(cp, int(structs.CarParams.SafetyModel.hyundaiCanfd), 0x2815)

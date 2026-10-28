@@ -102,7 +102,7 @@
       "guard_source_blob": "d9d6f940a5c752a14e861c954c765f450a2953d6",
       "guard_source_path": "openpilot/starpilot/system/android_auto/tests/test_gpu_nv12.py",
       "reason": "Skipped: STARPILOT_AUTO_GL_TEST=1 enables tests requiring a real graphics context",
-      "source_blob": "e0098c87f63d8f56ebdfa84faa6e49d7811e6e51"
+      "source_blob": "606859b459240ea1e73a4542ab901a782a9b001e"
     },
     "openpilot/starpilot/ui/tests/test_onroad_map.py::test_overlay_opacity_fades_map_background": {
       "basis": "Existing map fixture alias gl=test_gpu_nv12.gpu; both consumer and shared guard definition pinned; unavailable remains SKIPPED, never passed",
@@ -110,7 +110,7 @@
       "guard_source_blob": "d9d6f940a5c752a14e861c954c765f450a2953d6",
       "guard_source_path": "openpilot/starpilot/system/android_auto/tests/test_gpu_nv12.py",
       "reason": "Skipped: STARPILOT_AUTO_GL_TEST=1 enables tests requiring a real graphics context",
-      "source_blob": "e0098c87f63d8f56ebdfa84faa6e49d7811e6e51"
+      "source_blob": "606859b459240ea1e73a4542ab901a782a9b001e"
     },
     "openpilot/starpilot/ui/tests/test_onroad_map.py::test_overlay_without_gps_waits_without_drawing_roads": {
       "basis": "Existing map fixture alias gl=test_gpu_nv12.gpu; both consumer and shared guard definition pinned; unavailable remains SKIPPED, never passed",
@@ -118,7 +118,7 @@
       "guard_source_blob": "d9d6f940a5c752a14e861c954c765f450a2953d6",
       "guard_source_path": "openpilot/starpilot/system/android_auto/tests/test_gpu_nv12.py",
       "reason": "Skipped: STARPILOT_AUTO_GL_TEST=1 enables tests requiring a real graphics context",
-      "source_blob": "e0098c87f63d8f56ebdfa84faa6e49d7811e6e51"
+      "source_blob": "606859b459240ea1e73a4542ab901a782a9b001e"
     },
     "openpilot/starpilot/ui/tests/test_onroad_map.py::test_route_stays_bright_at_minimum_map_opacity": {
       "basis": "Existing map fixture alias gl=test_gpu_nv12.gpu; both consumer and shared guard definition pinned; unavailable remains SKIPPED, never passed",
@@ -126,7 +126,7 @@
       "guard_source_blob": "d9d6f940a5c752a14e861c954c765f450a2953d6",
       "guard_source_path": "openpilot/starpilot/system/android_auto/tests/test_gpu_nv12.py",
       "reason": "Skipped: STARPILOT_AUTO_GL_TEST=1 enables tests requiring a real graphics context",
-      "source_blob": "e0098c87f63d8f56ebdfa84faa6e49d7811e6e51"
+      "source_blob": "606859b459240ea1e73a4542ab901a782a9b001e"
     }
   },
   "independent_functions": {
@@ -279,10 +279,10 @@
       "seconds": 0.003333182999881501
     },
     "openpilot/starpilot/aol/tests/test_classic_startup_neutral_replacement.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
       "blob": "e8e15ae28d68077eb0eae58391786a7e26db3099",
       "cases": 72,
-      "seconds": 97.60630237199962
+      "seconds": 128.78160899800014,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_classic_stock_full_engagement.py": {
       "basis": "Complete pytest phase timings in 6eb push run39923284827",
@@ -381,16 +381,16 @@
       "seconds": 0.41426587900025424
     },
     "openpilot/starpilot/aol/tests/test_full_engagement.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
-      "blob": "1d6e455f99987244ab0c9b4df4914c9b189561c3",
+      "blob": "ca3eadc58beb632ee2b5d03de87fa73dba8fb550",
       "cases": 31,
-      "seconds": 0.010724543000037556
+      "seconds": 0.012207841000076769,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_gm_ascm_receive_order.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
-      "blob": "0dbb9239a035e4cbf077bbc020f5d2f7c4abb772",
+      "blob": "2571ecd4b365ad5ed8b0a1eb4f4b498ae9d6ea80",
       "cases": 340,
-      "seconds": 7.9761687649995565
+      "seconds": 8.693320227998868,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_gm_ascm_stock_low_speed.py": {
       "basis": "Complete pytest phase timings in 6eb push run39923284827",
@@ -423,10 +423,10 @@
       "seconds": 0.09446410099997138
     },
     "openpilot/starpilot/aol/tests/test_gm_held_brake_successor.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
       "blob": "9eda6d81d788579577ac6c929fa7c496b69a4fbd",
       "cases": 42,
-      "seconds": 105.58976007000115
+      "seconds": 135.9643618609997,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_gm_held_native.py": {
       "basis": "Complete pytest phase timings in 6eb push run39923284827",
@@ -441,10 +441,10 @@
       "seconds": 1.750253536999935
     },
     "openpilot/starpilot/aol/tests/test_gm_main_response.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
-      "blob": "75a2b37b1ea3b6dd48bac26e615fbcfdcf31938f",
-      "cases": 26,
-      "seconds": 0.9047342160006338
+      "blob": "04e8ac2028683b6a12a5bd3375cc7eaa0931c157",
+      "cases": 502,
+      "seconds": 4.635161425998035,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_gm_native_long_withdrawal.py": {
       "basis": "Complete pytest phase timings in 6eb push run39923284827",
@@ -513,10 +513,10 @@
       "seconds": 4.565723292001849
     },
     "openpilot/starpilot/aol/tests/test_gm_startup_main.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
-      "blob": "ea89907e03507256fd9988e53a416c55b295b09e",
+      "blob": "b446d994ec87d4b5bcd4caaf9a0a47df1fd05203",
       "cases": 67,
-      "seconds": 6.266599991999328
+      "seconds": 11.427552797000033,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_gm_steering_receive_order.py": {
       "basis": "Complete pytest phase timings in 6eb push run39923284827",
@@ -747,16 +747,16 @@
       "seconds": 1.2938219959996786
     },
     "openpilot/starpilot/aol/tests/test_native_long_withdrawal_guards.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
-      "blob": "6d9142116b4d611a825472ea748411063ff64c2f",
+      "blob": "2d48314c4a9d5b345e2234fbea7ec24b8a09fe66",
       "cases": 57,
-      "seconds": 4.2747545060005905
+      "seconds": 7.566266889000019,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_native_observation_admission.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
-      "blob": "e1ac8cac86402960aef58ee1ae2b49c0b2045253",
+      "blob": "8191e7ce9b0e993d432a0d643263df86904e40eb",
       "cases": 50,
-      "seconds": 0.050205153999058894
+      "seconds": 0.046322571999894535,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_native_observation_reuse.py": {
       "basis": "Complete pytest phase timings in 6eb push run39923284827",
@@ -927,10 +927,10 @@
       "seconds": 9.202019890000429
     },
     "openpilot/starpilot/aol/tests/test_stock_eps_recovery.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
-      "blob": "a35cdc121636f4125193fb737805d108d3f4cb25",
+      "blob": "bd41637eaad8903dfccfa3b248994e4b32c03e45",
       "cases": 145,
-      "seconds": 0.3297414050000498
+      "seconds": 0.4464098430007084,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/aol/tests/test_stock_lateral_family.py": {
       "basis": "Complete pytest phase timings in 6eb push run39923284827",
@@ -1155,10 +1155,10 @@
       "seconds": 0.8956470970001646
     },
     "openpilot/starpilot/car/chrysler/tests/test_location_intent.py": {
-      "basis": "Complete pytest phase timings in 6eb push run39923284827",
-      "blob": "7467e59366178f42db555a32898c1275de72c9f3",
+      "blob": "2bcbfb7e385235716f017dea67f40521e17f19e7",
       "cases": 48,
-      "seconds": 5.843426561001252
+      "seconds": 6.704717517999825,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/car/gm/tests/test_gear_events.py": {
       "basis": "Complete pytest phase timings in 6eb push run39923284827",
@@ -1341,10 +1341,10 @@
       "seconds": 26.80400199300027
     },
     "openpilot/starpilot/car/toyota/tests/test_legacy_advert_filter.py": {
-      "basis": "Separate complete AOL reference from same6eb source; not custom wall-time measurement",
-      "blob": "d44351a816a5da1c40ff688f36da0ab7d7dd4efe",
-      "cases": 182,
-      "seconds": 0.1225578689983422
+      "blob": "a6a1cf979b120d161ad72548da36b266915ad427",
+      "cases": 195,
+      "seconds": 0.15366050199895653,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/car/toyota/tests/test_legacy_advert_lateral.py": {
       "basis": "Separate complete AOL reference from same6eb source; not custom wall-time measurement",
@@ -1395,10 +1395,10 @@
       "seconds": 0.058055562000333794
     },
     "openpilot/starpilot/tests/test_ford_configuration_parity.py": {
-      "basis": "Separate complete AOL reference from same6eb source; not custom wall-time measurement",
-      "blob": "9d0a84a2918787cc7b4d4764f1d863b01e145223",
-      "cases": 112,
-      "seconds": 217.39153231700044
+      "blob": "2b4fae2a48a5194cd0673b3123e72444e040e7e8",
+      "cases": 120,
+      "seconds": 293.05875724965705,
+      "basis": "Hosted run40231700807 head3b3960: 87/120 cases completed with 212.467599006 setup/call/teardown seconds. Full-module scheduling estimate extrapolated from completed cases; not a completed module result."
     },
     "openpilot/starpilot/ui/tests/test_meb_preferences.py": {
       "basis": "Separate complete AOL reference from same6eb source; not custom wall-time measurement",
@@ -1413,22 +1413,700 @@
       "basis": "Actual complete-module setup/call/teardown receipts, hosted tests40108387164 custom14; same source blob. Scheduling estimate only; all original cases and timeout retained."
     },
     "openpilot/starpilot/tests/test_ford_bluepilot_aol.py": {
-      "cases": 64,
-      "seconds": 147.861995,
-      "blob": "cf201fab94f604dc6b9e9ea8789309c18074375d",
-      "basis": "Actual complete-module setup/call/teardown: DEBUG 96.479484s, RELEASE 98.574663s; conservative 1.5x host allowance. Scheduling estimate only; all cases and timeout retained."
+      "blob": "ce0ee89600b5b608eb2c905a43c0c8ec8db5cc0b",
+      "cases": 133,
+      "seconds": 274.055069753,
+      "basis": "Hosted run40449589613 head12dab8c31dd362a6198b9f2bb55facdf7dd34a9f custom19 artifact12710448232: complete module setup/call/teardown durations; every case passed. Scheduling estimate only; no grouping or timeout change."
     },
     "openpilot/starpilot/car/toyota/tests/test_sdsu_priority_callers.py": {
-      "cases": 204,
-      "seconds": 612.050501,
       "blob": "3f8196b546f7de4ec09af452552b34b71b692371",
-      "basis": "Hosted tests40117319129 custom22: 199/204 actual cases completed in 477.639410s of setup/call/teardown before whole-shard timeout. Projected full case count at observed mean with 25 percent allowance; scheduling estimate only. Original cases, grouping and 900s deadline retained."
+      "cases": 204,
+      "seconds": 493.7117524880016,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
     },
     "openpilot/starpilot/car/toyota/tests/test_radar_filter_variant_callers.py": {
-      "cases": 48,
-      "seconds": 254.992359,
       "blob": "c54a2f6be83b36f3c0f2f1e112d4ddffe980329d",
-      "basis": "Hosted tests40117319129 custom22: 48/48 actual cases completed in 203.993887s of setup/call/teardown before whole-shard timeout. Projected full case count at observed mean with 25 percent allowance; scheduling estimate only. Original cases, grouping and 900s deadline retained."
+      "cases": 48,
+      "seconds": 222.95216883699936,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_pedal_parent_callers.py": {
+      "blob": "27dfb68afa17141aed168b8de15df856f53561f5",
+      "cases": 92,
+      "seconds": 221.13896359299986,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/tesla/tests/test_pedal_callers.py": {
+      "blob": "2f1bf19c1b5115d359a9f8b1562d078cf09e5795",
+      "cases": 72,
+      "seconds": 171.39420926799892,
+      "basis": "Hosted run40231700807 head3b3960: 72/72 cases completed with 171.394209268 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/tesla/tests/test_screen_recovery_callers.py": {
+      "blob": "6a023175acd00b7b666e58cf31d39bc6c4e18ea5",
+      "cases": 64,
+      "seconds": 52.6830948330001,
+      "basis": "Hosted run40231700807 head3b3960: 64/64 cases completed with 52.683094833 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_angle_aol_callers.py": {
+      "blob": "58470683aac712dbb176a397e43854216e7c0792",
+      "cases": 24,
+      "seconds": 99.70996351799977,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_avalon_sdsu_callers.py": {
+      "blob": "1b7b28d7a5c9e967116093ae240f8bd2385c58e0",
+      "cases": 24,
+      "seconds": 91.69508481000025,
+      "basis": "Hosted run40231700807 head3b3960: 24/24 cases completed with 91.695084810 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_camry_chr_filter_callers.py": {
+      "blob": "b86de9cf8f380df5c796e97a04bbb789b04310cd",
+      "cases": 36,
+      "seconds": 149.7919823829991,
+      "basis": "Hosted run40231700807 head3b3960: 36/36 cases completed with 149.791982383 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_camry_cluster_callers.py": {
+      "blob": "118e02f052e87b32714d818882f914320cb223ce",
+      "cases": 12,
+      "seconds": 38.03821452899979,
+      "basis": "Hosted run40231700807 head3b3960: 12/12 cases completed with 38.038214529 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_dsu_bypass_callers.py": {
+      "blob": "f949c3e298e9c6ed54a2a6877c12b0813c412fca",
+      "cases": 132,
+      "seconds": 299.87973742199904,
+      "basis": "Hosted run40231700807 head3b3960: 132/132 cases completed with 299.879737422 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_matrix_filter_callers.py": {
+      "blob": "1faeb736ec0982c647a32df7cda2ccec4c28a51b",
+      "cases": 16,
+      "seconds": 45.44976264900038,
+      "basis": "Hosted run40231700807 head3b3960: 16/16 cases completed with 45.449762649 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_matrix_stock_caller_native.py": {
+      "blob": "79bc467dda7c717ac268f2a86100d13c9f28223f",
+      "cases": 24,
+      "seconds": 74.6212154150005,
+      "basis": "Hosted run40231700807 head3b3960: 24/24 cases completed with 74.621215415 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_pedal_caller_native.py": {
+      "blob": "e4e969a30a572846c3da3bbe5ec07eda07d4861d",
+      "cases": 40,
+      "seconds": 81.98515290600028,
+      "basis": "Hosted run40231700807 head3b3960: 40/40 cases completed with 81.985152906 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_pedal_main_freshness.py": {
+      "blob": "0bf03ccf9b534ff4394413fc02008253d75ad9df",
+      "cases": 24,
+      "seconds": 142.0249736970012,
+      "basis": "Hosted run40231700807 head3b3960: 24/24 cases completed with 142.024973697 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_refusals.py": {
+      "blob": "e508064549b71d055e4e15d39fbc6eba44f5fd50",
+      "cases": 12,
+      "seconds": 35.2531285240002,
+      "basis": "Hosted run40231700807 head3b3960: 12/12 cases completed with 35.253128524 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_radar_lta_pedal_callers.py": {
+      "blob": "17c101c3319020d02f0e12f4f73187aaa62cf736",
+      "cases": 12,
+      "seconds": 54.74621950700032,
+      "basis": "Hosted run40231700807 head3b3960: 12/12 cases completed with 54.746219507 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_rav4_2022_filter_callers.py": {
+      "blob": "179608a4cae520bd08b959b8951f6b8e5ee03973",
+      "cases": 20,
+      "seconds": 58.43288677900034,
+      "basis": "Hosted run40231700807 head3b3960: 20/20 cases completed with 58.432886779 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_rav4_2025_filter_callers.py": {
+      "blob": "15c4502a67ddccffba449a2085101b8b03a7eae7",
+      "cases": 20,
+      "seconds": 86.43521993199988,
+      "basis": "Hosted run40231700807 head3b3960: 20/20 cases completed with 86.435219932 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_rav4_angle_filter_callers.py": {
+      "blob": "f8cba1a5eb95b61cdbdd38b3b807a84199fb4348",
+      "cases": 10,
+      "seconds": 39.58101156000009,
+      "basis": "Hosted run40231700807 head3b3960: 10/10 cases completed with 39.581011560 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_rav4h_caller_native.py": {
+      "blob": "fe5722f7fb89d9dd7398b1701153eee2b5d5c701",
+      "cases": 24,
+      "seconds": 105.96243552500061,
+      "basis": "Hosted run40231700807 head3b3960: 24/24 cases completed with 105.962435525 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_rav4h_pedal_composite_callers.py": {
+      "blob": "b6dd1261072cc181d1d790818139ca8279b5eaea",
+      "cases": 16,
+      "seconds": 71.46049905199925,
+      "basis": "Hosted run40231700807 head3b3960: 16/16 cases completed with 71.460499052 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/car/toyota/tests/test_sdsu_forwarded_copy_callers.py": {
+      "blob": "fefe98af3481903981f1e379bafd08009a24317d",
+      "cases": 248,
+      "seconds": 338.4465923260025,
+      "basis": "Hosted run40231700807 head3b3960: 248/248 cases completed with 338.446592326 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/flm/tests/test_physical_input_observation.py": {
+      "blob": "558e57fc4671a6e9bbf307ee66ff8da22cf1522b",
+      "cases": 56,
+      "seconds": 105.68353893799974,
+      "basis": "Hosted run40231700807 head3b3960: 56/56 cases completed with 105.683538938 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/flm/tests/test_registered_accepted_profile.py": {
+      "blob": "d9e2a8eec3671a5a4dbf8879eb12878e95da360a",
+      "cases": 9,
+      "seconds": 84.99715439200008,
+      "basis": "Hosted run40231700807 head3b3960: 9/9 cases completed with 84.997154392 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/flm/tests/test_registered_controls_global.py": {
+      "blob": "16537495e5cc478b6c94830539ce4187f6b242ed",
+      "cases": 4,
+      "seconds": 50.536827762999906,
+      "basis": "Hosted run40231700807 head3b3960: 4/4 cases completed with 50.536827763 setup/call/teardown seconds."
+    },
+    "openpilot/starpilot/aol/tests/test_crossmake_native_admission.py": {
+      "blob": "49c66542605a36afb864b346bd26322ac821eaf1",
+      "cases": 433,
+      "seconds": 0.5864361990001044,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/aol/tests/test_global_source_pause.py": {
+      "blob": "68a2392b91993d804a88b7a74cb3e910c865533b",
+      "cases": 775,
+      "seconds": 2.7322104579998836,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/aol/tests/test_gm_main_level_contract.py": {
+      "blob": "e9f43c06cee32bf863272b97b4b498c76816c833",
+      "cases": 226,
+      "seconds": 26.214346899999555,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/aol/tests/test_hkg_deadline_admission_cache.py": {
+      "blob": "141dd397d089867df079ae8527b53d681c8a415b",
+      "cases": 45,
+      "seconds": 0.10402148299942837,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/aol/tests/test_hkg_native_admission.py": {
+      "blob": "946a366c1a0ba4317ef6dbc2d102ba584f4cc769",
+      "cases": 91,
+      "seconds": 0.1807229110006574,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/aol/tests/test_hkg_source_policy_cache.py": {
+      "blob": "d15486009452fadb8a5b2f6f3e2e81e1c44432e8",
+      "cases": 54,
+      "seconds": 0.12772218899959853,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/aol/tests/test_inactive_source_pause.py": {
+      "blob": "448b1a2cc6d48fa681551a1b83d54b80b809aabc",
+      "cases": 38,
+      "seconds": 0.8090611210005818,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/aol/tests/test_reverse_source_gap.py": {
+      "blob": "23432dd72b59b01a48e58e00893367e7ec20c20f",
+      "cases": 37,
+      "seconds": 0.5327044699998851,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_2aa_forwarded_copy.py": {
+      "blob": "90f015af308d1cc1f263bb97da6a5ddefc250478",
+      "cases": 50,
+      "seconds": 0.029626459001406147,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_advert_filter.py": {
+      "blob": "985e87edcfaad73bf71845c3911ad4dfddf274d4",
+      "cases": 273,
+      "seconds": 0.12193144500059816,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_camera_2aa_filter.py": {
+      "blob": "2cc8182aec6e25beb57d713f7ef895c5dde422cb",
+      "cases": 238,
+      "seconds": 0.1614836200000127,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_camera_2aa_native.py": {
+      "blob": "828bfb88b4b3a9379417f8588e70fa2e7ea53a19",
+      "cases": 48,
+      "seconds": 6.411265361000346,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_dsu_bypass.py": {
+      "blob": "87317a162781c6de4d2039df70ab4c1aca2191cc",
+      "cases": 141,
+      "seconds": 0.25811189599914997,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_eps8_sdsu.py": {
+      "blob": "068e094f38fa8a5c0a420706eae5c632667f46d0",
+      "cases": 235,
+      "seconds": 0.17927439499874254,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_legacy_sdsu.py": {
+      "blob": "a9a97d602ffd4ef18ccf731fc0ee27fc3a922f61",
+      "cases": 164,
+      "seconds": 0.180069009003887,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_pedal_parent_configurations.py": {
+      "blob": "396ea99e49c3d439241b922d2a60e05e2b94528b",
+      "cases": 591,
+      "seconds": 2.4402187460029836,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_prius_retrofit_advert_factory.py": {
+      "blob": "2468d9581780cde6f1325e6f623073f37876578e",
+      "cases": 84,
+      "seconds": 0.05991441000071518,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_prius_sdsu_filter.py": {
+      "blob": "17f2cced9f629942e9e4b93d041ffbc82156c64f",
+      "cases": 44,
+      "seconds": 0.1366284029994631,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_radar_filter_variants.py": {
+      "blob": "8ff7c535d6507604de31b55129c3ba6a1ad57d72",
+      "cases": 59,
+      "seconds": 0.029732309000792156,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_radar_lta_pedal.py": {
+      "blob": "8b10167a820440ba9fc7bc31339d60e345eb30c9",
+      "cases": 45,
+      "seconds": 0.034094355999627624,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_sdsu_forwarded_copy.py": {
+      "blob": "55518e1231bf4345f81d705388bd34f153057e92",
+      "cases": 243,
+      "seconds": 0.13819222799929776,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_sdsu_priority.py": {
+      "blob": "2a2ed12c705ee754aed16368972ba44a1946b543",
+      "cases": 318,
+      "seconds": 0.34330281799987006,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/car/toyota/tests/test_wheel_actions.py": {
+      "blob": "c149f67f3e8f8fadd795826e1503aa94a4a86ed0",
+      "cases": 31,
+      "seconds": 0.20979100699776154,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/conditional_mode/tests/test_card_frame_derivations.py": {
+      "blob": "4f6702883be304407ff120f9c204088133614e3a",
+      "cases": 57,
+      "seconds": 0.19366396100053862,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_calibration_lifecycle.py": {
+      "blob": "5df58cc45a159d685fdd73df821a41af456cf169",
+      "cases": 40,
+      "seconds": 0.6588108730007889,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_canonical_bounds.py": {
+      "blob": "e780a1cb4de0c57e433110205f84023eafee9904",
+      "cases": 37,
+      "seconds": 0.016357500999561125,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_event_controller_prefix.py": {
+      "blob": "e41604fe189ccb9d8963a2090177cb18d1d6fe3b",
+      "cases": 44,
+      "seconds": 10.310949073000529,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_feedback_serialization.py": {
+      "blob": "586071850c2731f6522cafaab99f85e1d3a8886b",
+      "cases": 69,
+      "seconds": 0.05439314400018702,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_full_surface_profile.py": {
+      "blob": "9160f9802fe02300471919a25514b4137f68ec7a",
+      "cases": 31,
+      "seconds": 0.06832267700042394,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_global_event_capture_floor.py": {
+      "blob": "8d4801c0e1509ad3bd52a97e892f2711f11a928b",
+      "cases": 121,
+      "seconds": 0.21832795699901908,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_live_tracking.py": {
+      "blob": "4efdd24ef419b49b05eb22a617962b6c78e63336",
+      "cases": 60,
+      "seconds": 0.608971366999981,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_live_tracking_episodes.py": {
+      "blob": "2e238b48276ebab3e3ee7626829f38961ea3a15d",
+      "cases": 62,
+      "seconds": 0.16084272099999453,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_live_tracking_probe_process.py": {
+      "blob": "e5d4e4c86288aaa60006fa6569a3d11bb8612ab5",
+      "cases": 34,
+      "seconds": 0.45024849000071754,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_live_tracking_requalification.py": {
+      "blob": "1f95eb2d6ec64b187e5dcadfaf84cca57d28e649",
+      "cases": 50,
+      "seconds": 0.07777088399916465,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_physical_formatting.py": {
+      "blob": "bff4f1aa3da5d6cc84baf8135fa29d7914109cae",
+      "cases": 58,
+      "seconds": 0.3405876900005751,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_physical_target_gravity.py": {
+      "blob": "38af4d33c70bb3a928b8180858d52be4deec3ff8",
+      "cases": 44,
+      "seconds": 8.659069419000275,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_pid_stage_core.py": {
+      "blob": "de86152919dd3cf62f0fca27dfa33d1cb5dfcad5",
+      "cases": 55,
+      "seconds": 0.49176996500114,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_snapshot_scalar_fastpath.py": {
+      "blob": "68624047c8edb7c0e8c533841d3253ac5af5c4b4",
+      "cases": 67,
+      "seconds": 0.6277545459993235,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_steering_projection.py": {
+      "blob": "f9d0464de43c4d7007df7185452ca2a90f599807",
+      "cases": 114,
+      "seconds": 6.462500410001439,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_tracking_source_context.py": {
+      "blob": "4d2deeadb96e7137a8f6297acd9a2dc30480d356",
+      "cases": 73,
+      "seconds": 0.19376641999940603,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/flm/tests/test_tracking_study_recovery.py": {
+      "blob": "d5a774465e0c6ede7a53aca8dd7f061fb057597f",
+      "cases": 46,
+      "seconds": 0.13803778700071234,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/galaxy/test_android_auto_http.py": {
+      "blob": "a32896d7b103187659b9a4a45473dc99718cef6b",
+      "cases": 38,
+      "seconds": 3.6373942389989224,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/galaxy/tests/test_ford_release_alpha.py": {
+      "blob": "9a24ee5b8b8a9595f27861d2a5dd471bfae4026f",
+      "cases": 66,
+      "seconds": 0.26110413200092353,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/galaxy/tests/test_hotspot.py": {
+      "blob": "aca69afc4c47467d80c44d88549f350c050b8cd0",
+      "cases": 56,
+      "seconds": 0.0373155419986233,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/gps/tests/test_phone_gps.py": {
+      "blob": "1b4670e921b74d11a7f57b2d2ca619eb741a6124",
+      "cases": 32,
+      "seconds": 0.023217278999823066,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/lateral/tests/test_genesis_g70_policy.py": {
+      "blob": "bcae05b2ac81cb887119ed7858bde2acf8ce1c7a",
+      "cases": 34,
+      "seconds": 0.33387686799972016,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/lateral/tests/test_hkg_vehicle_policy.py": {
+      "blob": "0b7fc32b04a825bb0d282781d99ec3ecccf6cb6e",
+      "cases": 70,
+      "seconds": 0.10357977899934667,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/lateral/tests/test_unwind_direction.py": {
+      "blob": "56d1c3a3ec7f3b25604f00f243d9afd433dca75c",
+      "cases": 36,
+      "seconds": 0.13179554900034418,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/longitudinal/tests/test_encouragement.py": {
+      "blob": "0831bd1e5aff7713fcad1253d15531a48d04aa2b",
+      "cases": 50,
+      "seconds": 3.394525743000713,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/longitudinal/tests/test_follow_floor.py": {
+      "blob": "0aecbcfea34b48f8bdc3bfbd988e09912782a49f",
+      "cases": 39,
+      "seconds": 6.683791032000954,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/longitudinal/tests/test_lead_takeoff.py": {
+      "blob": "17c6628aa74a8318f06e68b3dfa9c5cbc2379ccc",
+      "cases": 44,
+      "seconds": 0.49826109900038773,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/longitudinal/tests/test_mpc_terminal_constraints.py": {
+      "blob": "89480641ce0a289adaffa21e5d4f7c2799c40f8d",
+      "cases": 33,
+      "seconds": 1.2074830620000512,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/models/tests/test_modeld_startup_fallback.py": {
+      "blob": "745fec64cc71126ddaa42ee5cf78fd17b20786b0",
+      "cases": 32,
+      "seconds": 0.5124970959996062,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/navigation/tests/test_route_preferences.py": {
+      "blob": "21b2730f8a69366116b6af399b8c2d46d513cd6e",
+      "cases": 33,
+      "seconds": 0.08975363199976982,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/navigation/tests/test_search_proximity.py": {
+      "blob": "83982e80b3478c597c439c7d282a5350f74d9cfa",
+      "cases": 33,
+      "seconds": 0.02690103600036764,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/navigation/tests/test_signal_guidance.py": {
+      "blob": "38bd12fa3766c05f3f6e782f5ec8d310fba71f36",
+      "cases": 47,
+      "seconds": 0.10525561599956745,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/replay/tests/test_owner.py": {
+      "blob": "b54fb2c8ed27e6c45d6c4b55144b952890c16a95",
+      "cases": 50,
+      "seconds": 3.651309674000913,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/replay/tests/test_render.py": {
+      "blob": "6992c6786eb1a45371aa70b935e57cba9510e013",
+      "cases": 112,
+      "seconds": 0.14959199499912756,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/soloist/tests/test_runtime.py": {
+      "blob": "441eed8ae015bf949ebd94b41f80b450b907ba91",
+      "cases": 31,
+      "seconds": 0.6908758740008807,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/speed_limits/tests/test_physical_actions.py": {
+      "blob": "68b922f7cb6684761746c79c4b71e9a8b7171c1c",
+      "cases": 32,
+      "seconds": 0.014215565999506907,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/speed_limits/tests/test_set_speed.py": {
+      "blob": "9a502d99765b0a4202dec58fb265cecc12bde7b1",
+      "cases": 50,
+      "seconds": 0.18428593799899318,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/system/android_auto/tests/test_android_auto.py": {
+      "blob": "7bb601cd2a49fddffb11193ac9b00da7f958101d",
+      "cases": 60,
+      "seconds": 21.17139714399957,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/system/android_auto/tests/test_nav_status.py": {
+      "blob": "b89014e81c9632bc657b0230f4420f6645e195f1",
+      "cases": 53,
+      "seconds": 0.07452517499984879,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_captured_adrv_diagnostic_startup.py": {
+      "blob": "1d5b55a4d7942d690262c34031f99cdefc3688ef",
+      "cases": 64,
+      "seconds": 12.751025103000643,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_initial_epoch.py": {
+      "blob": "583fba0e66aebaec6bef3ff75fa4c215d8334a69",
+      "cases": 48,
+      "seconds": 0.09987150900019515,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_location_intent.py": {
+      "blob": "f257a07636d90ae5382055cac5a867c12b727728",
+      "cases": 100,
+      "seconds": 0.2575772739984359,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_main_pulse.py": {
+      "blob": "e873f92f14bbe3c67cc8083174ad908bf167d41c",
+      "cases": 72,
+      "seconds": 0.1164109490005103,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_physical_pause_intent.py": {
+      "blob": "7851e343234810814f7b7f9d0a56a060e552b3d2",
+      "cases": 148,
+      "seconds": 0.31409283800053345,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_release_long_preferences.py": {
+      "blob": "e11ac0afda6b144ecda04bb4694ab8c7381fa8e8",
+      "cases": 67,
+      "seconds": 0.11030930200035982,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_reverse_intent.py": {
+      "blob": "b7f4334b767b245a924b53b4e8085489114cbf17",
+      "cases": 66,
+      "seconds": 0.12838788999943063,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_shared_stop_isolation.py": {
+      "blob": "a5c3af46b09c31fe4a5fbc0477006f10c825cb2b",
+      "cases": 112,
+      "seconds": 0.1124289850013156,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_temporary_eps_intent.py": {
+      "blob": "66f0e8c0ee914d5609b73ef528f8f705eb27f796",
+      "cases": 108,
+      "seconds": 0.3479463360012005,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_camera_color.py": {
+      "blob": "dd70468893d8c7c24497894f6508b0ced5789562",
+      "cases": 35,
+      "seconds": 0.02060500199957005,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_chestnut_display.py": {
+      "blob": "3a679a3dd3ff831ac05bb70cc61bca22ee59d0ee",
+      "cases": 96,
+      "seconds": 0.09485462099928554,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_compact_sign_height.py": {
+      "blob": "010a3c7238fb3bf762566b406dad1c881ee5f8aa",
+      "cases": 61,
+      "seconds": 0.0627653260006582,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_covered_camera.py": {
+      "blob": "355592ed8e9253db46ff86442527d87d74de03cf",
+      "cases": 32,
+      "seconds": 0.23591232699970988,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_ford_release_alpha.py": {
+      "blob": "1fb3170598e2363330aee0575c2d30d206a5c50a",
+      "cases": 118,
+      "seconds": 1.2838008099988656,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_navigation_favorites.py": {
+      "blob": "18a6a3938c16d6b652c2c7f8f24653d085576687",
+      "cases": 55,
+      "seconds": 0.07181532400079504,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_onroad_alerts.py": {
+      "blob": "252af05102355df55a729f4895823c4ec705cc57",
+      "cases": 32,
+      "seconds": 0.7146788270008528,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_onroad_cem_gauge.py": {
+      "blob": "c5d37d33933d3d079effdd834654e37cdeded508",
+      "cases": 61,
+      "seconds": 0.10106702999951267,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_onroad_customization.py": {
+      "blob": "0b7dd23123e9384d2d175907312d0b28b65100cd",
+      "cases": 98,
+      "seconds": 0.11710292499947172,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_onroad_map.py": {
+      "blob": "e0098c87f63d8f56ebdfa84faa6e49d7811e6e51",
+      "cases": 51,
+      "seconds": 0.37655604900089656,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_pip_sidecam.py": {
+      "blob": "9e479fab99fd310e9e3ed23f1b09cac31f8e8926",
+      "cases": 50,
+      "seconds": 0.5140061449994846,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_replay_settings.py": {
+      "blob": "aea0ceb2d0423464e18ca0583541154823f32d0e",
+      "cases": 131,
+      "seconds": 0.4050017720018104,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_runtime_panel_actions.py": {
+      "blob": "a5b9894a1c04bd5863166ca58c9cb1d79a02c29b",
+      "cases": 35,
+      "seconds": 0.5682520560002331,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_shared_render_hot_paths.py": {
+      "blob": "637f293c0ccd3fe065db5079f85832cc920dc35e",
+      "cases": 33,
+      "seconds": 0.02732832900039739,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_slc_retention.py": {
+      "blob": "a5af8ddf9390978c5b2aaafe4a49079a1cfc0da6",
+      "cases": 50,
+      "seconds": 0.7795105979992059,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_ui_started_authority.py": {
+      "blob": "96572376fca9e59ba7132121e628b69f6754675b",
+      "cases": 42,
+      "seconds": 0.06673488400019778,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/ui/tests/test_unified_speed_native.py": {
+      "blob": "1a6dd56a8a5a1840fb9dabdafa52b34e35ebb086",
+      "cases": 181,
+      "seconds": 0.17966826400288483,
+      "basis": "max per-case complete phase seconds across hosted runs40231700807 and40235133424"
+    },
+    "openpilot/starpilot/tests/test_ford_recorded_lifecycle.py": {
+      "blob": "010f3f5b83b4c455159cbc076e5b6ab4075114c8",
+      "cases": 10,
+      "seconds": 31.794074447000412,
+      "basis": "Hosted run40449589613 head12dab8c31dd362a6198b9f2bb55facdf7dd34a9f custom19 artifact12710448232: complete module setup/call/teardown durations; every case passed. Scheduling estimate only; no grouping or timeout change."
     }
   },
   "reference_sha": "6eb9df96425a661afcbf1edfa27894d6e49b3706",

@@ -1454,6 +1454,7 @@ input[type="checkbox"]:disabled { opacity: .4; cursor: not-allowed; }
 .gx-aa-step__head { display: flex; align-items: flex-start; gap: var(--sp-4); min-width: 0; }
 .gx-aa-step__head h3 { margin: 2px 0 var(--sp-1); font-size: var(--fs-lg); }
 .gx-aa-step__head p { margin: 0; color: var(--text-muted); line-height: 1.45; }
+.gx-aa-step__head > .gx-btn { margin-left: auto; flex: none; }
 .gx-aa-step__num { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--radius-full);
   background: var(--primary-container); color: var(--on-primary-container); font-weight: var(--fw-bold); }
 .gx-aa-step--done .gx-aa-step__num { background: var(--success); color: var(--background); }
@@ -1804,3 +1805,34 @@ progress { max-width: 100%; accent-color: var(--primary); }
 @media (max-width: 380px) {
   .gx-flm__table td { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
+
+.gx-aa-progress { display: grid; gap: var(--sp-3); padding: var(--sp-4); border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--outline)); border-radius: var(--radius-md); background: linear-gradient(120deg, color-mix(in srgb, var(--primary) 12%, var(--surface-container)), var(--surface-container)); min-width: 0; }
+.gx-aa-progress__heading { display: flex; align-items: center; gap: var(--sp-3); }
+.gx-aa-progress__heading > div { display: grid; gap: var(--sp-1); min-width: 0; }
+.gx-aa-progress__heading small { color: var(--primary); font-size: var(--fs-xs); font-weight: 700; letter-spacing: .08em; }
+.gx-aa-progress__heading strong { font-size: var(--fs-lg); line-height: 1.35; overflow-wrap: anywhere; }
+.gx-aa-progress__heading > i { color: var(--primary); font-size: 1.8rem; }
+.gx-aa-progress p { margin: 0; color: var(--on-surface-variant); line-height: 1.5; overflow-wrap: anywhere; }
+.gx-aa-progress--success { border-color: var(--success); }
+.gx-aa-progress--success .gx-aa-progress__heading > i, .gx-aa-progress--success small { color: var(--success); }
+.gx-aa-progress--warning { border-color: var(--warning); }
+.gx-aa-progress--warning small, .gx-aa-progress--warning .gx-aa-progress__heading > i { color: var(--warning); }
+.gx-aa-orbit { width: 34px; height: 34px; border-width: 3px; border-color: color-mix(in srgb, var(--primary) 20%, transparent); border-top-color: var(--primary); border-right-color: var(--secondary, var(--primary)); }
+.gx-aa-orbit--small { width: 22px; height: 22px; }
+.gx-aa-progress__track { height: 4px; overflow: hidden; border-radius: var(--radius-full); background: color-mix(in srgb, var(--primary) 15%, transparent); }
+.gx-aa-progress__track > span { display: block; width: 40%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary), var(--secondary, var(--primary))); animation: gx-aa-travel 1.8s ease-in-out infinite alternate; }
+@keyframes gx-aa-travel { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+.gx-aa-list .gx-aa-row--active { background: color-mix(in srgb, var(--primary) 12%, var(--surface-container)); box-shadow: inset 3px 0 var(--primary); }
+.gx-aa-row--active strong { color: var(--primary); }
+.gx-aa-list .gx-aa-row--done > i { color: var(--success); }
+.gx-aa-row--failed strong { color: var(--error); }
+.gx-aa-guide { padding: var(--sp-4); border-radius: var(--radius-md); background: var(--surface-container); border: 1px solid var(--outline); line-height: 1.5; }
+.gx-aa-guide > strong { color: var(--primary); }
+.gx-aa-guide ol { display: grid; gap: var(--sp-3); padding-left: 1.5em; margin-bottom: 0; }
+.gx-aa-guide li::marker { color: var(--primary); font-weight: 700; }
+@media (prefers-reduced-motion: reduce) {
+  .gx-aa-progress__track > span { animation: none; }
+  .gx-aa-progress__track > span { width: 100%; opacity: .6; }
+}
+.gx-aa-checks .gx-aa-check--active { padding: var(--sp-3); border-radius: var(--radius-sm); color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); font-weight: var(--fw-bold); }
+.gx-aa-checks .gx-aa-check--active::before { border-right-color: var(--secondary, var(--primary)); }

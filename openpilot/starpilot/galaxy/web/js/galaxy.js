@@ -1,7 +1,7 @@
 import { GxState } from "./state.js"
 import { GxNotice } from "./notice.js"
 import { requestJson } from "./startup.js"
-import { InstallApp, isIosDevice } from "./install-app.js"
+import { ANDROID_BETA_URL, InstallApp, isIosDevice } from "./install-app.js"
 import { GalaxyCompanion, newerCompanionVersion } from "./companion.js"
 import { GalaxyHotspot } from "./hotspot.js"
 import { LocalAccess } from "./local-access.js"
@@ -15,14 +15,15 @@ export const GalaxyPage = {
   components: { GxState, GxNotice, BluetoothNotice, InstallApp, GalaxyHotspot, GalaxyCompanion, LocalAccess },
   props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true } },
   data: () => ({ loading: true, paired: false, url: "", tunnelClientAvailable: false, legacyPassword: false,
-    legacyPairingAvailable: false, password: "", busy: false, error: "", companionStatus: null,
+    appKey: '', keyVisible: false, betaUrl: ANDROID_BETA_URL, legacyPairingAvailable: false, password: "", busy: false, error: "", companionStatus: null,
     bluetooth: bluetoothConnection(), nativeVersion: window.StarPilotApp?.version?.() || '', dismissedUpdateVersion: dismissedUpdate(),
     ios: isIosDevice() }),
   computed: {
     availableAppVersion() { return this.companionStatus?.appAvailable ? this.companionStatus.shippedVersion : '' },
     installedAppVersion() { return this.nativeVersion || this.companionStatus?.version || '' },
+    playDistribution() { return window.StarPilotApp?.distribution?.() === 'play' },
     appUpdateAvailable() {
-      return this.mode === 'local' && newerCompanionVersion(this.availableAppVersion, this.installedAppVersion)
+      return !this.playDistribution && this.mode === 'local' && newerCompanionVersion(this.availableAppVersion, this.installedAppVersion)
     },
     nativeInstallerAvailable() { return typeof window.StarPilotApp?.installUpdate === 'function' },
     showAppUpdate() {
@@ -31,6 +32,14 @@ export const GalaxyPage = {
   },
   mounted() { this.load() },
   methods: {
+    async showAppKey() {
+      const url = this.url
+      try { const data = await this.request('./api/galaxy/session'); if (this.url !== url || !this.paired) return; this.appKey = data.paired ? decodeURIComponent(data.sessionToken) : ''; this.keyVisible = !!this.appKey }
+      catch (error) { this.error = error.message }
+    },
+    async copyAppKey() {
+      try { await navigator.clipboard.writeText(this.appKey) } catch { this.error = 'Select and copy the displayed key.' }
+    },
     installAppUpdate() { window.StarPilotApp?.installUpdate?.() },
     dismissAppUpdate() {
       this.dismissedUpdateVersion = this.availableAppVersion
@@ -65,6 +74,8 @@ export const GalaxyPage = {
         const data = await this.request("./api/galaxy/pair", { password: this.password })
         this.paired = data.paired
         this.url = data.url
+        this.appKey = ''
+        this.keyVisible = false
         this.password = ""
       } catch (error) { this.error = error.message }
       finally { this.busy = false }
@@ -77,6 +88,8 @@ export const GalaxyPage = {
         await this.request("./api/galaxy/unpair", {})
         this.paired = false
         this.url = ""
+        this.appKey = ''
+        this.keyVisible = false
       } catch (error) { this.error = error.message }
       finally { this.busy = false }
     },
@@ -84,6 +97,7 @@ export const GalaxyPage = {
   template: `
     <div class="gx-settings gx-tunnel" :inert="busy" :aria-busy="busy || undefined"><header class="gx-settings__header gx-page-header"><div><h2>Galaxy Access & Install</h2>
       <p>Pair your comma, then install Galaxy from your remote link.</p></div></header>
+      <p v-if="playDistribution" class="gx-note">Updates come from Google Play.</p>
       <BluetoothNotice v-if="showAppUpdate && bluetooth && !ios" :feature="'Android app update ' + availableAppVersion">
         Installed: {{ installedAppVersion }}.
         <button type="button" class="gx-btn gx-btn--tonal" aria-label="Dismiss app update notice" @click="dismissAppUpdate">Dismiss</button>
@@ -91,7 +105,7 @@ export const GalaxyPage = {
       <GxNotice v-else-if="showAppUpdate && !ios" tone="warn" title="Android app update available">
         Version {{ availableAppVersion }} is available. Installed: {{ installedAppVersion }}.
         <template #actions><button v-if="nativeInstallerAvailable" type="button" class="gx-btn" @click="installAppUpdate">Update app</button>
-          <a v-else class="gx-btn" href="./app.apk">Update app</a>
+          <a v-else class="gx-btn" :href="betaUrl" target="_blank" rel="noopener">Update app</a>
           <button type="button" class="gx-btn gx-btn--tonal" aria-label="Dismiss app update notice" @click="dismissAppUpdate">Dismiss</button></template>
       </GxNotice>
       <GxState v-if="mode !== 'local'">Connect to your comma to set up remote access.</GxState>
@@ -106,6 +120,11 @@ export const GalaxyPage = {
               <BluetoothNotice v-if="bluetooth" feature="Galaxy QR code">Your Galaxy link remains available below.</BluetoothNotice>
               <img v-else src="./api/galaxy/qr.svg" alt="QR code for your Galaxy link" class="gx-tunnel__qr" />
               <p><a :href="url" target="_blank" rel="noopener" class="gx-btn gx-btn--tonal gx-wrap">Open your Galaxy link</a></p>
+              <section class="gx-card"><h3>App key</h3><p>Keep this key private. It grants remote access to this comma.</p>
+                <button v-if="!keyVisible" class="gx-btn" @click="showAppKey">Show</button>
+                <template v-else><code class="gx-wrap">{{ appKey }}</code><button class="gx-btn" @click="copyAppKey">Copy</button>
+                  <img src="./api/galaxy/session/qr.svg" class="gx-tunnel__qr" alt="Add remote access to Galaxy" /></template>
+              </section>
               <div class="gx-actions"><button type="button" class="gx-btn gx-btn--danger" @click="unpair">{{ busy ? 'Unpairing…' : 'Unpair' }}</button></div>
             </template>
             <template v-else>
@@ -123,7 +142,7 @@ export const GalaxyPage = {
             <div><h3>Install Galaxy</h3><p>Launch Galaxy from your home screen or desktop.</p></div></div>
           <div class="gx-aa-step__body"><InstallApp :url="url" :update-available="appUpdateAvailable" />
             <p v-if="availableAppVersion && !ios">Android offline app version: <strong>{{ availableAppVersion }}</strong><span v-if="installedAppVersion"> · {{ nativeVersion ? 'Installed' : 'Connected phone' }}: {{ installedAppVersion }}</span></p>
-            <p v-if="!ios"><strong>Download Android APK</strong> to use Galaxy over Galaxy Wi-Fi or your local network without Internet. Download it while connected locally from this page.</p>
+            <p v-if="!ios"><strong>Android users:</strong> join the Android beta on Google Groups to get the app for use over Galaxy Wi-Fi or your local network without Internet.</p>
             <LocalAccess v-if="!ios" :mode="mode" :on-unauthorized="unauthorized" />
             <p class="gx-note">Your remote link needs Internet and an active tunnel. For offline local access, bookmark your hotspot or local address.</p>
           </div>

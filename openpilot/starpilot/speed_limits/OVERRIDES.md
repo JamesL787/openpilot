@@ -9,8 +9,8 @@ confirmation presses, duplicated effects and foreign or obsolete contexts.
 
 Override is presentation state; it never adds another planner target. Card's set
 speed remains the sole cruise target. The widget crosses out its latest source
-limit while override is active. A new limit still follows the three-second automatic
-or ten-second manual adoption policy. Acceptance clears the old override. Returning
+limit while override is active. A new limit is adopted immediately in automatic mode
+or follows the ten-second manual confirmation policy. Acceptance clears the old override. Returning
 the selected speed to the adopted adjusted limit also clears it.
 
 Accelerator use neither creates an override nor cancels a preexisting set-speed

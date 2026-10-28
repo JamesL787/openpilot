@@ -52,7 +52,7 @@ def _valid_record(value: object) -> bool:
   for key in ('startTime', 'endTime'):
     if value.get(key) is not None and (_finite(value[key]) is None or value[key] > 253402300799):
       return False
-  for key in ('distanceMeters', 'durationSeconds', 'engagedSeconds'):
+  for key in ('distanceMeters', 'durationSeconds', 'engagedSeconds', 'aolSeconds'):
     if value.get(key) is not None and _finite(value[key]) is None:
       return False
   for key in ('distractedMoments', 'unresponsiveMoments'):
@@ -63,6 +63,12 @@ def _valid_record(value: object) -> bool:
   if value.get('reason') is not None and (type(value['reason']) is not str or len(value['reason']) > 200):
     return False
   if value.get('engagedPercent') is not None and (_finite(value['engagedPercent']) is None or value['engagedPercent'] > 100):
+    return False
+  if value.get('aolPercent') is not None and (_finite(value['aolPercent']) is None or value['aolPercent'] > 100):
+    return False
+  if (value.get('aolSeconds') is None) != (value.get('aolPercent') is None):
+    return False
+  if value.get('aolSeconds') is not None and (value.get('durationSeconds') is None or value['aolSeconds'] > value['durationSeconds']):
     return False
   if type(value.get('sourceSignature')) is not str or len(value['sourceSignature']) > 128:
     return False
@@ -204,6 +210,7 @@ class DriveStatsOwner:
             type(failure.get('signature')) is not str or len(failure['signature']) > 128 or
             type(failure.get('attempts')) is not int or not 1 <= failure['attempts'] <= MAX_RETRY_ATTEMPTS or
             any(_finite(failure.get(field)) is None for field in ('firstAt', 'retryAt')) or
+            type(failure.get('analysisVersion', 0)) is not int or not 0 <= failure.get('analysisVersion', 0) < 2**31 or
             type(failure.get('reason')) is not str or len(failure['reason']) > 200):
           raise ValueError('Invalid retry record')
       self._failures = failures
@@ -297,7 +304,7 @@ class DriveStatsOwner:
             except OSError:
               existing['sourceSignature'] = prior_signature
             continue
-          if failed and failed['signature'] == signature:
+          if failed and failed['signature'] == signature and failed.get('analysisVersion', 0) == ANALYSIS_VERSION:
             now = self.clock()
             if (failed['attempts'] >= MAX_RETRY_ATTEMPTS or now - failed['firstAt'] >= MAX_RETRY_AGE_SECONDS or
                 failed['firstAt'] <= now < failed['retryAt']):
@@ -335,7 +342,7 @@ class DriveStatsOwner:
           if not self._allowed():
             break  # A drive starting or shutdown is not an unreadable recording.
           record = {key: result.get(key) for key in ('routeId', 'startTime', 'endTime', 'distanceMeters',
-                    'durationSeconds', 'engagedSeconds', 'engagedPercent', 'model',
+                    'durationSeconds', 'engagedSeconds', 'engagedPercent', 'aolSeconds', 'aolPercent', 'model',
                     'distractedMoments', 'unresponsiveMoments', 'complete', 'reason', 'segmentCount')}
           record['ignored'] = bool(existing and existing.get('ignored'))
           record['analysisVersion'] = result.get('analysisVersion', ANALYSIS_VERSION)
@@ -386,9 +393,10 @@ class DriveStatsOwner:
 
   def _failure(self, signature, previous, reason):
     now = self.clock()
-    same = previous is not None and previous['signature'] == signature
+    same = (previous is not None and previous['signature'] == signature and
+            previous.get('analysisVersion', 0) == ANALYSIS_VERSION)
     attempts = min(MAX_RETRY_ATTEMPTS, previous['attempts'] + 1 if same else 1)
-    return {'signature': signature, 'attempts': attempts,
+    return {'signature': signature, 'analysisVersion': ANALYSIS_VERSION, 'attempts': attempts,
             'firstAt': previous['firstAt'] if same else now,
             'retryAt': now + min(MAX_RETRY_DELAY_SECONDS, RETRY_SECONDS * 2 ** (attempts - 1)),
             'reason': str(reason)[:200]}
@@ -476,12 +484,22 @@ class DriveStatsOwner:
       return {'distanceMeters': sum(r['distanceMeters'] for r in drives),
               'durationSeconds': sum(r['durationSeconds'] for r in drives),
               'engagedSeconds': sum(r['engagedSeconds'] for r in drives), 'drives': len(drives)}
+    def aol_sums(drives):
+      # Old or gapped recordings do not silently become zero-AOL drives.
+      observed = [r for r in drives if r.get('aolSeconds') is not None]
+      duration = sum(r['durationSeconds'] for r in observed)
+      seconds = sum(r['aolSeconds'] for r in observed)
+      return {'aolSeconds': seconds if observed else None,
+              'aolPercent': round(100 * seconds / duration, 1) if duration else None,
+              'aolDurationSeconds': duration, 'aolDrives': len(observed)}
     totals = sums(complete)
+    totals.update(aol_sums(complete))
     week_totals = sums(week)
     week_result = {'days': [{'date': date, 'distanceMeters': daily[date]} for date in dates],
                    'distanceMeters': week_totals['distanceMeters'], 'durationSeconds': week_totals['durationSeconds'],
                    'engagedPercent': round(100 * week_totals['engagedSeconds'] / week_totals['durationSeconds'], 1)
                    if week_totals['durationSeconds'] else None, 'drives': len(week), 'timezone': timezone}
+    week_result.update(aol_sums(week))
     model_totals = defaultdict(lambda: {'distanceMeters': 0.0, 'durationSeconds': 0.0, 'drives': 0})
     for record in complete:
       if type(record.get('model')) is str and record['model']:
@@ -497,7 +515,7 @@ class DriveStatsOwner:
     state = ('analyzing' if running else 'waitingParked' if pending and not self._allowed() else
              'queued' if pending else 'retrying' if any(
                f['attempts'] < MAX_RETRY_ATTEMPTS and self.clock() - f['firstAt'] < MAX_RETRY_AGE_SECONDS
-               for f in self._failures.values()) else 'ready')
+               for f in self._failures.values()) else 'failed' if self._failures else 'ready')
     def public(record):
       return {key: value for key, value in record.items() if key not in ('sourceSignature', 'sourceManifest')}
     included_recent = [record for record in recent if not record['ignored']]
@@ -506,7 +524,10 @@ class DriveStatsOwner:
                          'failed': len(self._failures),
                          'quarantined': sum(f['attempts'] >= MAX_RETRY_ATTEMPTS or
                                             self.clock() - f['firstAt'] >= MAX_RETRY_AGE_SECONDS for f in self._failures.values()),
-                         'failures': [{'routeId': key, 'reason': f['reason'], 'attempts': f['attempts']} for key, f in self._failures.items()],
+                         'failures': [{'routeId': key, 'reason': f['reason'], 'attempts': f['attempts'],
+                                       'retryStopped': f['attempts'] >= MAX_RETRY_ATTEMPTS or
+                                                       self.clock() - f['firstAt'] >= MAX_RETRY_AGE_SECONDS}
+                                      for key, f in self._failures.items()],
                          'scanIncomplete': self._scan_incomplete},
             'totals': totals, 'week': week_result, 'lastDrive': public(included_recent[0]) if included_recent else None,
             'recentDrives': [public(r) for r in recent[:RECENT_LIMIT]], 'records': records, 'models': models,

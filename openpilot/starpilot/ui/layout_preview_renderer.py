@@ -21,7 +21,6 @@ from openpilot.starpilot.ui.onroad_customization import (CAMERA_WIDGETS, PROFILE
                                                          validate_document, widget_size)
 from openpilot.starpilot.ui.onroad_widget_style import draw_widget_frame
 from openpilot.starpilot.curve_speed.status import CurveObservation
-from openpilot.starpilot.ui.unified_speed_presentation import resolve_unified_speed
 from openpilot.starpilot.ui.onroad_state import ConditionalLead
 from openpilot.starpilot.ui.onroad_state import AlertSize, ObservationKind, OnroadAlert, OnroadState, SourceReading, SpeedLimitObservation
 from openpilot.starpilot.ui.appearance_preferences import CameraViewChoice, OnroadAppearance
@@ -74,19 +73,20 @@ def sample_state(scene: str, document: dict) -> OnroadState:
   # cruise-off/lateral-only/longitudinal-only scenes change engagement.
   lateral = scene not in ('long_only', 'slc_disengaged')
   longitudinal = scene not in ('aol', 'slc_disengaged')
+  pending = scene in ('slc_pending', 'slc_notice')
   state = OnroadState(engaged=lateral or longitudinal, camera_available=False,
                      speed_mps=0.0 if scene in ("cem_lead", "stopped") else 22.0, cruise_kph=88.0,
                      stopped_duration_s=PREVIEW_DURATION_S if scene == "stopped" else None,
                      speed_limit=SpeedLimitObservation(kind=ObservationKind.VALID, source="dashboard",
-                                                       speed_limit_mps=22.0 if scene == 'slc_pending' else 20.0,
+                                                       speed_limit_mps=22.0 if pending else 20.0,
                                                        accepted_speed_limit_mps=20.0, accepted_source='dashboard',
                                                        accepted_adjusted_limit_mps=22.0, effective_cluster_target_mps=22.0,
                                                        offset_mps=2.0, limiting_max_set=True,
-                                                       pending_adjusted_limit_mps=24.0 if scene == 'slc_pending' else None,
-                                                       presentation_adjusted_limit_mps=24.0 if scene == 'slc_pending' else 22.0,
-                                                       pending_speed_limit_mps=22.0 if scene == "slc_pending" else None,
+                                                       pending_adjusted_limit_mps=24.0 if pending else None,
+                                                       presentation_adjusted_limit_mps=24.0 if pending else 22.0,
+                                                       pending_speed_limit_mps=22.0 if pending else None,
                                                        session_id="preview",
-                                                       source_readings=(SourceReading('dashboard', True, 'valid', 22 if scene == 'slc_pending' else 20),
+                                                       source_readings=(SourceReading('dashboard', True, 'valid', 22 if pending else 20),
                                                                         SourceReading('map', True, 'valid', 20),
                                                                         SourceReading('vision', True, 'unknown')),
                                                        decision_id=1, presentation_id=1, action_enabled=longitudinal),
@@ -96,7 +96,7 @@ def sample_state(scene: str, document: dict) -> OnroadState:
                      metric=False, experimental_available=True,
                      experimental_enabled=scene == "experimental" or scene in CEM_SCENE_REASONS, lateral_active=lateral,
                      longitudinal_active=longitudinal, stock_cruise_active=False,
-                     slc_system_long_available=longitudinal, torque_utilization=0.78 if lateral else 0.0,
+                     slc_system_long_available=longitudinal, slc_wheel_confirmation_available=longitudinal, torque_utilization=0.78 if lateral else 0.0,
                      customization=document,
                      slc_prompt_open=scene == 'slc_pending',
                      visual_preview=OnroadVisualPreview(cem_reason=CEM_SCENE_REASONS[scene], layout_sample=True) if scene in CEM_SCENE_REASONS else None)
@@ -339,17 +339,19 @@ class _Canvas:
     captures = []
     for key in RUNTIME_PREVIEW_WIDGETS[str(self.profile)]:
       logical_width, logical_height = widget_size(state.customization, self.profile, key)
-      compact_offset = (self.profile == Profile.COMPACT and key == 'speed_limit' and
-                        not state.appearance.use_vienna_sign and bool(resolve_unified_speed(state).offset_text))
-      if compact_offset:
-        logical_height += 44
       position = positions[key]
       widget = PROFILES[str(self.profile)]['widgets'][key]
       crop_x = max(0, math.floor(position['x'] - widget.get('visualInsetLeft', 0)))
       crop_y = max(0, math.floor(position['y'] - widget.get('visualInsetTop', 0)))
       offset_x, offset_y = crop_x - position['x'], crop_y - position['y']
       width, height = math.ceil(logical_width - offset_x), math.ceil(logical_height - offset_y)
-      if compact_offset and 0 <= crop_y < canvas_height:
+      if state.speed_limit.pending_speed_limit_mps is not None and (area := widget.get('confirmation')) is not None:
+        crop_x = math.floor(min(crop_x, position['x'] + area['x']))
+        crop_y = math.floor(min(crop_y, position['y'] + area['y']))
+        width = math.ceil(max(position['x'] + logical_width, position['x'] + area['x'] + area['width']) - crop_x)
+        height = math.ceil(max(position['y'] + logical_height, position['y'] + area['y'] + area['height']) - crop_y)
+        offset_x, offset_y = crop_x - position['x'], crop_y - position['y']
+      if self.profile == Profile.COMPACT and key == 'speed_limit' and 0 <= crop_y < canvas_height:
         height = min(height, canvas_height - crop_y)
       if x + width > 1024:
         x, y, row_height = 0, y + row_height, 0

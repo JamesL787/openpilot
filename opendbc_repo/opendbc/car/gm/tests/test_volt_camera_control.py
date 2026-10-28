@@ -31,6 +31,11 @@ def feed_camera(ci, packer, now, *, counter=0, speed=20., gas=False, brake=False
   messages += [packer.make_can_msg("AcceleratorPedal2", 0, {"CruiseState": 2 if active else 0, "AcceleratorPedal2": 30 if gas else 0}),
                packer.make_can_msg("ECMPRDNL2", 0, {"PRNDL2": 6 if low else 4}),
                packer.make_can_msg("ASCMActiveCruiseControlStatus", 2, {"ACCCruiseState": 3, "ACCSpeedSetpoint": 60})]
+  if getattr(ci, 'CP', None) is not None and int(ci.CP.safetyConfigs[0].safetyParam) == 0x1CD:
+    cycle = now // 40_000_000
+    if cycle != getattr(ci, '_fixture_brake_cycle', None):
+      messages.append(packer.make_can_msg("EBCMFrictionBrakeCmd", 2, {"RollingCounter": cycle % 4}))
+      ci._fixture_brake_cycle = cycle
   ci.update([(now - 1_000_000, messages)])
   out = ci.update([(now, messages)])
   return out, messages

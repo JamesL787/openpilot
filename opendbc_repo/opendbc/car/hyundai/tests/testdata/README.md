@@ -13,8 +13,10 @@ no recorded routes, VINs, or location data.
   combinations from the reference blind-spot encoder, using a
   synthetic neutral base and counters 0–15. The frozen indicator mirror bits
   remain in the raw payload even though the current DBC omits their names; one
-  alias is decoded as a sound-warning field, so this fixture proves bytes,
-  not audible behavior.
+  alias overlaps the right sound-warning field. The test intentionally clears
+  only that retired alias and regenerates its checksum, while preserving the
+  original fixture as provenance. It checks mirror/BCW indication separately;
+  the fixture does not prove audible behavior.
 - `scc_parent_frames.json` records the default SCC packer's output before the
   Ioniq-specific options were added. Other vehicles retain these defaults.
 

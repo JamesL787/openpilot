@@ -11,6 +11,8 @@ from openpilot.starpilot.ui.feature_settings_state import FeatureRow, FeatureSet
 AA_WIFI_KEY = "AndroidAutoDedicatedWifi"
 AA_WIFI_DESCRIPTION = ("Experimental. Join the car's Wi-Fi on a second interface so the comma stays on home Wi-Fi or your " +
                        "phone hotspot during wireless Android Auto. Applies from the next Android Auto connection.")
+DRIVER_MONITORING_RESET = "reset_driver_monitoring"
+DRIVER_MONITORING_RESET_DESCRIPTION = "Clear saved wheel-side detection. Automatic detection restarts on the next drive."
 
 
 class DeveloperSettingsOwner:
@@ -28,6 +30,9 @@ class DeveloperSettingsOwner:
     except (OSError, RuntimeError, ValueError, KeyError, TypeError):
       return None  # the service is off; there is nothing to configure
 
+  def _driver_monitoring_reset_allowed(self):
+    return self.authorized() and not self.params.get_bool("IsDriverViewEnabled")
+
   def snapshot(self):
     raw, readable = read_saved(self.params, KEY, 8)
     valid = readable and raw in (None, b"0", b"1")
@@ -36,6 +41,12 @@ class DeveloperSettingsOwner:
                      raw, ("Off", "On") if valid else (), available=parked and valid,
                      reason=(DESCRIPTION if parked else "Park the vehicle to change this setting.") if valid else
                             "Invalid saved value", default_value="Off")
+    rhd_raw, rhd_readable = read_saved(self.params, "IsRhdDetected", 8)
+    reset_available = self._driver_monitoring_reset_allowed() and rhd_readable
+    reset_reason = (DRIVER_MONITORING_RESET_DESCRIPTION if reset_available else
+                    "Park the vehicle and close driver camera preview before resetting driver monitoring.")
+    reset_row = FeatureRow(DRIVER_MONITORING_RESET, "Reset Driver Monitoring", "Ready" if reset_available else "Unavailable",
+                           rhd_raw if rhd_readable else None, available=reset_available, reason=reset_reason)
     firmware_rows = (() if self.panda_wake is None else
                      tuple(replace(item, vehicle_fingerprint=item.capability[0])
                            for item in self.panda_wake.rows(parked) if item.key == "IgnoreIgnitionLine"))
@@ -45,9 +56,22 @@ class DeveloperSettingsOwner:
                  available=parked, reason=AA_WIFI_DESCRIPTION if parked else "Park the vehicle to change this setting.",
                  default_value="On"),)
     summary = "Changes apply next drive. Panda firmware changes require a device restart." if firmware_rows else "Changes apply next drive."
-    return FeatureSettingsState("developer", "Developer driving options", summary, (row, *firmware_rows, *android_auto_rows), parked)
+    return FeatureSettingsState("developer", "Developer driving options", summary,
+                                (row, reset_row, *firmware_rows, *android_auto_rows), parked)
 
   def apply(self, request):
+    if request.key == DRIVER_MONITORING_RESET:
+      if request.value != "confirm" or not self._driver_monitoring_reset_allowed():
+        return False
+      current, readable = read_saved(self.params, "IsRhdDetected", 8)
+      if not readable or current != request.expected:
+        return False
+      try:
+        self.params.remove("IsRhdDetected")
+        self.params.put_bool("OnroadCycleRequested", True, block=True)
+      except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+      return True
     if request.key == "IgnoreIgnitionLine":
       return self.panda_wake is not None and self.panda_wake.apply(request)
     if request.key == AA_WIFI_KEY:

@@ -1,5 +1,6 @@
 """Render-only empty-slot omission never replaces the current action owner."""
 import json
+import time
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
@@ -141,4 +142,72 @@ def test_successful_assignment_retains_full_postaction_snapshot_and_current_revi
   assert session.favorites.data['options'][0]['key'] == BOOKMARK
   assert session._favorite_snapshot.revision != revision and path.is_file()
   assert not session._favorite_request(request)
+  invoke.assert_not_called()
+
+
+@pytest.mark.parametrize('profile', [Profile.COMPACT, Profile.LARGE])
+def test_favorite_tap_does_not_wait_for_the_unrelated_picker_catalog(tmp_path, profile):
+  owner, catalog, invoke, path = owner_fixture(tmp_path)
+  current = catalog.return_value[BOOKMARK]
+  selected = Mock(side_effect=lambda keys: {BOOKMARK: current} if BOOKMARK in keys else {})
+  owner.render_actions = selected
+  # The authoritative single-action resolver is fresh on every invocation;
+  # render metadata alone must never replace the action owner's live check.
+  owner.current_action = Mock(side_effect=lambda key: selected(frozenset((key,))).get(key))
+  slots = default_slots()
+  slots[0].update(key=BOOKMARK, enabled=True, show_onroad=True)
+  raw = json.dumps(slots).encode()
+  path.write_bytes(raw)
+  session, state = session_fixture(owner)
+  session.favorites = OnroadFavorites(NS(profile=profile), session._favorite_request)
+  session._update_favorites(state, 10.)
+  if profile == Profile.LARGE:
+    session.favorites.mode = 'radial'
+    blade, _ = session.favorites.blades()[0]
+    x, y = blade[0] + blade[2] / 2, blade[1] + blade[3] / 2
+  else:
+    x, y = 80, 80
+  catalog.reset_mock()
+  selected.reset_mock()
+
+  def expensive_unrelated_catalog():
+    # Reproduce a slow catalog dependency without disk or machine-speed gates.
+    time.sleep(.1)
+    return {BOOKMARK: current}
+
+  catalog.side_effect = expensive_unrelated_catalog
+  assert session.favorites.press(x, y, 10.1)
+  started = time.monotonic()
+  assert session.favorites.release(x, y, 10.2)
+  elapsed = time.monotonic() - started
+  print(f'favorite tap {profile}: {elapsed:.6f}s; full catalog calls={catalog.call_count}')
+  invoke.assert_called_once()
+  catalog.assert_not_called()
+  assert owner.current_action.call_count == 2, 'fresh admission and updated result, without cached authority'
+  assert selected.call_count == 3, 'two current action reads and one saved-slot refresh'
+  assert not session._favorite_include_options
+  assert session._favorite_snapshot.slots[0].request is not None
+  assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize('changed', ['unavailable', 'token', 'saved_bytes'])
+def test_targeted_activation_still_refuses_current_authority_and_source_changes(tmp_path, changed):
+  owner, catalog, invoke, path = owner_fixture(tmp_path)
+  slots = default_slots()
+  slots[0].update(key=BOOKMARK, enabled=True, show_onroad=True)
+  raw = json.dumps(slots).encode()
+  path.write_bytes(raw)
+  request = owner.snapshot().slots[0].request
+  assert request is not None
+  current = catalog.return_value[BOOKMARK]
+
+  def resolve(key):
+    assert key == BOOKMARK
+    if changed == 'saved_bytes':
+      path.write_bytes(raw + b'\n')
+    return FavoriteAction(BOOKMARK, 'Bookmark', available=changed != 'unavailable',
+                          token='changed' if changed == 'token' else current.token, invoke=invoke)
+
+  owner.current_action = Mock(side_effect=resolve)
+  assert not owner.invoke(request).success
   invoke.assert_not_called()

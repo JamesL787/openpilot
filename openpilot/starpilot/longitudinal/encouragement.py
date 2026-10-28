@@ -4,9 +4,12 @@ import math
 
 SOURCES = ('carState', 'carControl', 'controlsState', 'selfdriveState', 'radarState', 'modelV2')
 MAX_SOURCE_AGE_NS = 250_000_000
-MAX_BOOST = .3
-BOOST_RATE = .05
-SETTLE_SECONDS = 2.
+MAX_BOOST = .6
+BOOST_RATE = .1
+SETTLE_SECONDS = 3.
+MIN_HESITATION_GAP = 1.
+HESITATION_ACCEL = .15
+RECOVERY_ACCEL = .3
 
 
 class Encouragement:
@@ -35,7 +38,7 @@ class Encouragement:
                   not sm['controlsState'].forceDecel and not sm['modelV2'].action.shouldStop and
                   not sm['radarState'].leadOne.present and not sm['radarState'].leadTwo.present and
                   not any(sm['radarState'].radarErrors.to_dict().values()) and
-                  all(math.isfinite(x) for x in (dt, target_speed, model_accel, mpc_accel, cruise_accel, lateral_accel, car.vEgo)) and
+                  all(math.isfinite(x) for x in (dt, target_speed, model_accel, mpc_accel, cruise_accel, lateral_accel, car.vEgo, car.aEgo)) and
                   0 < dt <= .1 and car.vEgo >= 4.5 and target_speed - car.vEgo > .2 and
                   model_accel >= 0 and abs(lateral_accel) < .5 and min(mpc_accel, cruise_accel) > model_accel)
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
@@ -50,8 +53,11 @@ class Encouragement:
     if not eligible:
       self.clear_seconds = self.boost = 0.
       return model_accel
+    if self.boost == 0. and (target_speed - car.vEgo < MIN_HESITATION_GAP or car.aEgo > HESITATION_ACCEL):
+      self.clear_seconds = 0.
+      return model_accel
     self.clear_seconds += dt
-    if self.clear_seconds > SETTLE_SECONDS:
+    if self.clear_seconds > SETTLE_SECONDS and car.aEgo < RECOVERY_ACCEL:
       self.boost = min(MAX_BOOST, self.boost + BOOST_RATE * dt)
     gap_scale = min(1., max(0., (target_speed - car.vEgo - .2) / 1.8))
-    return min(model_accel + self.boost * gap_scale, mpc_accel, cruise_accel)
+    return min(max(model_accel, self.boost * gap_scale), mpc_accel, cruise_accel)

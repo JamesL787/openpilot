@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import pyray as rl
+import pytest
 
 from openpilot.cereal import log, messaging
 from openpilot.starpilot.ui.onroad_state import AlertSize, ObservationKind
@@ -881,6 +882,28 @@ class TestRuntimeSnapshot(unittest.TestCase):
     self.assertFalse(RuntimeSnapshotAdapter(ui).build(ShellMode.ONROAD, now_ns=NOW).onroad.slc_system_long_available)
 
 
+@pytest.mark.parametrize('brand,standstill,cruise_standstill,cruise_enabled,expected', [
+  ('honda', False, False, True, True),
+  ('toyota', False, False, True, True),
+  ('toyota', True, False, True, False),
+  ('toyota', False, True, True, False),
+  ('toyota', False, False, False, False),
+])
+def test_wheel_confirmation_hint_preserves_toyota_resume(brand, standstill, cruise_standstill, cruise_enabled, expected):
+  ui = ui_fake()
+  ui.CP = NS(carFingerprint='', brand=brand, openpilotLongitudinalControl=True, pcmCruise=brand == 'toyota')
+  car = ui.sm['carState']
+  car.canTimeout, car.canValid, car.standstill = False, True, standstill
+  car.cruiseState = NS(available=True, enabled=cruise_enabled, standstill=cruise_standstill)
+  ui.sm['carControl'].longActive = ui.sm['carControl'].enabled = True
+  ui.sm['selfdriveState'].enabled = True
+  ui.sm.put('controlsState', NS(longControlState='pid'))
+  adapter = RuntimeSnapshotAdapter(ui)
+  assert adapter.build(ShellMode.ONROAD, now_ns=NOW).onroad.slc_wheel_confirmation_available == expected
+  ui.sm.logMonoTime['carControl'] = NOW - 200_000_000
+  assert not adapter.build(ShellMode.ONROAD, now_ns=NOW).onroad.slc_wheel_confirmation_available
+
+
 class TestParkedClockDomains(unittest.TestCase):
   def setUp(self):
     self.ui = ui_fake()
@@ -1049,3 +1072,23 @@ class TestHostOffroad(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
+
+
+@pytest.mark.parametrize('phase,label,present', [('active', 'Jetlink Model', True),
+                                               ('ready', 'Jetlink Model', True), ('connecting', '', True),
+                                               ('disconnected', '', False), ('unavailable', '', False),
+                                               ('off', '', False)])
+def test_home_jetlink_model_name_and_gpu_share_existing_feed(phase, label, present):
+  from openpilot.starpilot.models.jetlink_status import JetlinkStatus
+  ui = ui_fake()
+  feed = Mock()
+  feed.snapshot.return_value = JetlinkStatus('Computer', phase, port='connected' if present else None)
+  ui.jetlink_status_feed = feed
+  ui.chestnut_state = NS(value='active' if phase == 'active' else 'loading')
+  adapter = RuntimeSnapshotAdapter(ui)
+  with patch.object(adapter._jetlink, 'set_enabled') as enable:
+    home = adapter.build(ShellMode.HOME, now_ns=NOW).home
+  enable.assert_called_once_with(False)
+  assert home.model_label == label
+  assert home.gpu_present is present
+  assert home.gpu_active is (phase == 'active')

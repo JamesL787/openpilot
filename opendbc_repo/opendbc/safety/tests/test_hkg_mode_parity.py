@@ -119,7 +119,7 @@ def test_gv70_long_profile_admits_independent_aol():
   from opendbc.car.hyundai.tests.test_gv70_longitudinal import params as gv70_params
   from openpilot.starpilot.car.hyundai.aol import policy_for
   cp = gv70_params()
-  assert cp.openpilotLongitudinalControl and cp.safetyConfigs[0].safetyParam == 0x15
+  assert cp.openpilotLongitudinalControl and cp.safetyConfigs[0].safetyParam == 0x2015
   policy = policy_for(cp)
   assert policy.intent_supported and policy.runtime_supported and policy.explicit_latch
 
@@ -181,7 +181,8 @@ def test_gv70_long_aol_rejects_unsupported_profile(defect):
   cp.safetyConfigs[0].safetyParam |= policy.safety_param_addition
   cp.alternativeExperience |= policy.alternative_experience_addition
   assert qualified_long(cp, marked_only=True)
-  assert native_accepts_cp(cp, int(cp.safetyConfigs[0].safetyModel.raw), 0x815)
+  assert cp.safetyConfigs[0].safetyParam == 0x2815
+  assert native_accepts_cp(cp, int(cp.safetyConfigs[0].safetyModel.raw), 0x2815)
   if defect == 'pcm':
     cp.pcmCruise = True
   elif defect == 'long':

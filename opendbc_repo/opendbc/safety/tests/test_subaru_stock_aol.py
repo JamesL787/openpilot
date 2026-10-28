@@ -136,7 +136,7 @@ class TestSubaruStockAol(unittest.TestCase):
       self.arm()
       self.feed(brake=True)
       angle = bool(param & 16)
-      bus = 0 if param & 32 or param in (16, 209) or not angle else 1
+      bus = 0
       command = (self.frame('ES_LKAS_ANGLE', {'LKAS_Output': 0, 'LKAS_Request': 1}, bus) if angle else
                  self.frame('ES_LKAS', {'LKAS_Output': 1, 'LKAS_Request': 1}, bus))
       self.assertTrue(self.safety.safety_tx_hook(command))

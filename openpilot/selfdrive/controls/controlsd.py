@@ -25,7 +25,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHond
   lateral_delay_schedule, lateral_smooth_seconds, \
   scheduled_lateral_delay, write_eps_state
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
-from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS
+from openpilot.selfdrive.modeld.constants import LAT_SMOOTH_SECONDS
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.starpilot.car.hyundai.lateral_fault import LateralFaultLatch
 from openpilot.starpilot.feature_runtime import enabled as feature_enabled
@@ -34,11 +34,13 @@ from openpilot.starpilot.lateral.pause import LateralPause, read_settings as rea
 from openpilot.starpilot.lateral.model_turn_assist import ModelTurnAssist, update_twitch_guard
 from openpilot.starpilot.aol.runtime import (current_axis, current_native, ordinary_lateral_requested, ordinary_axis_acknowledged,
                                             refresh_expired_lateral_snapshot)
+from openpilot.starpilot.aol.transition_diagnostic import TransitionDiagnostic
 from openpilot.starpilot.aol.vehicle import policy_for as axis_policy_for, ordinary_axis_request_allowed, allow_lateral_onset
 from openpilot.starpilot.lateral.lane_centering import (
   LaneCenteringController, LaneCenteringInput, LaneCenteringRequest, LaneCenteringResult,
 )
 from openpilot.starpilot.lateral.lane_feedback import feedback_message
+from openpilot.starpilot.lateral.lane_clearance import current_delay, interface_dimensions
 from openpilot.starpilot.lateral.lane_change_preferences import LiveLaneChangePolicy
 from openpilot.starpilot.lateral.lane_change_smoothing import LaneChangeSmoother, limit_rate
 from openpilot.starpilot.lateral.lane_runtime import LaneCenteringHost, runtime_supported as lane_runtime_supported
@@ -64,7 +66,9 @@ class Controls:
   rack_map = None
   lat_delay_schedule = None
 
-  def __init__(self) -> None:
+  def __init__(self, *, predict_lane_clearance: bool = False) -> None:
+    if type(predict_lane_clearance) is not bool:
+      raise TypeError("Invalid lane-clearance selection")
     self.params = Params()
     cloudlog.info("controlsd is waiting for CarParams")
     self.CP = messaging.log_from_bytes(self.params.get("CarParams", block=True), car.CarParams)
@@ -79,6 +83,7 @@ class Controls:
       self.params, enabled=self.params.get_bool("OpenpilotEnabledToggle"))
     self.torque_learning_allowed = learning_allowed(self.params, self.CP, selection=self.lateral_controller_selection)
     self.aol_replay = feature_enabled(self.params, self.CP, 'aol', os.environ)
+    self.aol_transition_diagnostic = TransitionDiagnostic() if self.aol_replay and self.CP.brand == 'gm' else None
     self.ordinary_axis_ack_required = axis_policy_for(self.CP).ordinary_axis_ack_required
     self.longitudinal_inputs = LongitudinalInputs(self.CP, self.params, lambda: self.sm)
 
@@ -101,7 +106,8 @@ class Controls:
     self.curvature = 0.0
     self.desired_curvature = 0.0
     self.model_turn_assist = ModelTurnAssist()
-    self.lane_centering_controller = LaneCenteringController()
+    self.lane_centering_controller = (LaneCenteringController(body=interface_dimensions(self.CI, self.CP), body_required=True)
+                                      if predict_lane_clearance else LaneCenteringController())
     self.lateral_pause = LateralPause(read_lateral_pause(self.params), self.params)
     self.lane_change_preferences = LiveLaneChangePolicy(self.params,
       now_ns=0 if os.getenv('REPLAY') == '1' else time.monotonic_ns())
@@ -113,6 +119,7 @@ class Controls:
                         if torque_runtime_enabled(self.CP, self.params) else None)
     self.last_lane_centering_result: LaneCenteringResult | None = None
     self.lane_centering_applied = 0.0
+    self.lane_centering_inactive_reason = 'inactive'
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -195,10 +202,20 @@ class Controls:
       self.LaC.__dict__.pop(name, None)
 
   def state_control(self, *, lane_centering: LaneCenteringRequest | None = None):
+    diagnostic_observer = getattr(self, 'aol_transition_diagnostic', None)
+    diagnostic_entry = diagnostic_gate = diagnostic_native = None
+    diagnostic_reason = ''
+    diagnostic_initial_lateral = diagnostic_onset = True
     lateral_inputs_refreshed = False
+    late_gm_refresh = False
     if (self.aol_replay and os.getenv('REPLAY') != '1' and
         getattr(self, 'aol_previous_lateral_active', False)):
-      lateral_inputs_refreshed = refresh_expired_lateral_snapshot(self.sm, now_ns=time.monotonic_ns())
+      refresh_now_ns = time.monotonic_ns()
+      if diagnostic_observer is not None:
+        diagnostic_entry = diagnostic_observer.capture(self.sm, refresh_now_ns)
+      late_gm_refresh = self.CP.brand == 'gm'
+      if not late_gm_refresh:
+        lateral_inputs_refreshed = refresh_expired_lateral_snapshot(self.sm, now_ns=refresh_now_ns)
     CS = self.sm['carState']
     self.flm_native_witness = None
     if self.lateral_gain_owner is not None:
@@ -244,6 +261,17 @@ class Controls:
     CC.longActive = self.longitudinal_inputs.qualify_active(CC.longActive)
     if self.aol_replay:
       now_ns = int(self.sm.logMonoTime['carState']) if os.getenv('REPLAY') == '1' else time.monotonic_ns()
+      if late_gm_refresh:
+        # Use the authority check's clock sample: a proof can expire after the
+        # earlier preparation/qualification work, even when it was fresh on entry.
+        lateral_inputs_refreshed = refresh_expired_lateral_snapshot(self.sm, now_ns=now_ns)
+        if lateral_inputs_refreshed:
+          CS = self.sm['carState']
+          CC.enabled = self.sm['selfdriveState'].enabled
+          standstill = abs(CS.vEgo) <= max(self.CP.minSteerSpeed, 0.3) or CS.standstill
+          steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
+          self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
+          now_ns = time.monotonic_ns()
       axis = current_axis(self.sm, now_ns=now_ns)
       native = current_native(self.sm, self.CP, now_ns=now_ns,
                               axis_session_id=str(axis.sessionId) if axis is not None else None)
@@ -258,6 +286,13 @@ class Controls:
                            bool(axis.desiredLongitudinal) == bool(native.requestedLongitudinal) and native.longitudinalAllowed and
                            self.CP.openpilotLongitudinalControl and
                            not any(e.overrideLongitudinal for e in self.sm['onroadEvents']))
+
+      if diagnostic_entry is not None:
+        diagnostic_gate = diagnostic_observer.capture(self.sm, now_ns)
+        diagnostic_native = native
+        diagnostic_initial_lateral = bool(CC.latActive)
+        if not diagnostic_initial_lateral:
+          diagnostic_reason = 'lateral_gate'
 
     elif getattr(self, 'ordinary_axis_ack_required', False):
       now_ns = int(self.sm.logMonoTime['carState']) if os.getenv('REPLAY') == '1' else time.monotonic_ns()
@@ -281,6 +316,9 @@ class Controls:
     CC.latActive = allow_lateral_onset(self.CP, requested=bool(CC.latActive), normal_enabled=bool(CC.enabled),
                                       steering_pressed=bool(CS.steeringPressed),
                                       previous_active=bool(getattr(self, 'aol_previous_lateral_active', False)))
+
+    if diagnostic_entry is not None:
+      diagnostic_onset = bool(CC.latActive)
 
     pause_now_ns = int(self.sm.logMonoTime['carState']) if os.getenv('REPLAY') == '1' else time.monotonic_ns()
     self.lateral_pause.refresh(pause_now_ns)
@@ -369,17 +407,23 @@ class Controls:
       self.model_turn_assist.twitch_guard_remaining = update_twitch_guard(0., CS.vEgo, CS.standstill)
     lane_base_curvature = new_desired_curvature
     self.lane_centering_applied = 0.0
+    self.lane_centering_inactive_reason = 'inactive'
     self.last_lane_centering_result = None
+    lane_delay = None
     if lane_centering is None and self.lane_centering_host is not None:
       now_ns = int(self.sm.logMonoTime['carState']) if os.getenv('REPLAY') == '1' else time.monotonic_ns()
       lane_centering = self.lane_centering_host.sample(self.sm, now_ns=now_ns,
                                                      lateral_active=CC.latActive, longitudinal_active=CC.longActive)
+      if lane_centering is None:
+        self.lane_centering_inactive_reason = self.lane_centering_host.last_refusal
     if lane_centering is None:
       self.lane_centering_controller.reset()
     elif not isinstance(lane_centering, LaneCenteringRequest):
       self.lane_centering_controller.reset()
       self.last_lane_centering_result = LaneCenteringResult(None, 0.0, 0, "invalid_request")
     else:
+      lane_now_ns = int(self.sm.logMonoTime['carState']) if os.getenv('REPLAY') == '1' else time.monotonic_ns()
+      lane_delay = current_delay(self.sm, lane_now_ns)
       result = self.lane_centering_controller.update(LaneCenteringInput(
         model=model_v2, model_sample_id=self.sm.logMonoTime['modelV2'],
         model_valid=bool(self.sm.all_checks(['modelV2'])), base_curvature=new_desired_curvature,
@@ -387,6 +431,8 @@ class Controls:
         settings=lane_centering.settings, elapsed_seconds=lane_centering.elapsed_seconds,
         turn_signal_active=bool(CS.leftBlinker or CS.rightBlinker), driver_override=bool(CS.steeringPressed),
         time_discontinuity=lane_centering.time_discontinuity,
+        measured_curvature=self.curvature,
+        lateral_delay_s=lane_delay,
       ))
       self.last_lane_centering_result = result
       if result.candidate_curvature is not None:
@@ -404,6 +450,12 @@ class Controls:
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, previous_curvature, new_desired_curvature, lp.roll)
     if self.last_lane_centering_result is not None and self.last_lane_centering_result.correction != 0.0:
       baseline_curvature, _ = clip_curvature(CS.vEgo, previous_curvature, limit_rate(CS.vEgo, previous_curvature, lane_base_curvature, factor), lp.roll)
+      guarded = self.lane_centering_controller.guard_applied(
+        model_v2, baseline_curvature, self.desired_curvature, self.curvature, CS.vEgo,
+        lane_delay)
+      if guarded != self.desired_curvature:
+        self.desired_curvature = guarded
+        curvature_limited = True
       self.lane_centering_applied = self.desired_curvature - baseline_curvature
     from openpilot.starpilot.car.subaru.smoothing import seconds as subaru_smooth_seconds, control_maximum
     lateral_delay = scheduled_lateral_delay(self.lat_delay_schedule, CS.vEgo) if self.lat_delay_schedule else \
@@ -462,6 +514,23 @@ class Controls:
             (car.CarParams.SteerControlType.angle, car.CarParams.SteerControlType.curvature) else steer))
       except Exception:
         self._discard_global_learning()
+    if diagnostic_entry is not None and diagnostic_observer is not None and not CC.latActive:
+      try:
+        if not diagnostic_reason:
+          diagnostic_reason = ('refreshed_source_invalid' if lateral_inputs_refreshed and (not CS.canValid or CS.canTimeout) else
+                               'lateral_fault_latch' if fault_latch is not None and latched else
+                               'vehicle_onset_denied' if not diagnostic_onset else
+                               'lateral_pause' if not pause_allowed else 'car_state_invalid')
+        diagnostic_observer.finish(diagnostic_entry, diagnostic_gate,
+          now_ns=time.monotonic_ns(), refreshed=lateral_inputs_refreshed, native=diagnostic_native,
+          native_header_ns=self.sm.logMonoTime['aolSafetyWire'],
+          native_flags=(self.sm.seen['aolSafetyWire'], self.sm.valid['aolSafetyWire'], self.sm.alive['aolSafetyWire']),
+          native_raw=self.sm['aolSafetyWire'] if diagnostic_native is None else b'',
+          reason=diagnostic_reason, cs=CS, enabled=CC.enabled, long_active=CC.longActive,
+          axis=axis, standstill=standstill, steer_at_standstill=self.CP.steerAtStandstill)
+      except Exception:
+        diagnostic_observer.disabled = True
+        diagnostic_observer.pending = None
     self.aol_previous_lateral_active = bool(CC.latActive)
     return CC, lac_log
 
@@ -551,7 +620,7 @@ class Controls:
     feedback = feedback_message(
       self.last_lane_centering_result, self.lane_centering_applied, CC.latActive,
       model_mono_time=self.sm.logMonoTime['modelV2'], car_control_mono_time=cc_send.logMonoTime,
-      valid=bool(CS.canValid and self.sm.all_checks(['modelV2'])))
+      valid=bool(CS.canValid and self.sm.all_checks(['modelV2'])), inactive_reason=getattr(self, 'lane_centering_inactive_reason', 'inactive'))
     automatic = getattr(self, 'global_learning', None)
     if automatic is not None:
       try:
@@ -583,6 +652,9 @@ class Controls:
     else:
       self.learning_feedback_prior_publish_ns = 0
     self.pm.send('starpilotLateralState', feedback)
+    diagnostic_observer = getattr(self, 'aol_transition_diagnostic', None)
+    if diagnostic_observer is not None:
+      diagnostic_observer.emit(cloudlog.event, cc_send)
 
   def run(self):
     rk = Ratekeeper(100, print_delay_threshold=None)

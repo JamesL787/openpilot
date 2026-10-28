@@ -133,9 +133,11 @@ def test_real_parked_settings_row_requires_confirmation_and_fresh_authority(key,
 def test_sng_standstill_request_withdrawal_is_exact_and_does_not_grant_axis():
   from openpilot.starpilot.car.subaru.aol import sng_standstill_lateral_inhibit
   cp = CarInterface.get_params(CAR.SUBARU_IMPREZA_2020, gen_empty_fingerprint(), [], False, False, False)
-  cp.alternativeExperience = 32
+  cp.alternativeExperience = 0
   stopped = structs.CarState(standstill=True)
   assert not sng_standstill_lateral_inhibit(cp, stopped)
+  cp.alternativeExperience = 32
+  assert sng_standstill_lateral_inhibit(cp, stopped)
   prepare(cp, True)
   assert sng_standstill_lateral_inhibit(cp, stopped)
   stopped.standstill = False

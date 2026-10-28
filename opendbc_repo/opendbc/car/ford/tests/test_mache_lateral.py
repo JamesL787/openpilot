@@ -1,5 +1,6 @@
 """Original-derived Mach-E demand and driver handoff regressions."""
 from types import SimpleNamespace
+from opendbc.car.ford.interface import CarInterface
 import pytest
 from opendbc.car import Bus, structs
 from opendbc.car.lateral import MAX_LATERAL_JERK
@@ -11,10 +12,15 @@ from opendbc.car.ford.tests.test_three_ports import params
 from opendbc.car.ford.carcontroller import CarController
 from opendbc.car.ford.carstate import CarState
 
+def controller_params(car, flags):
+  cp = CarInterface.get_non_essential_params(car)
+  return SimpleNamespace(brand=cp.brand, safetyConfigs=cp.safetyConfigs, carFingerprint=car, flags=flags)
+
+
 
 @pytest.fixture
 def controller():
-  owner = MachELateralController(SimpleNamespace(flags=FordFlags.CANFD, carFingerprint=CAR.FORD_MUSTANG_MACH_E_MK1))
+  owner = MachELateralController(controller_params(CAR.FORD_MUSTANG_MACH_E_MK1, FordFlags.CANFD))
   model = SimpleNamespace(orientationRate=SimpleNamespace(z=[0.]*33),
                           meta=SimpleNamespace(laneChangeState=0, laneChangeDirection=0))
   owner.set_inputs(model, tuple(i*.1 for i in range(33)), .2, True)
@@ -373,7 +379,7 @@ def test_actual_controller_announces_before_full_physical_frame_and_resets_off()
 
 
 def test_modern_transient_bound_updates_emitted_history_without_hidden_windup():
-  owner = MachELateralController(SimpleNamespace(flags=FordFlags.CANFD, carFingerprint=CAR.FORD_MUSTANG_MACH_E_MK1))
+  owner = MachELateralController(controller_params(CAR.FORD_MUSTANG_MACH_E_MK1, FordFlags.CANFD))
   raw = FordLateralResult(curvature=.006, path_angle=.16, active=True)
   command = bounded_command(owner, raw, .001, 15.)
   assert command.curvature < raw.curvature
@@ -389,7 +395,7 @@ def test_modern_transient_bound_updates_emitted_history_without_hidden_windup():
 
 @pytest.mark.parametrize("sign", (-1, 1))
 def test_speed_changes_intersect_bounds_or_withdraw_and_preserve_path_headroom(sign):
-  owner = MachELateralController(SimpleNamespace(flags=FordFlags.CANFD, carFingerprint=CAR.FORD_MUSTANG_MACH_E_MK1))
+  owner = MachELateralController(controller_params(CAR.FORD_MUSTANG_MACH_E_MK1, FordFlags.CANFD))
   previous, path = sign * .0198, sign * .055
   for speed in (5., 5.1, 5.2, 5.3, 8., 15., 5.):
     demand = FordLateralResult(curvature=sign*.02, path_angle=sign*.16, active=True)

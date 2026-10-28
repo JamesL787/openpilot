@@ -54,7 +54,7 @@ def test_actual_startup_factory_card_controls_native(enabled, manual, aol, subar
     driven_new = {}
     receipt = None
     steering_name = 'ES_LKAS_ANGLE' if cp.steerControlType == structs.CarParams.SteerControlType.angle else 'ES_LKAS'
-    steering_bus = 0 if candidate in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_FORESTER, CAR.SUBARU_OUTBACK, CAR.SUBARU_OUTBACK_2023) else 1
+    steering_bus = 0
     decoder = CANParser(DBC[candidate][Bus.pt], [(steering_name, 0)], steering_bus)
     dash_decoder = CANParser(DBC[candidate][Bus.pt], [('ES_LKAS_State', 0)], 0)
     dash_emissions = 0

@@ -3,7 +3,7 @@
 from dataclasses import replace
 import pytest
 from openpilot.starpilot.flm.canonical_surface_adapter import NAMES, full_profile_sha256
-from openpilot.starpilot.flm.live_trial_contract import LiveTrialBinding, LiveTrialOffer, VERSION
+from openpilot.starpilot.flm.live_trial_contract import LiveTrialBinding, LiveTrialOffer, VERSION, MAX_STEP
 from openpilot.starpilot.flm.live_trial_owner import TrackingTrialOwner
 
 
@@ -106,7 +106,7 @@ def test_original_baseline25percent_bound_and_trial_delta_checked():
   bad = tuple((n, 0.251 if n == 'ff_gain_left' else v) for n, v in o.target)
   with pytest.raises(ValueError):
     replace(o, target=bad).validate()
-  bad = tuple((n, 0.006 if n == 'ff_gain_left' else v) for n, v in o.target)
+  bad = tuple((n, MAX_STEP + .001 if n == 'ff_gain_left' else v) for n, v in o.target)
   with pytest.raises(ValueError):
     replace(o, target=bad, target_sha256=full_profile_sha256(o.binding.baseline_revision, bad)).validate()
 
@@ -169,3 +169,55 @@ def test_owned_offer_content_rejects_class_accessor_mutation(monkeypatch):
   monkeypatch.setattr(LiveTrialOffer, 'phase', property(lambda self: 'confirmed'), raising=False)
   with pytest.raises(ValueError, match='plain live offer shape'):
     validate_offer(o)
+
+
+def _full_cap_offer():
+  original = offer()
+  target = tuple((name, MAX_STEP if name == 'ff_gain_left' else value) for name, value in original.target)
+  return replace(original, target=target, target_sha256=full_profile_sha256(original.binding.baseline_revision, target))
+
+
+def test_larger_trial_cap_preserves_original_first_tick_slew_and_permission():
+  from openpilot.starpilot.flm.live_trial_contract import SLEW_PER_SECOND
+  from openpilot.starpilot.flm.effect_trace import SLEW_PER_SECOND as EFFECT_SLEW
+
+  assert MAX_STEP == .05 and SLEW_PER_SECOND == EFFECT_SLEW == .005
+  current = _full_cap_offer().validate()
+  owner = TrackingTrialOwner(current.binding)
+  assert owner.prepare(current, now_ns=current.observed_ns, permission=True, binding=current.binding)
+  assert 0 < owner.applied_full['ff_gain_left'] <= .00005
+  assert owner.applied_full['ff_gain_left'] < dict(current.target)['ff_gain_left']
+  assert owner.confirmed_full == current.baseline
+  assert not owner.prepare(current, now_ns=current.observed_ns + 10_000_000, permission=False, binding=current.binding)
+  assert owner.source is None and not any(owner.applied_full.values())
+
+
+def test_full_cap_all_thirty_targets_still_take_ten_seconds_at_original_slew():
+  from openpilot.starpilot.flm.canonical_surface_adapter import coordinate_bounds
+  from openpilot.starpilot.flm.effect_trace import step_full
+
+  assert len(NAMES) == 30
+  before = dict.fromkeys(NAMES, 0.)
+  target = {name: min(coordinate_bounds(name)[1], MAX_STEP) for name in NAMES}
+  assert all(value > 0 for value in target.values())
+  previous_ns = 0
+  for tick in range(1000):
+    now_ns = 1_000_000_000 + tick * 10_000_000
+    applied = step_full(before, target, now_ns=now_ns, previous_ns=previous_ns, qualified=True)
+    for name in NAMES:
+      assert 0 <= applied[name] - before[name] <= .005 * .01 + 1e-12
+      assert applied[name] <= target[name] + 1e-12
+    if tick == 998:
+      assert applied['ff_gain_left'] < .05
+    before, previous_ns = applied, now_ns
+  assert all(before[name] == pytest.approx(target[name]) for name in NAMES)
+
+
+def test_old_trial_cap_receiver_guard_rejects_larger_offer(monkeypatch):
+  # Emulates the previous receiver's numeric cap, not a mixed-version road test.
+  import openpilot.starpilot.flm.live_trial_contract as contract
+
+  larger = _full_cap_offer()
+  monkeypatch.setattr(contract, 'MAX_STEP', .005)
+  with pytest.raises(ValueError, match='small selected live trial step'):
+    larger.validate()

@@ -3,6 +3,8 @@ from collections.abc import Callable
 import pyray as rl
 
 from openpilot.selfdrive.ui.layouts.arabesque.theme import DEFAULT_THEME
+from openpilot.selfdrive.ui.layouts.arabesque.tools.files import Files
+from openpilot.selfdrive.ui.layouts.arabesque.tools.rebecca import Rebecca
 from openpilot.selfdrive.ui.layouts.arabesque.tools.terminal import Terminal
 from openpilot.system.ui.lib.application import gui_app, MouseEvent, MousePos, TextAlignment
 from openpilot.system.ui.lib.multilang import tr
@@ -16,9 +18,10 @@ _DOCK_RIM = rl.Color(113, 88, 147, 255)
 
 
 class ArabesqueLayout(Widget):
-  def __init__(self, on_exit: Callable[[], None]):
+  def __init__(self, on_exit: Callable[[], None], permitted: Callable[[], bool] = lambda: True):
     super().__init__()
     self._on_exit = on_exit
+    self._permitted = permitted
     self._menu_open = False
     self._pressed_rect: rl.Rectangle | None = None
     self._active_tool: Widget | None = None
@@ -32,13 +35,17 @@ class ArabesqueLayout(Widget):
     self._menu_button = rl.Rectangle(rect.x + 24 * s, rect.y + 8 * s, 88 * s, 88 * s)
     self._exit_button = rl.Rectangle(rect.x + 24 * s, rect.y + 116 * s, 456 * s, 116 * s)
     self._back_button = rl.Rectangle(rect.x + rect.width - 296 * s, rect.y + 8 * s, 272 * s, 88 * s)
-    self._dock = dock = rl.Rectangle(rect.x + (rect.width - 360 * s) / 2, rect.y + rect.height - 272 * s, 360 * s, 240 * s)
+    self._dock = dock = rl.Rectangle(rect.x + (rect.width - 840 * s) / 2, rect.y + rect.height - 272 * s, 840 * s, 240 * s)
     self._dock_shelf = rl.Rectangle(dock.x, dock.y + 178 * s, dock.width, 10 * s)
     self._dock_top = (rl.Vector2(dock.x + 36 * s, dock.y + 118 * s), rl.Vector2(dock.x, self._dock_shelf.y),
                       rl.Vector2(dock.x + dock.width, self._dock_shelf.y), rl.Vector2(dock.x + dock.width - 36 * s, dock.y + 118 * s))
     self._dock_shadows = (rl.Rectangle(dock.x - 10 * s, dock.y + 174 * s, dock.width + 20 * s, 32 * s),
                           rl.Rectangle(dock.x - 4 * s, dock.y + 178 * s, dock.width + 8 * s, 22 * s))
-    self._dock_icon = rl.Vector2(dock.x + dock.width / 2, dock.y + 72 * s)
+    self._launchers = (
+      (rl.Rectangle(dock.x + 60 * s, dock.y, 240 * s, 200 * s), "Terminal", lambda: Terminal()),
+      (rl.Rectangle(dock.x + 300 * s, dock.y, 240 * s, 200 * s), "Files", lambda: Files(self._permitted)),
+      (rl.Rectangle(dock.x + 540 * s, dock.y, 240 * s, 200 * s), "Rebecca", lambda: Rebecca()),
+    )
     self._tool_rect = rl.Rectangle(rect.x, self._bar.y + self._bar.height, rect.width, rect.height - self._bar.height)
 
   def _open_tool(self, name: str, tool: Widget):
@@ -70,8 +77,8 @@ class ArabesqueLayout(Widget):
         self._pressed_rect = self._exit_button
     elif self._active_tool is not None and rl.check_collision_point_rec(pos, self._back_button):
       self._pressed_rect = self._back_button
-    elif self._active_tool is None and rl.check_collision_point_rec(pos, self._dock):
-      self._pressed_rect = self._dock
+    elif self._active_tool is None:
+      self._pressed_rect = next((target for target, _, _ in self._launchers if rl.check_collision_point_rec(pos, target)), None)
 
   def _handle_mouse_release(self, pos: MousePos):
     pressed = self._pressed_rect
@@ -84,8 +91,11 @@ class ArabesqueLayout(Widget):
         self._on_exit()
     elif pressed is self._back_button and rl.check_collision_point_rec(pos, self._back_button):
       self._close_tool()
-    elif pressed is self._dock and rl.check_collision_point_rec(pos, self._dock):
-      self._open_tool(tr("Terminal"), Terminal())
+    elif self._active_tool is None:
+      for target, name, create in self._launchers:
+        if pressed is target and rl.check_collision_point_rec(pos, target):
+          self._open_tool(tr(name), create())
+          break
 
   def _handle_mouse_event(self, mouse_event: MouseEvent):
     if mouse_event.left_released and not rl.check_collision_point_rec(mouse_event.pos, self._rect):
@@ -131,18 +141,29 @@ class ArabesqueLayout(Widget):
       rl.draw_triangle(top[0], top[1], top[2], _DOCK_FACE)
       rl.draw_triangle(top[0], top[2], top[3], _DOCK_FACE)
       rl.draw_line_ex(top[1], top[2], 2 * s, _DOCK_RIM)
-      icon = self._dock_icon
-      rl.draw_ellipse(int(icon.x), int(icon.y + 68 * s), 52 * s, 9 * s, _DOCK_SHADOW)
-      dock_pressed = self._pressed_rect is self._dock and self.is_pressed
-      tint = theme.pressed if dock_pressed else theme.control
-      rl.draw_circle_v(rl.Vector2(icon.x, icon.y + 5 * s), 64 * s, theme.surface)
-      rl.draw_circle_v(icon, 64 * s, tint)
-      rl.draw_circle_v(icon, 54 * s, theme.background)
-      rl.draw_line_ex(rl.Vector2(icon.x - 32 * s, icon.y - 24 * s), rl.Vector2(icon.x - 8 * s, icon.y), 6 * s, tint)
-      rl.draw_line_ex(rl.Vector2(icon.x - 8 * s, icon.y), rl.Vector2(icon.x - 32 * s, icon.y + 24 * s), 6 * s, tint)
-      rl.draw_line_ex(rl.Vector2(icon.x + 8 * s, icon.y + 24 * s), rl.Vector2(icon.x + 36 * s, icon.y + 24 * s), 6 * s, tint)
-      gui_label(rl.Rectangle(icon.x - 96 * s, icon.y + 68 * s, 192 * s, 36 * s),
-                tr("Terminal"), round(28 * s), theme.text, theme.font_weight, alignment=TextAlignment.CENTER)
+      for target, name, _ in self._launchers:
+        icon = rl.Vector2(target.x + target.width / 2, self._dock.y + 72 * s)
+        rl.draw_ellipse(int(icon.x), int(icon.y + 68 * s), 52 * s, 9 * s, _DOCK_SHADOW)
+        tint = theme.pressed if self._pressed_rect is target and self.is_pressed else theme.control
+        rl.draw_circle_v(rl.Vector2(icon.x, icon.y + 5 * s), 64 * s, theme.surface)
+        rl.draw_circle_v(icon, 64 * s, tint)
+        rl.draw_circle_v(icon, 54 * s, theme.background)
+        if name == "Terminal":
+          rl.draw_line_ex(rl.Vector2(icon.x - 32 * s, icon.y - 24 * s), rl.Vector2(icon.x - 8 * s, icon.y), 6 * s, tint)
+          rl.draw_line_ex(rl.Vector2(icon.x - 8 * s, icon.y), rl.Vector2(icon.x - 32 * s, icon.y + 24 * s), 6 * s, tint)
+          rl.draw_line_ex(rl.Vector2(icon.x + 8 * s, icon.y + 24 * s), rl.Vector2(icon.x + 36 * s, icon.y + 24 * s), 6 * s, tint)
+        elif name == "Files":
+          rl.draw_rectangle_rounded(rl.Rectangle(icon.x - 32 * s, icon.y - 26 * s, 30 * s, 18 * s), 0.3, 8, tint)
+          rl.draw_rectangle_rounded(rl.Rectangle(icon.x - 36 * s, icon.y - 16 * s, 72 * s, 44 * s), 0.2, 8, tint)
+          rl.draw_rectangle_rounded(rl.Rectangle(icon.x - 29 * s, icon.y - 9 * s, 58 * s, 30 * s), 0.2, 8, theme.background)
+        else:
+          rl.draw_circle_v(rl.Vector2(icon.x - 19 * s, icon.y - 6 * s), 20 * s, tint)
+          rl.draw_circle_v(rl.Vector2(icon.x + 19 * s, icon.y - 6 * s), 20 * s, tint)
+          for offset in (-19, 19):
+            rl.draw_circle_v(rl.Vector2(icon.x + offset * s, icon.y - 8 * s), 11 * s, theme.background)
+          rl.draw_line_ex(rl.Vector2(icon.x - 8 * s, icon.y + 25 * s), rl.Vector2(icon.x + 8 * s, icon.y + 25 * s), 3 * s, tint)
+        gui_label(rl.Rectangle(icon.x - 96 * s, icon.y + 68 * s, 192 * s, 36 * s),
+                  tr(name), round(28 * s), theme.text, theme.font_weight, alignment=TextAlignment.CENTER)
 
     if self._menu_open:
       exit_pressed = self._pressed_rect is self._exit_button and self.is_pressed

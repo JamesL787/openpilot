@@ -5,6 +5,7 @@ import { GxNotice } from "./notice.js"
 import { ToggleBackup } from "./toggle-backup.js"
 import { GalaxySelect } from "./galaxy-select.js"
 import { GalaxySettingRow, switchRow } from "./galaxy-setting-row.js"
+import { RouteCleanup } from "./route-cleanup.js"
 
 const ACTIONS = new Set(["check", "download", "select", "install", "preferences", "update", "fast", "rollback", "versions", "version"])
 const REQUEST_STATES = new Set(["pending", "complete", "failed"])
@@ -329,7 +330,7 @@ export class SoftwareStatusFeed {
 }
 
 export const SoftwarePage = {
-  components: { DriveStatePanel, GxDialog, GxState, GxNotice, GalaxySelect, GalaxySettingRow, ToggleBackup },
+  components: { DriveStatePanel, GxDialog, GxState, GxNotice, GalaxySelect, GalaxySettingRow, ToggleBackup, RouteCleanup },
   name: "SoftwarePage",
   props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true }, restarting: { type: Function, default: () => {} },
     preparing: { type: Function, default: () => {} }, cancelPreparation: { type: Function, default: () => {} } },
@@ -415,7 +416,7 @@ export const SoftwarePage = {
       const history = this.operations?.history
       return this.historyKind === "recent" ? (history?.recent?.branch === this.draftBranch ? history.recent.entries : []) : history?.[this.historyKind] || []
     },
-    commitsUrl() { return this.data?.installed.branch ? `https://github.com/firestar5683/StarPilot/commits/${encodeURIComponent(this.data.installed.branch)}/` : "" },
+    commitsUrl() { return this.data?.installed.branch ? `https://github.com/StarPilotHQ/StarPilot/commits/${encodeURIComponent(this.data.installed.branch)}/` : "" },
   },
   methods: {
     switchRow,
@@ -591,6 +592,7 @@ export const SoftwarePage = {
           </div></details>
         </section>
         <ToggleBackup :unauthorized="unauthorized" />
+        <RouteCleanup :unauthorized="unauthorized" />
         <GxDialog v-if="dialog" labelledby="gx-software-status-confirm-title" @close="closeDialog"><h3 id="gx-software-status-confirm-title">{{ dialog.title }}</h3><p>{{ dialog.message }}</p>
           <div class="gx-actions"><button type="button" class="gx-btn gx-btn--tonal" @click="closeDialog">Cancel</button><button type="button" class="gx-btn" @click="confirmDialog">{{ dialog.label }}</button></div>
         </GxDialog>

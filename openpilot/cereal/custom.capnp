@@ -214,6 +214,18 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   fordLearningEvidence @35 :FordLearningEvidence;
   learningApplication @36 :LearningApplication;
   feedbackPublication @37 :FeedbackPublication;
+  toyotaCruise @38 :ToyotaCruise;
+
+  struct ToyotaCruise {
+    version @0 :UInt16;
+    status @1 :Text;
+    targetKph @2 :Float32;
+    nativeKph @3 :Float32;
+    nativeClusterKph @4 :Float32;
+    sessionId @5 :Text;
+    acceptedMonoTime @6 :UInt64;
+    approvedTargetMps @7 :Float32;
+  }
 
   struct Gps {
     sourceMonoTime @0 :UInt64;  # CAN observation converted to CLOCK_MONOTONIC
@@ -329,6 +341,7 @@ struct SlcState @0xa1680744031fdb2d {
   lastReceivedSpeedLimit @53 :Float32;
   lastReceivedSource @54 :Text;
   lastReceivedAdjustedLimit @55 :Float32;
+  acceptedMonoTime @56 :UInt64;
   struct SourceReading {
     source @0 :Text;
     enabled @1 :Bool;

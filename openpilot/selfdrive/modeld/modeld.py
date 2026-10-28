@@ -37,7 +37,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from openpilot.common.hardware.usb import cable_connected
 from openpilot.common.filter_simple import FirstOrderFilter
-from openpilot.common.realtime import config_realtime_process, DT_MDL
+from openpilot.common.realtime import config_realtime_process, set_core_affinity, DT_MDL
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
 from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 from openpilot.common.transformations.model import get_warp_matrix
@@ -59,12 +59,11 @@ from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan, 
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_driving_model_data, fill_pose_msg, PublishState
 from openpilot.selfdrive.modeld.lateral_source import lateral_source
-from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
+from openpilot.selfdrive.modeld.constants import LAT_SMOOTH_SECONDS, ModelConstants, Plan
 from openpilot.selfdrive.modeld.helpers import MODELS_DIR, chestnut_present, modeld_pkl_path, load_oob, wait_for_chestnut
 
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-LAT_SMOOTH_SECONDS = 0.0
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
 BIG_MODEL_TIMEOUT = 120
@@ -405,12 +404,15 @@ def main(demo=False):
   model = None
   big_prepared = None
 
+  # with Jetlink on, the small model's warp output moves where the link sends it from, before warmup links it
+  coherent_warp = jetlink_adapter.coherent_warp()
+
   def load_small():
     if selection.small_path is not None:
       try:
         selected, prepared = load_verified_model(vipc_client_main.width, vipc_client_main.height,
                                                  selection.small_path, selection.small_version, False,
-                                                 selection.small_id, selection.small_sha256)
+                                                 selection.small_id, selection.small_sha256, coherent_warp=coherent_warp)
         return selected, prepared, False
       except Exception:
         cloudlog.exception("selected small model load failed, using the built-in small model")
@@ -420,7 +422,7 @@ def main(demo=False):
       raise RuntimeError("The built-in small model is missing or corrupt")
     fallback, prepared = load_verified_model(vipc_client_main.width, vipc_client_main.height,
                                              path, BY_ID[DEFAULT_SMALL].version, False,
-                                             DEFAULT_SMALL, DEFAULT_SMALL_SHA256)
+                                             DEFAULT_SMALL, DEFAULT_SMALL_SHA256, coherent_warp=coherent_warp)
     return fallback, prepared, selection.small_id != DEFAULT_SMALL
 
   # Preload a custom fallback before the GPU worker takes the catalog lock.
@@ -439,6 +441,7 @@ def main(demo=False):
         wait_for_chestnut()
         if not demo:
           wait_for_chestnut_power(CP, timeout=min(30., BIG_MODEL_TIMEOUT / 2))
+        set_core_affinity([7])
         if selection.big_path is not None:
           m, prepared = load_verified_model(vipc_client_main.width, vipc_client_main.height,
                                             big_path, selection.big_version, True, selection.big_id, selection.big_sha256)

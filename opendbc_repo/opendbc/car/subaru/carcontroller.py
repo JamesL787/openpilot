@@ -120,7 +120,9 @@ class CarController(CarControllerBase):
     if (self.frame % self.p.STEER_STEP) == 0:
       if self.CP.carFingerprint in GEN2_ANGLE_PORTS:
         independent_lateral = subaru_aol_qualified(self.CP, marked_only=True)
-        angle_available = (CC.latActive and CS.out.cruiseState.available and
+        # Match Dom's independent-lateral envelope during large manual turns and parking speeds.
+        aol_motion_ok = CC.enabled or (CS.out.vEgoRaw > 0.44704 and abs(CS.out.steeringAngleDeg) < 120.)
+        angle_available = (CC.latActive and aol_motion_ok and CS.out.cruiseState.available and
                            (independent_lateral or CC.enabled and CS.out.cruiseState.enabled and not CS.out.brakePressed) and
                            CS.out.gearShifter == structs.CarState.GearShifter.drive and
                            not CS.out.standstill and not CS.out.steerFaultTemporary and not CS.out.steerFaultPermanent)
@@ -142,7 +144,7 @@ class CarController(CarControllerBase):
                                                     self.p, self.VM)
         self.apply_angle_last = apply_angle
         self.angle_was_active = angle_active
-        angle_bus = CanBus.main if self.CP.carFingerprint in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_FORESTER_2022, CAR.SUBARU_OUTBACK_2023) else CanBus.alt
+        angle_bus = CanBus.main
         can_sends.append(subarucan.create_steering_control_angle(self.packer, apply_angle, angle_active, angle_bus))
       else:
         apply_torque = int(round(actuators.torque * self.p.STEER_MAX))

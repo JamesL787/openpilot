@@ -124,6 +124,7 @@ def test_actual_ui_constructor_borrows_one_collector_for_both_runtimes():
     'openpilot.starpilot.ui.runtime_app': SimpleNamespace(StarMainLayout=lambda: layout, StarMiciMainLayout=lambda: layout),
     'openpilot.starpilot.controllers.runtime': SimpleNamespace(ControllerRuntime=runtime),
     'openpilot.starpilot.ui.layout_preview_runtime': SimpleNamespace(LayoutPreviewRuntime=runtime),
+    'openpilot.starpilot.ui.spacepilot.native': SimpleNamespace(SpacePilotPage=type('SpacePilotPage', (), {}), poll_game_mode=Mock()),
   }
   scope: dict = {
     'COMMA_HARDWARE': False,

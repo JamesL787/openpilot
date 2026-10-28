@@ -88,7 +88,7 @@ def run(version, stock, bridge, scenario='nominal', *, aol=True, fault=None, mir
     if 200 <= tick < 250:
       assert not cs.stockAeb, 'Advertisement nibble7 is not SDSU STATE/AEB'
     assert host.CI.CS.eps_torque_scale == 0.66
-    assert abs(host.CP.longitudinalActuatorDelay - 0.15) < 1e-6
+    assert abs(host.CP.longitudinalActuatorDelay - 0.05) < 1e-6
     assert host.CP.safetyConfigs[0].safetyParam == (owner.STOCK_WORD if stock else owner.LONG_WORD)
     assert safety.safety_fwd_hook(2, 0x343) == 0 and safety.safety_fwd_hook(2, 0x4CB) == 0
     if scenario == 'physical' and (410 <= tick < 430 or 470 <= tick < 475):

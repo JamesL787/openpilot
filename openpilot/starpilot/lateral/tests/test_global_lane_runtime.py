@@ -106,6 +106,35 @@ def test_toyota_full_card_startup_admits_normal_lane_host_without_replay_opt_in(
     assert controls.lane_centering_host is not None
 
 
+@pytest.mark.parametrize('identity', GENERIC_STEERING)
+def test_actual_controller_paths_track_one_current_line_and_withdraw_for_fault(identity):
+  from openpilot.starpilot.lateral.tests.test_lane_centering import single
+  with OpenpilotPrefix(), mock.patch.dict(os.environ, {'SIMULATION': '1', 'REPLAY': '1',
+       'LANE_CENTERING_REPLAY_RUNTIME': '0', 'AOL_REPLAY_RUNTIME': '0'}), \
+       mock.patch('openpilot.selfdrive.controls.controlsd.messaging.PubMaster'):
+    params = Params()
+    cp = native_steering_params(identity)
+    params.put('CarParams', cp.to_bytes(), block=True)
+    params.put_bool('LaneCentering', True, block=True)
+    params.put('LaneCenteringE2EAuthority', 0., block=True)
+    controls = Controls()
+    for tick in range(20):
+      feed(controls, 2_000_000_000 + tick * 10_000_000, tick)
+      controls.state_control()
+    with mock.patch('openpilot.starpilot.lateral.tests.test_lane_runtime.model',
+                    side_effect=lambda:single(line=-1.2, edge=10.)):
+      for tick in range(20, 90):
+        feed(controls, 2_000_000_000 + tick * 10_000_000, tick)
+        command, _ = controls.state_control()
+      assert command.latActive
+      assert controls.last_lane_centering_result.correction > 0.
+      assert controls.lane_centering_applied > 0.
+      feed(controls, 2_900_000_000, 90, fault=True)
+      command, _ = controls.state_control()
+      assert not command.latActive
+      assert controls.lane_centering_applied == 0.
+
+
 def test_actual_secoc_configuration_requires_its_key_without_affecting_nonsecoc():
   cp = interfaces[TOYOTA.TOYOTA_SIENNA_4TH_GEN].get_non_essential_params(TOYOTA.TOYOTA_SIENNA_4TH_GEN)
   assert cp.secOcRequired and not cp.secOcKeyAvailable

@@ -154,6 +154,25 @@ class TestControlHostBoundary(unittest.TestCase):
         else:
           self.assertEqual(row["acceleration"], 0.0)
 
+  def test_controls_import_does_not_load_model_execution(self):
+    program = """
+import importlib.abc
+import sys
+
+class NoModelExecution(importlib.abc.MetaPathFinder):
+  def find_spec(self, fullname, path=None, target=None):
+    if fullname == 'openpilot.selfdrive.modeld.modeld' or fullname == 'tinygrad' or fullname.startswith('tinygrad.'):
+      raise AssertionError('Controls must not import model execution: ' + fullname)
+    return None
+
+sys.meta_path.insert(0, NoModelExecution())
+from openpilot.selfdrive.controls.controlsd import LAT_SMOOTH_SECONDS
+assert type(LAT_SMOOTH_SECONDS) is float and LAT_SMOOTH_SECONDS == 0.0
+"""
+    completed = subprocess.run([sys.executable, '-B', '-c', program], cwd=BASEDIR,
+                               capture_output=True, text=True, timeout=30)
+    self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
   def test_inactive_system_longitudinal_neutralizes_warmed_controller_and_plan(self):
     self.check_profile(True)
 

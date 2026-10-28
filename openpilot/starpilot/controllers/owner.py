@@ -239,7 +239,7 @@ class ControllerOwner:
     with self._lock:
       self._last_press = {"deviceId": device_id, "code": code, "slot": slot, "executed": executed, "message": message}
 
-  def feed(self, press):
+  def feed(self, press, *, capture: Callable[[str | None, int], None] | None = None):
     device_id, code = _field(press, "device_id"), _field(press, "code")
     timestamp = _field(press, "timestamp_ns")
     now = self.clock()
@@ -255,6 +255,18 @@ class ControllerOwner:
         self._sequences = {key: seen for key, seen in self._sequences.items() if seen >= now - PRESS_AGE_NS}
       learning = self._learning
       testing = bool(self._testing_until)
+    if capture is not None:
+      # Native modal input owns this whole batch. Resolve the saved logical key
+      # without invoking its vehicle action or modifying a learn/test session.
+      document, _, readable, valid = _read_document(self.params)
+      key = None
+      if readable and valid and document["enabled"]:
+        binding = next((item for item in document["bindings"] if (item["deviceId"], item["code"]) == identity), None)
+        if binding is not None:
+          slot = binding["slot"]
+          key = self.favorites().slots[slot].key if slot < 3 else document["slots"][slot - 3]
+      capture(key, timestamp)
+      return
     if learning is not None:
       if timestamp < learning["started"]:
         return

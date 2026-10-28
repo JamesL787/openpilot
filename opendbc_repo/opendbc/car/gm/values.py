@@ -359,6 +359,21 @@ def is_volt_ascm_longitudinal(cp: CarParams) -> bool:
     return False
 
 
+def is_volt_ascm_stock(cp: CarParams) -> bool:
+  """Exact non-pedal ASCM Volt steering owner with factory longitudinal control."""
+  try:
+    configs = cp.safetyConfigs
+    return (cp.brand == 'gm' and cp.carFingerprint == CAR.CHEVROLET_VOLT_ASCM and
+            cp.networkLocation == CarParams.NetworkLocation.fwdCamera and cp.pcmCruise and
+            not cp.openpilotLongitudinalControl and not cp.passive and not cp.dashcamOnly and
+            not cp.notCar and control_flags(cp) == 0 and len(configs) == 1 and
+            configs[0].safetyModel == CarParams.SafetyModel.gm and
+            int(configs[0].safetyParam) in (0x205, 0x605, 0xA05, 0xE05) and
+            bool(int(configs[0].safetyParam) & int(GMSafetyFlags.ASCM_RADAR)) is not cp.radarUnavailable)
+  except (AttributeError, IndexError, TypeError, ValueError):
+    return False
+
+
 def is_volt_camera_removed(cp: CarParams, *, longitudinal=None) -> bool:
   """The exact manual Volt with PT state sources and no factory camera."""
   try:

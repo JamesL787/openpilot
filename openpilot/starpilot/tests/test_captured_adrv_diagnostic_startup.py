@@ -131,7 +131,8 @@ def factory(car, offset=4):
   fp[offset + 2][0x50], fp[offset + 1][0x1cf] = 16, 8
   fw = [structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.adas)]
   cp = CarInterface.get_params(car, fp, fw, True, False, False)
-  assert [int(c.safetyParam) for c in cp.safetyConfigs] == ([0, 0x15] if offset else [0x15])
+  word = 0x2015 if car == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN else 0x15
+  assert [int(c.safetyParam) for c in cp.safetyConfigs] == ([0, word] if offset else [word])
   return cp, fp, fw
 
 
@@ -280,7 +281,8 @@ def _exercise_factory_transaction(car, case):
     assert owner.ready and owner.published
     assert owner.bus == 5 and owner.template_bus == 4 and owner.camera_bus == 6
     assert host.CP.carFingerprint == car
-    assert [int(c.safetyParam) for c in host.CP.safetyConfigs] == ([0, 0x15] if case in ('dos_no_can', 'dos_can') else [0, 0x11])
+    word = 0x2015 if car == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN else 0x15
+    assert [int(c.safetyParam) for c in host.CP.safetyConfigs] == ([0, word] if case in ('dos_no_can', 'dos_can') else [0, 0x11])
     if case in ('dos_no_can', 'dos_can'):
       assert owner.outcome is Outcome.SENT_UNCONFIRMED and host.CP.openpilotLongitudinalControl
       assert disables and all(row[1] == 0x730 and row[3] == 5 for _, row in disables)

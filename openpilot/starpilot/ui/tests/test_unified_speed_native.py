@@ -10,7 +10,7 @@ import pytest
 from openpilot.starpilot.ui.onroad_compact_widgets import CompactHudRenderer
 from openpilot.starpilot.ui.onroad_large_widgets import UnifiedSpeedWidget
 from openpilot.starpilot.ui.onroad import OnroadView
-from openpilot.starpilot.ui.onroad_state import ObservationKind, OnroadState, SpeedLimitObservation, slc_controls
+from openpilot.starpilot.ui.onroad_state import ObservationKind, OnroadState, SpeedLimitObservation, slc_controls, speed_limit_bounds
 from openpilot.starpilot.ui.presentation import Profile
 from openpilot.starpilot.ui.speed_limit_widget import INK, MUTED, SpeedLimitWidget, draw_text
 from openpilot.starpilot.ui.speed_limit_shapes import SpeedLimitShapes
@@ -20,10 +20,11 @@ from openpilot.starpilot.ui.unified_speed_presentation import displayed_limit_mp
 @pytest.fixture(autouse=True)
 def drawing(monkeypatch):
   calls = {}
-  for name in ('draw_rectangle_rounded_lines_ex', 'draw_rectangle_rounded', 'draw_line_ex', 'draw_circle', 'draw_ring', 'draw_circle_gradient'):
+  for name in ('draw_rectangle_rounded_lines_ex', 'draw_rectangle_rounded', 'draw_line_ex', 'draw_circle',
+               'draw_ring', 'draw_circle_gradient', 'draw_rectangle_rec', 'draw_circle_v', 'draw_rectangle_gradient_ex'):
     calls[name] = Mock()
     monkeypatch.setattr(rl, name, calls[name])
-  for name in ('circle', 'arrow', 'outline'):
+  for name in ('circle', 'arrow', 'outline', 'confirmation', 'wheel_key'):
     calls[name] = Mock()
     monkeypatch.setattr(SpeedLimitShapes, name, calls[name])
   monkeypatch.setattr('openpilot.starpilot.ui.onroad_large_widgets.draw_control_card', Mock())
@@ -46,6 +47,20 @@ def fonts(profile=Profile.LARGE):
                          measure=lambda text, role, size: SimpleNamespace(width=len(text) * size * .5, height=size))
 
 
+def slc_view(font):
+  view = OnroadView.__new__(OnroadView)
+  view.fonts = font
+  if font.profile == Profile.LARGE:
+    view.unified_speed = UnifiedSpeedWidget(font)
+  else:
+    view.compact_hud = CompactHudRenderer(font, Mock())
+  return view
+
+
+def render_sign(sign, current):
+  sign.render(current)
+
+
 def foreground_calls(draw):
   return [call for call in draw.call_args_list if (call.args[-1].r, call.args[-1].g, call.args[-1].b) not in ((6, 14, 10), (7, 16, 12))]
 
@@ -65,13 +80,17 @@ def test_both_renderers_show_small_latest_sign_and_offset(profile):
   font = fonts(profile)
   current = state()
   if profile == Profile.LARGE:
-    UnifiedSpeedWidget(font).render(rl.Rectangle(30, 30, 1800, 1020), current)
+    widget = UnifiedSpeedWidget(font)
+    widget.render(rl.Rectangle(30, 30, 1800, 1020), current)
+    widget.sign.render_confirmation(current)
     texts = [call.args[0] for call in foreground_calls(font.draw)]
     assert texts.count('100') == 1
     assert 'SET' in texts
     assert 'SLC LIMIT' not in texts
   else:
-    CompactHudRenderer(font, Mock())._speed_limit_sign(current)
+    widget = CompactHudRenderer(font, Mock())
+    widget._speed_limit_sign(current)
+    widget._speed_limit_widget.render_confirmation(current)
   texts = [call.args[0] for call in foreground_calls(font.draw)]
   assert '50' in texts and '+5' in texts and '40' not in texts
 
@@ -91,10 +110,10 @@ def test_sign_heading_identifies_the_displayed_source(profile, pending, vienna, 
     accepted_source='vision' if source == 'dashboard' else 'dashboard',
     pending_speed_limit_mps=current.speed_limit.pending_speed_limit_mps if pending else None))
   font = fonts(profile)
-  SpeedLimitWidget(font, profile).render(current)
-  expected = [heading, '50'] if vienna else [heading, 'LIMIT', '50']
-  assert [call.args[0] for call in font.draw.call_args_list] == expected + (['+5'] if offset else [])
-  if vienna:
+  render_sign(SpeedLimitWidget(font, profile), current)
+  expected = [heading, '50']
+  assert [call.args[0] for call in font.draw.call_args_list] == expected + (['+5'] if offset else []) + (['New Limit'] if pending else [])
+  if vienna and not pending:
     assert rgba_tuple(font.draw.call_args_list[0].args[-1]) == (0, 0, 0, 255)
 
 
@@ -110,31 +129,55 @@ def test_compact_sign_omits_missing_zero_and_rounded_zero_offsets(metric, vienna
   assert resolve_unified_speed(current).offset_text is None
   font = fonts(Profile.COMPACT)
   CompactHudRenderer(font, Mock())._speed_limit_sign(current)
-  assert [call.args[0] for call in font.draw.call_args_list] == (['OSM', '65'] if vienna else ['OSM', 'LIMIT', '65'])
+  assert [call.args[0] for call in font.draw.call_args_list] == ['OSM', '65']
 
 
 @pytest.mark.parametrize('profile', list(Profile))
 @pytest.mark.parametrize('vienna', [False, True])
-def test_pending_sign_pulses_in_place_and_arrow_follows_vehicle_speed(profile, vienna, drawing):
+def test_pending_notice_pulses_without_changing_ink_and_arrow_follows_speed(profile, vienna, drawing):
   font = fonts(profile)
   sign = SpeedLimitWidget(font, profile)
   current = state()
   current = replace(current, appearance=replace(current.appearance, use_vienna_sign=vienna))
-  sign.render(current)
+  render_sign(sign, current)
   before = {call.args[0]: call.args for call in foreground_calls(font.draw)}
+  strength = drawing['confirmation'].call_args.kwargs['strength']
+  assert drawing['arrow'].call_args.args[0] == 'confirmation'
   assert drawing['arrow'].call_args.args[3] == -1
-  sign.render(replace(current, observed_ns=10_350_000_000, speed_mps=60 / 3.6))
+  render_sign(sign, replace(current, observed_ns=10_350_000_000, speed_mps=60 / 3.6))
   after = {call.args[0]: call.args for call in foreground_calls(font.draw)}
-  assert all(after[text][3:5] == args[3:5] for text, args in before.items())
-  if vienna:
-    assert rgba_tuple(after['50'][-1]) == (0, 0, 0, 255)
-    assert drawing['circle'].call_args.args[:2] == ((389, 87) if profile == Profile.COMPACT else (345.75, 158.75))
-    assert rgba_tuple(drawing['circle'].call_args.args[-1]) == (170, 115, 235, 255)
-  else:
-    assert rgba_tuple(after['50'][-1]) == (170, 115, 235, 255)
-    assert rgba_tuple(before['LIMIT'][-1]) == (244, 247, 245, 255)
-    assert rgba_tuple(after['LIMIT'][-1]) == (170, 115, 235, 255)
+  assert set(before) == {'OSM', '50', '+5', 'New Limit'}
+  assert all(after[text][3:5] == args[3:5] and rgba_tuple(after[text][-1]) == rgba_tuple(args[-1]) for text, args in before.items())
+  assert drawing['confirmation'].call_args.kwargs['strength'] != strength
+  drawing['circle'].assert_not_called()
+  drawing['outline'].assert_not_called()
   assert drawing['arrow'].call_args.args[3] == 1
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+@pytest.mark.parametrize('vienna', [False, True])
+def test_regular_sign_keeps_the_outlined_arrow(profile, vienna, drawing):
+  current = state()
+  current = replace(current, appearance=replace(current.appearance, use_vienna_sign=vienna),
+                    speed_limit=replace(current.speed_limit, decision_id=0))
+  SpeedLimitWidget(fonts(profile), profile).render(current)
+  assert drawing['arrow'].call_args.args[0] == 'compact'
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+@pytest.mark.parametrize('available', [False, True])
+def test_wheel_cues_follow_confirmation_availability(profile, available, drawing):
+  from openpilot.starpilot.ui.large_speed_geometry import CONFIRMATION_SCALE
+  current = state(slc_wheel_confirmation_available=available)
+  sign = SpeedLimitWidget(fonts(profile), profile)
+  sign.render_confirmation(current)
+  calls = drawing['wheel_key'].call_args_list
+  assert [call.args[0] for call in calls] == ([True, False] if available else [])
+  if available:
+    bounds = speed_limit_bounds(profile, current)
+    assert bounds is not None
+    assert all(call.args[2] == pytest.approx(bounds[1] + 135.5 * CONFIRMATION_SCALE[profile]) for call in calls)
+    assert bounds[0] < calls[0].args[1] < calls[1].args[1] < bounds[2]
 
 
 @pytest.mark.parametrize('profile', list(Profile))
@@ -150,12 +193,16 @@ def test_sign_text_stays_centered_without_an_arrow(profile, vienna, reason, draw
   else:
     current = replace(current, speed_mps=55 / 3.6 if reason == 'equal_speed' else None)
   font = fonts(profile)
-  SpeedLimitWidget(font, profile).render(current)
+  render_sign(SpeedLimitWidget(font, profile), current)
   drawing['arrow'].assert_not_called()
   for call in font.draw.call_args_list:
     text, role, size, x, _, _ = call.args
+    if reason in ('equal_speed', 'unknown_speed'):
+      continue
     left, right = font.horizontal_ink(text, role, size)
-    assert x + (left + right) / 2 == ((389 if vienna else 390) if profile == Profile.COMPACT else 345.75)
+    from openpilot.starpilot.ui.large_speed_geometry import LIMIT_RECTS, LARGE_SIGN_SCALE
+    center = LIMIT_RECTS[profile][0] + 59 * (1 if profile == Profile.COMPACT else LARGE_SIGN_SCALE)
+    assert abs(x + (left + right) / 2 - center) <= .5
 
 
 @pytest.mark.parametrize('profile', list(Profile))
@@ -180,7 +227,7 @@ def test_retained_limits_are_marked_last_and_have_no_actions(profile, vienna, la
     last_received_adjusted_limit_mps=55/3.6 if latest_received else None, effective_cluster_target_mps=45/3.6)
   current = replace(current, speed_limit=observation, appearance=replace(current.appearance, use_vienna_sign=vienna))
   font = fonts(profile)
-  SpeedLimitWidget(font, profile).render(current)
+  render_sign(SpeedLimitWidget(font, profile), current)
   texts = [call.args[0] for call in font.draw.call_args_list]
   assert texts.count('LAST') == 1
   assert ('50' if latest_received else '40') in texts
@@ -192,6 +239,7 @@ def test_retained_limits_are_marked_last_and_have_no_actions(profile, vienna, la
 def test_compact_set_speed_fades_after_adjustment_and_reappears_on_change():
   renderer = CompactHudRenderer(fonts(), Mock())
   current = state(drive_frame=1)
+  current = replace(current, speed_limit=replace(current.speed_limit, pending_speed_limit_mps=None))
   for now in range(10_000_000_000, 20_000_000_000, 100_000_000):
     alpha = renderer._set_speed_opacity(current, now)
   assert alpha < .01
@@ -201,11 +249,24 @@ def test_compact_set_speed_fades_after_adjustment_and_reappears_on_change():
   assert renderer._set_speed_opacity(replace(current, longitudinal_active=False), 20_000_000_000) == 0
 
 
+def test_compact_set_speed_stays_visible_during_confirmation_then_fades():
+  renderer = CompactHudRenderer(fonts(Profile.COMPACT), Mock())
+  current = state(drive_frame=1)
+  for now in range(10_000_000_000, 20_000_000_000, 100_000_000):
+    alpha = renderer._set_speed_opacity(current, now)
+  assert alpha > .99
+  resolved = replace(current, speed_limit=replace(current.speed_limit, pending_speed_limit_mps=None))
+  for now in range(20_000_000_000, 21_000_000_000, 16_666_667):
+    alpha = renderer._set_speed_opacity(resolved, now)
+  assert alpha < .01
+
+
 def test_compact_max_restores_dinish_number_label_and_shadow(drawing):
   from openpilot.starpilot.ui.presentation import FontRole, font_filename
   font = fonts(Profile.COMPACT)
   hud = CompactHudRenderer(font, Mock())
   current = state(drive_frame=1, cruise_kph=80)
+  current = replace(current, speed_limit=replace(current.speed_limit, pending_speed_limit_mps=None))
   hud.render_max_speed(current)
   hud.render_max_speed(replace(current, observed_ns=current.observed_ns + 20_000_000))
   assert [(call.args[0], call.args[1]) for call in font.draw.call_args_list] == [
@@ -219,6 +280,8 @@ def test_compact_max_restores_dinish_number_label_and_shadow(drawing):
 def test_large_limit_keeps_a_unit_when_set_speed_is_hidden():
   profile = Profile.LARGE
   current = state()
+  current = replace(current, speed_limit=replace(current.speed_limit, pending_speed_limit_mps=None))
+  current = replace(current, speed_limit=replace(current.speed_limit, pending_speed_limit_mps=None))
   current.customization['showMaxSpeed'] = False
   current.customization['layouts']['compact']['max_speed']['enabled'] = False
   font = fonts(profile)
@@ -227,21 +290,37 @@ def test_large_limit_keeps_a_unit_when_set_speed_is_hidden():
 
 
 @pytest.mark.parametrize('profile', list(Profile))
-def test_actions_have_only_fixed_size_words_divider_and_pressed_underline(profile, drawing):
-  from openpilot.starpilot.ui.large_speed_geometry import ACTION_TEXT
+def test_chooser_has_separate_tonal_actions_and_immediate_pressed_feedback(profile, drawing):
   view = OnroadView.__new__(OnroadView)
   view.fonts = fonts(profile)
+  if profile == Profile.LARGE:
+    view.unified_speed = UnifiedSpeedWidget(view.fonts)
+  else:
+    view.compact_hud = CompactHudRenderer(view.fonts, Mock())
   current = state(slc_prompt_open=True)
   view._slc_actions(current)
-  assert [(call.args[0], call.args[2]) for call in foreground_calls(view.fonts.draw)] == [
-    ('Accept', ACTION_TEXT[profile][0]), ('Decline', ACTION_TEXT[profile][0])]
-  assert len(foreground_calls(drawing['draw_line_ex'])) == 1
+  assert [call.args[0] for call in foreground_calls(view.fonts.draw)] == ['55', 'km/h', 'OSM 50 +5', 'Accept', 'Reject']
+  backgrounds = [rgba_tuple(call.args[-1]) for call in drawing['draw_rectangle_rounded'].call_args_list]
+  assert backgrounds[1] == (35, 74, 57, 255)
+  assert backgrounds[3] == (77, 46, 57, 255)
+  bounds = speed_limit_bounds(profile, current)
+  drawing['confirmation'].assert_called_once_with(bounds, opened=True)
+  assert bounds is not None
+  x, y, right, bottom = bounds
+  panel = rl.Rectangle(x, y, right - x, bottom - y)
+  accept, _, reject, _ = [call.args[0] for call in drawing['draw_rectangle_rounded'].call_args_list]
+  margin = accept.x - panel.x
+  assert margin > 0
+  assert reject.x - accept.x - accept.width == pytest.approx(margin, abs=.001)
+  assert panel.x + panel.width - reject.x - reject.width == pytest.approx(margin, abs=.001)
+  assert panel.y + panel.height - accept.y - accept.height == pytest.approx(margin, abs=.001)
+  assert accept.y == reject.y and accept.height == reject.height
+  drawing['draw_line_ex'].assert_not_called()
   view.pressed_action = lambda: slc_controls(profile, current)[0].request
-  drawing['draw_line_ex'].reset_mock()
+  drawing['draw_rectangle_rounded'].reset_mock()
   view._slc_actions(current)
-  assert len(foreground_calls(drawing['draw_line_ex'])) == 2
-  drawing['draw_rectangle_rounded'].assert_not_called()
-  drawing['draw_rectangle_rounded_lines_ex'].assert_not_called()
+  pressed = [rgba_tuple(call.args[-1]) for call in drawing['draw_rectangle_rounded'].call_args_list]
+  assert pressed[1] != backgrounds[1] and pressed[3] == backgrounds[3]
 
 
 @pytest.mark.parametrize('profile', list(Profile))

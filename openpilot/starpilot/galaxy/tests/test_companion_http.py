@@ -65,7 +65,7 @@ def test_auth_and_local_mutations(companion_http):
     status, body, _ = request('/api/companion/status', cookie=cookie)
     assert status == 200 and json.loads(body)['enabled']
     assert b'pass' not in body
-    assert request('/api/companion/qr.svg', cookie=cookie)[0] == 200
+    assert request('/api/companion/qr.svg', cookie=cookie)[0] == 404
 
 
 def test_apk_direct_download_without_cookie_and_head(companion_http, tmp_path):

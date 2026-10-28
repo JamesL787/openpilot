@@ -6,7 +6,10 @@ No old parsed CarState is restamped and no actuator command bypasses Card.
 from contextlib import ExitStack
 from unittest import mock
 
+import pytest
+
 from opendbc.car import structs
+from opendbc.car.toyota.values import CAR
 from opendbc.car.secoc import add_mac
 from opendbc.safety.tests.libsafety import libsafety_py
 from openpilot.cereal import messaging
@@ -24,17 +27,18 @@ class CapturePublisher:
     self.messages[service] = messaging.log_from_bytes(raw)
 
 
-def test_fresh_secoc_source_permission_sd_controls_card_sendcan_join():
+def run_joined(vehicle, alpha=False, ordinary=False):
   case = IoniqAvailabilityTests(methodName='runTest')
-  with actual_card(simulation=False) as (selected, _), ExitStack() as cleanup:
+  with actual_card(simulation=False, vehicle=vehicle, alpha=alpha) as (selected, _), ExitStack() as cleanup:
     cleanup.callback(case.doCleanups)
     sd, controls, step = case._authority_callers(
-      False, cp=selected.CP.as_reader().as_builder(), genuine_events=True)
+      ordinary, cp=selected.CP.as_reader().as_builder(), genuine_events=True)
     assert not selected.sm.simulation and not sd.sm.simulation and not controls.sm.simulation
     capture = CapturePublisher()
     cleanup.enter_context(mock.patch.object(selected, 'pm', capture))
     cleanup.enter_context(mock.patch('openpilot.selfdrive.car.card.REPLAY', False))
     transition = cleanup.enter_context(mock.patch.object(sd.state_machine, 'update', wraps=sd.state_machine.update))
+    radar_startup = cleanup.enter_context(mock.patch('opendbc.car.toyota.interface.disable_ecu'))
     apply = cleanup.enter_context(mock.patch.object(selected.CI, 'apply', wraps=selected.CI.apply))
     original_update_msgs = controls.sm.update_msgs
     def model_target(timestamp, messages):
@@ -53,17 +57,18 @@ def test_fresh_secoc_source_permission_sd_controls_card_sendcan_join():
     safety = libsafety_py.libsafety
     safety.init_tests()
     safety.set_alternative_experience(32)
-    safety.set_safety_hooks(structs.CarParams.SafetyModel.toyota, 2121)
+    word = selected.CP.safetyConfigs[0].safetyParam
+    safety.set_safety_hooks(structs.CarParams.SafetyModel.toyota, word)
     def reset_native():
       safety.set_alternative_experience(0)
       safety.set_safety_hooks(structs.CarParams.SafetyModel.noOutput, 0)
     cleanup.callback(reset_native)
     base = 10_000_000_000
-    warm, _ = parsed_state(selected.CI, now_ns=base - 80_000_000)
+    warm, _ = parsed_state(selected.CI, now_ns=base - 80_000_000, cruise=ordinary)
     assert warm.canValid and not warm.canTimeout
     original_message = messaging.new_message
     driving_torques = []
-    for tick, gear in enumerate((3,) * 12 + (0,)):
+    for tick, gear in enumerate((3,) * 6 + (4,) * 6 + (0, 1, 2)):
       now = base + tick * 10_000_000
       def clocked_message(*args, _stamp=now, **kwargs):
         message = original_message(*args, **kwargs)
@@ -74,16 +79,18 @@ def test_fresh_secoc_source_permission_sd_controls_card_sendcan_join():
 
       with mock.patch('openpilot.selfdrive.car.card.time.monotonic_ns', return_value=now), \
            mock.patch('openpilot.selfdrive.car.card.messaging.new_message', side_effect=clocked_message):
-        physical, frames = parsed_state(selected.CI, gear=gear, now_ns=now, ticks=1)
+        physical, frames = parsed_state(selected.CI, gear=gear, now_ns=now, ticks=1, cruise=ordinary)
         assert physical.canValid and not physical.canTimeout
         safety.set_timer(now // 1000)
         safety.set_aol_test_heartbeat(True)
         for address, payload, bus in frames:
           assert safety.safety_rx_hook(libsafety_py.make_CANPacket(address, bus, payload))
-        safety.aol_set_host_request(1)
+        want_long = ordinary and selected.CP.openpilotLongitudinalControl
+        wanted = 3 if want_long else 1
+        safety.aol_set_host_request(wanted)
         request = safety.aol_get_request_mask()
         permission = safety.aol_get_permission_mask()
-        assert request == 1 and permission == (1 if gear == 3 else 0)
+        assert request == wanted and permission == (wanted if gear in (3, 4) else 0)
         selected.aol_card_intent.update(physical.as_reader(), now_ns=now)
         selected.state_publish(physical, None)
         car_source = capture.messages['carState']
@@ -93,21 +100,22 @@ def test_fresh_secoc_source_permission_sd_controls_card_sendcan_join():
         before = transition.call_count
         axis, _, command = step(
           tick, car_state_message=car_source.as_builder(), intent_message=intent_source.as_builder(),
-          allowed=bool(permission & 1), long_allowed=False,
-          native_request_lat=bool(request & 1), native_request_long=False,
-          panda_controls_allowed=False)
+          allowed=bool(permission & 1), long_allowed=bool(permission & 2),
+          native_request_lat=bool(request & 1), native_request_long=bool(request & 2),
+          panda_controls_allowed=bool(safety.get_controls_allowed()))
         assert transition.call_count == before + 1
         assert axis.sourceCarStateMonoTime == car_source.logMonoTime == now
         assert axis.observedMonoTime == now and axis.validUntilMonoTime == now + 30_000_000
         assert axis.intentProducerSessionId == selected.slc_producer_session
-        assert command.latActive == (gear == 3) and not command.longActive
+        assert command.latActive == (gear in (3, 4))
+        assert command.longActive == (want_long and gear in (3, 4))
         native = decode_safety(sd.sm['aolSafetyWire'])
         assert native is not None and native.observedMonoTime == now
-        assert native.safetyParam == 2121 and native.axisSessionId == axis.sessionId
+        assert native.safetyParam == word and native.axisSessionId == axis.sessionId
         assert native.requestedLateral == bool(request & 1)
         assert native.lateralAllowed == bool(permission & 1)
         assert len(native.pandaInventory) == 1
-        assert native.pandaInventory[0].safetyParam == 2121
+        assert native.pandaInventory[0].safetyParam == word
         assert native.pandaInventory[0].alternativeExperience == 32
         control_source = controls.pm.messages['carControl']
         assert control_source.logMonoTime == now
@@ -124,14 +132,35 @@ def test_fresh_secoc_source_permission_sd_controls_card_sendcan_join():
         assert sent.valid and abs(int(sent.logMonoTime) - now) <= 1
         frame = next(packet for packet in sent.sendcan if packet.address == 0x2E4)
         steer = (frame.address, bytes(frame.dat), frame.src)
-        assert len(steer[1]) == 8
+        assert len(steer[1]) == (8 if selected.CP.secOcRequired else 5)
         assert bool(steer[1][0] & 1) == command.latActive
-        assert steer == add_mac(bytes.fromhex(TEST_KEY), 1, 1, counter, (steer[0], steer[1][:4], steer[2]))
+        if selected.CP.secOcRequired:
+          assert steer == add_mac(bytes.fromhex(TEST_KEY), 1, 1, counter, (steer[0], steer[1][:4], steer[2]))
         assert safety.safety_tx_hook(libsafety_py.make_CANPacket(steer[0], steer[2], steer[1]))
+        if alpha:
+          keepalive = [packet for packet in sent.sendcan if packet.address == 0x750]
+          for packet in keepalive:
+            assert bytes(packet.dat) == bytes.fromhex('0f023e0000000000')
+            assert safety.safety_tx_hook(libsafety_py.make_CANPacket(packet.address, packet.src, packet.dat))
+        accel_frames = [packet for packet in sent.sendcan if packet.address == 0x183]
+        if not selected.CP.openpilotLongitudinalControl:
+          assert not accel_frames
+        for packet in accel_frames:
+          assert safety.safety_tx_hook(libsafety_py.make_CANPacket(packet.address, packet.src, packet.dat))
         torque = int.from_bytes(steer[1][1:3], 'big', signed=True)
-        if gear == 3:
+        if gear in (3, 4):
           driving_torques.append(torque)
           assert abs(torque) <= min(1500, 15 * (tick + 1))
         else:
           assert not axis.lateralActive and torque == 0
+    assert radar_startup.call_count == int(alpha)
+    if alpha:
+      assert radar_startup.call_args.kwargs == {'bus': 0, 'addr': 0x750, 'sub_addr': 0xf, 'com_cont_req': bytes.fromhex('280101')}
     assert any(torque != 0 for torque in driving_torques), 'Fresh joined Controls must produce actual steering torque'
+
+
+@pytest.mark.parametrize('vehicle,alpha,ordinary', ((CAR.TOYOTA_SIENNA_4TH_GEN, False, False),
+    (CAR.TOYOTA_RAV4_PRIME, False, False), (CAR.TOYOTA_YARIS, False, False),
+    (CAR.TOYOTA_YARIS, True, False), (CAR.TOYOTA_YARIS, False, True), (CAR.TOYOTA_YARIS, True, True)))
+def test_fresh_secoc_source_permission_sd_controls_card_sendcan_join(vehicle, alpha, ordinary):
+  run_joined(vehicle, alpha, ordinary)

@@ -27,8 +27,8 @@
       "segment": "regenAFB9780D823|2025-04-08--23-00-34--0",
       "process": "card",
       "file": "regenAFB9780D823_2025-04-08--23-00-34--0_card.zst",
-      "bytes": 281385,
-      "sha256": "7b5959f415943ba3bcf977734f0a55385173206ce6c295fe0243658f9f17d84a",
+      "bytes": 301448,
+      "sha256": "8a4ad9101c3a26776b1fe8339e8575b50442c4264f102aa0027d441d176091ca",
       "input_sha256": "4cc51a77bf8d128d5720fd692e5a0994c887ee35fdd949cc0ce54d4215e2b7a2",
       "input_bytes": 12527194,
       "official_baseline_commit": "ec95db3f1fa19f76940497fedfdb62e09ea19912",
@@ -38,8 +38,8 @@
       "official_baseline_sha256": "e3ac4fc1ce239d1bb864e32d1acf6b33ad134a1bf898ef739a0cc3faf3b18d58",
       "config_sha256": "560c1060f4d2e43810e7bbd55d5f361a828bdb027d60f308b2e1d614222a2078",
       "car_fingerprint": "KIA_EV6",
-      "contract": "CAN-FD torque cap 409 with speed-dependent slew limits; torque, normalized torque output and dependent LKAS checksum reflect that contract. Counters, enables and remaining compared fields are unchanged. Initial CarState consumes the first recorded CAN batch; its speed-filter seed and subsequent acceleration transient follow that batch.",
-      "producing_source_snapshot": "fff1f5baa746c1c7978c2308d9cd9efa8c3cb660+source-sha256:0048bb8b3899a47a59e79e728f8426244949583ae53e27bbdb3363c33199e7ca"
+      "contract": "CAN-FD torque cap 409 with speed-dependent slew limits; torque, normalized torque output and dependent LKAS checksum reflect that contract. Counters, enables and remaining compared fields are unchanged. Initial CarState consumes the first recorded CAN batch; its speed-filter seed and subsequent acceleration transient follow that batch. Camera LKAS damping is 0 as in Dom; all 5902 changed payloads match the hosted HYUNDAI2 replay byte-for-byte. Only damping byte 8 and its CRC differ; all other compared fields and messages are retained.",
+      "producing_source_snapshot": "d41159e65b399ff3b5ef5fd339822b6c628c7096"
     },
     {
       "segment": "regen1455E3B4BDF|2025-04-09--03-26-06--0",
@@ -380,13 +380,13 @@
       "official_baseline_bytes": 368030,
       "official_baseline_sha256": "a987635c68085a9c9c25dbb92e23dc859d6a1644cd84f4b968a047b95a1c9033",
       "car_fingerprint": "TOYOTA_COROLLA_TSS2",
-      "bytes": 341545,
-      "sha256": "0ba8b7d4a23fa2f22e7354dc5dda6e07bbfdd2ae21c0a4f205e34e5b4fe567ae",
+      "bytes": 368163,
+      "sha256": "e491c7c017675411285abf0e1626185f458a6571b173833f70ba64b762c84dc3",
       "input_sha256": "876100021b13ddd1a39efad5fdb4e7376ad5b298f64bf390b5f58742ffc6e429",
       "input_bytes": 9272538,
       "config_sha256": "560c1060f4d2e43810e7bbd55d5f361a828bdb027d60f308b2e1d614222a2078",
-      "contract": "Toyota EPS lateral availability extends to zero speed: steerAtStandstill equals minSteerSpeed<=0. Exactly two CarParams publications change false totrue; all other fields/messages and prior HUD/safety/tune contracts are retained.",
-      "producing_source_snapshot": "CI-1fdc8b89e8016be62df8e289d1f5f67561fdd6d7-CP-only-two-event-substitution",
+      "contract": "Current Toyota lead-dependent permit-braking hysteresis fromc6f00f7a4d changes only PERMIT_BRAKING and its checksum in1021 ACC_CONTROL frames. All other compared fields/messages are retained; no steering, lead, pedal, native or actuator-limit checks are relaxed.",
+      "producing_source_snapshot": "5fc5709e4d54f31dd575e66333271dbb260d5e9b",
       "review_evidence": {
         "ci_run": 39895639195,
         "ci_artifact": 12476424903,
@@ -484,7 +484,9 @@
             }
           }
         }
-      }
+      },
+      "intentional_change_commit": "c6f00f7a4d1f60734897c12f160715a6a49775f2",
+      "hosted_evidence_run": 40521627641
     },
     {
       "segment": "regen218A4DCFAA1|2025-04-08--22-57-51--0",
@@ -499,10 +501,10 @@
       "input_bytes": 10846201,
       "input_sha256": "6c028c0d40328fc00fa12acf91dba30d9f152e89d99a7089aadac62f6c7d5d64",
       "config_sha256": "560c1060f4d2e43810e7bbd55d5f361a828bdb027d60f308b2e1d614222a2078",
-      "bytes": 285508,
-      "sha256": "f36d45ae9966c8705b529137a0cc183e35de68269f65ab2fab4a2c1b3e3ed95b",
-      "contract": "Toyota EPS lateral availability extends to zero speed: steerAtStandstill equals minSteerSpeed<=0. Exactly two CarParams publications change false totrue; all other fields/messages and prior HUD/safety/tune contracts are retained.",
-      "producing_source_snapshot": "CI-1fdc8b89e8016be62df8e289d1f5f67561fdd6d7-CP-only-two-event-substitution",
+      "bytes": 305725,
+      "sha256": "b883532ae2872fd21e27c46adafcd3c0b622915eec19fc5bfb6f75fdf6e55a70",
+      "contract": "Current stock Prius factory uses qualified safety profile0x6242, HYBRID flag and marked Card AE32. Exactly two CarParams events change; all remaining compared messages and fields are retained. Native-positive parser/Controls/Card cases for this current profile pass independently.",
+      "producing_source_snapshot": "5fc5709e4d54f31dd575e66333271dbb260d5e9b",
       "review_evidence": {
         "ci_run": 39895639195,
         "ci_artifact": 12476424903,
@@ -563,7 +565,9 @@
             "openpilot/selfdrive/test/process_replay/process_replay.py": "a6f18da56ba8521328d5a2ac57de5426ef2a3bf62f9e7887ff76ba1c52491c09"
           }
         }
-      }
+      },
+      "intentional_change_commit": "c6f00f7a4d1f60734897c12f160715a6a49775f2",
+      "hosted_evidence_run": 40521627641
     },
     {
       "segment": "regenAA0FC4ED71E|2025-04-08--22-57-50--0",
@@ -912,6 +916,46 @@
         "reviewed_reference_selector_verified": true,
         "completed_output_matches_selected_reference": true
       }
+    },
+    {
+      "segment": "regen218A4DCFAA1|2025-04-08--22-57-51--0",
+      "process": "selfdrived",
+      "file": "regen218A4DCFAA1_2025-04-08--22-57-51--0_selfdrived.zst",
+      "input_sha256": "6c028c0d40328fc00fa12acf91dba30d9f152e89d99a7089aadac62f6c7d5d64",
+      "input_bytes": 10846201,
+      "official_baseline_commit": "ec95db3f1fa19f76940497fedfdb62e09ea19912",
+      "official_artifact_commit": "9ae451c262c7402c9623f3baa1580c6242d6777b",
+      "official_baseline_url": "https://raw.githubusercontent.com/commaai/ci-artifacts/9ae451c262c7402c9623f3baa1580c6242d6777b/regen218A4DCFAA1_2025-04-08--22-57-51--0_selfdrived_ec95db3f1fa19f76940497fedfdb62e09ea19912.zst",
+      "official_baseline_bytes": 29357,
+      "official_baseline_sha256": "5b28bcc8aa77a544efa59c8f8200b714ed265d8ac965dcc63030c07266f668f4",
+      "config_sha256": "6e62fd1209b006c6512452b007e65190dc720280d6d976fabf58947e2acc7981",
+      "car_fingerprint": "TOYOTA_PRIUS",
+      "bytes": 29572,
+      "sha256": "6cbd17ae9f0dd3d66898c9bd767e1ee705a9f88edef58e41cddd989aaf22f813",
+      "contract": "Current stock Prius factory safety profile0x6242 does not match the historical Panda report0x242. Preserve controlsMismatch and refuse engagement; no Panda configuration, health, permission or recorded input is rewritten. Current-profile native-positive steering is separately qualified by test_stock_aol parser/native/Controls/Card callers.",
+      "producing_source_snapshot": "5fc5709e4d54f31dd575e66333271dbb260d5e9b",
+      "intentional_change_commit": "c6f00f7a4d1f60734897c12f160715a6a49775f2",
+      "hosted_evidence_run": 40521627641
+    },
+    {
+      "segment": "regen218A4DCFAA1|2025-04-08--22-57-51--0",
+      "process": "controlsd",
+      "file": "regen218A4DCFAA1_2025-04-08--22-57-51--0_controlsd.zst",
+      "input_sha256": "6c028c0d40328fc00fa12acf91dba30d9f152e89d99a7089aadac62f6c7d5d64",
+      "input_bytes": 10846201,
+      "official_baseline_commit": "ec95db3f1fa19f76940497fedfdb62e09ea19912",
+      "official_artifact_commit": "9ae451c262c7402c9623f3baa1580c6242d6777b",
+      "official_baseline_url": "https://raw.githubusercontent.com/commaai/ci-artifacts/9ae451c262c7402c9623f3baa1580c6242d6777b/regen218A4DCFAA1_2025-04-08--22-57-51--0_controlsd_ec95db3f1fa19f76940497fedfdb62e09ea19912.zst",
+      "official_baseline_bytes": 207067,
+      "official_baseline_sha256": "3e7107219ccfaebd4315873130d1d5fd49e1c5820e62a6bdbba8811336b0c366",
+      "config_sha256": "132acceff1ba3e33c903694e42a6442e42bbf71319bcf4e0de1b020cbfc97111",
+      "car_fingerprint": "TOYOTA_PRIUS",
+      "bytes": 164230,
+      "sha256": "958ce87657ae33e26d704c559961d570cc5e1e2a32df35e5c4ff30d62179e8df",
+      "contract": "Historical selfdriveState is not a native grant for the current stock Prius profile0x6242. Steering remains inactive without current native authority; only lateral command and dependent torque-state fields differ. Current-profile native-positive steering remains independently covered.",
+      "producing_source_snapshot": "5fc5709e4d54f31dd575e66333271dbb260d5e9b",
+      "intentional_change_commit": "c6f00f7a4d1f60734897c12f160715a6a49775f2",
+      "hosted_evidence_run": 40521627641
     }
   ],
   "source_snapshots": {

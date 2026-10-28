@@ -1,13 +1,13 @@
 # Sentry motion events
 
 This is the parked motion-event part of Sentry. Galaxy can list local event
-metadata at `#/cameras/events`. Camera capture, image galleries, notifications
-and remote access are not implemented here. Motion detection has
+metadata and captured images at `#/cameras/events`. Galaxy supports browser push,
+Discord, webhooks, ntfy, and optional Firebase app push through the companion relay. Motion detection has
 not yet been qualified on a physical device or vehicle.
 
 The manager runs it only on device hardware when both
-`STARPILOT_SENTRY_DEVELOPMENT=1` and a valid enabled `SentryMotionPreferences`
-document are present. Ordinary startup is unchanged. The same manager-owned
+the vehicle is parked and a valid enabled `SentryMotionPreferences`
+document is present. The same manager-owned
 `sensord` supplies acceleration onroad and, under that explicit opt-in, while
 parked. Sentry never starts another sensor, camera or power service.
 

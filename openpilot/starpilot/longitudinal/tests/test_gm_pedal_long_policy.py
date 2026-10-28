@@ -342,7 +342,27 @@ class GMPedalLongPolicyTests(unittest.TestCase):
           output = float(longitudinal.update(True, state(), target, False, (-4.0, 2.0)))
           self.assertTrue(expected_range[0] <= output <= expected_range[1])
           controller, messages = controller_step(cp, output)
-          self.assertTrue(any(message[0] == 0x315 for message in messages))
+          # The sparse controller fixture has no factory clock and cannot emit braking.
+          self.assertFalse(any(message[0] == 0x315 for message in messages))
+          from opendbc.can import CANPacker
+          from opendbc.car import Bus
+          from opendbc.car.gm.tests.test_bolt_pedal import TestBoltPedalStartupParser
+          ci, _ = TestBoltPedalStartupParser().stream(cp)
+          packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
+          wheels = [packer.make_can_msg('EBCMWheelSpdFront', 0, {'FLWheelSpd': 43.2, 'FRWheelSpd': 43.2}),
+                    packer.make_can_msg('EBCMWheelSpdRear', 0, {'RLWheelSpd': 43.2, 'RRWheelSpd': 43.2,
+                                                              'RLWheelDir': 1, 'RRWheelDir': 1})]
+          parsed = ci.update([(3_490_000_000, wheels)])
+          self.assertTrue(parsed.canValid)
+          self.assertFalse(parsed.canTimeout)
+          self.assertGreater(parsed.vEgo, 10.)
+          self.assertEqual(ci.CS.bolt_acc_brake_clock_ns, 3_480_000_000)
+          control = structs.CarControl(enabled=True, longActive=True)
+          control.actuators.accel = output
+          controller = CarController(DBC[cp.carFingerprint], cp)
+          controller.frame = controller.last_steer_frame = 4
+          _, messages = controller.update(control.as_reader(), ci.CS, 3_490_000_000)
+          self.assertEqual(sum(message[0] == 0x315 for message in messages), 1)
           self.assertEqual(controller.apply_brake > 0, friction)
           self.assertTrue(0.0 <= controller.pedal_steady <= 1.0)
     for candidate in PEDAL_BOLT_CAR - {ACC_PEDAL}:

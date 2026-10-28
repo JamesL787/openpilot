@@ -57,7 +57,7 @@ export function snapshot() {
   metadata.roadColorFields = [{ id: 'path', label: 'Path', default: '#30FF9CFF' },
     { id: 'pathEdge', label: 'Path edges', default: '#00FF40FF' }, { id: 'laneLines', label: 'Lane lines', default: '#FFFFFFFF' }]
   metadata.profiles.compact.widgets.speed_limit_actions.visualInsetTop = 32
-  const document = { version: 10, roadColors: { large: {}, compact: {} }, widgetColors: { large: {}, compact: {} }, palette: Object.fromEntries(metadata.paletteFields.map((field) => [field.id, field.default])),
+  const document = { version: 11, roadColors: { large: {}, compact: {} }, widgetColors: { large: {}, compact: {} }, palette: Object.fromEntries(metadata.paletteFields.map((field) => [field.id, field.default])),
     layouts: Object.fromEntries(Object.entries(metadata.profiles).map(([id, profile]) => [id,
       Object.fromEntries(Object.entries(profile.widgets).map(([key, definition]) => [key,
         { ...definition.default, ...(definition.resizable ? { size: definition.resizable.default } : {}) }]))])) }
@@ -94,6 +94,26 @@ withMode.document.layouts.compact[modeId].enabled = true
 assert.equal(validDocument(withMode.document, withMode.metadata), false)
 withMode.document.layouts.compact[modeId].y = 110
 assert.equal(validDocument(withMode.document, withMode.metadata), true)
+
+// Hidden widgets free their space, but adding them back still requires a valid placement.
+{
+  const sample = copy(data), layout = sample.document.layouts.compact, profile = sample.metadata.profiles.compact
+  layout.max_speed.enabled = false
+  assert.deepEqual(clampPlacement(profile, "speed_limit_actions", 80, 80, layout), { x: 80, y: 80 })
+  Object.assign(layout.speed_limit_actions, { x: 80, y: 80 })
+  assert.equal(validSnapshot(sample), true)
+  assert.equal(clampPlacement(profile, "max_speed", 0, 0, layout), null)
+  layout.max_speed.enabled = true
+  assert.equal(validDocument(sample.document, sample.metadata), false)
+  assert.equal(clampPlacement(profile, "speed_limit_actions", 80, 80, layout), null)
+  layout.max_speed.enabled = false
+  layout.max_speed.x = -1
+  assert.equal(validDocument(sample.document, sample.metadata), false)
+  layout.max_speed.x = 0
+  layout.max_speed.enabled = "false"
+  assert.equal(validDocument(sample.document, sample.metadata), false)
+}
+
 assert.equal(withAlpha("#AABBCC80", 200 / 255), "#AABBCC64")
 assert.equal(withAlpha("#AABBCCFF", .9), "#AABBCCe5")
 assert.equal(validSnapshot(data), true)
@@ -529,18 +549,20 @@ vm.state.data.metadata.profiles.large.widgets.cruise_limits.sourcesExtent = { in
 vm.state.selected = "cruise_limits"
 const sourcesCard = vm.layout.cruise_limits, sourcesActions = vm.layout.speed_limit_actions
 const actionsBefore = { ...sourcesActions }
-Object.assign(sourcesActions, { x: sourcesCard.x, y: sourcesCard.y + 522 + 22 })
+const sourceDx = vm.profile.widgets.speed_limit_actions.default.x - vm.profile.widgets.cruise_limits.default.x
+const sourceGap = vm.profile.widgets.speed_limit_actions.default.y - vm.profile.widgets.cruise_limits.default.y - 522
+Object.assign(sourcesActions, { x: sourcesCard.x + sourceDx, y: sourcesCard.y + 522 + sourceGap })
 vm.setSpeedSources("speedSources", true)
 assert.equal(vm.state.draft.speedSources, true)
 assert.equal(vm.profile.widgets.cruise_limits.height, 522 + 76)
-assert.equal(sourcesActions.y, sourcesCard.y + 522 + 76 + 22)
+assert.equal(sourcesActions.y, sourcesCard.y + 522 + 76 + sourceGap)
 vm.setSpeedSources("speedSourcesCard", true)
 assert.equal(vm.profile.widgets.cruise_limits.height, 522 + 84)
-assert.equal(sourcesActions.y, sourcesCard.y + 522 + 84 + 22)
+assert.equal(sourcesActions.y, sourcesCard.y + 522 + 84 + sourceGap)
 vm.undo(); vm.undo()
 assert.notEqual(vm.state.draft.speedSources, true)
 assert.equal(vm.profile.widgets.cruise_limits.height, 522)
-assert.equal(vm.layout.speed_limit_actions.y, vm.layout.cruise_limits.y + 522 + 22)
+assert.equal(vm.layout.speed_limit_actions.y, vm.layout.cruise_limits.y + 522 + sourceGap)
 Object.assign(vm.layout.speed_limit_actions, actionsBefore)
 vm.state.selected = "current_speed"
 vm.setSpeedSources("speedSources", true)
@@ -1185,3 +1207,16 @@ failedSave.feed.save(failedSave.feed.data.document)
 await failedSave.reply(1, { ...withDisplayData(), failed: ["Lead Info"] })
 assert.match(failedSave.updates.at(-1).notice, /did not change: Lead Info/)
 console.log('Display options, target switching and reload during polling passed')
+
+// A closed developer sidebar makes the torque arc taller than its narrow-road box.
+{
+  const sample = snapshot(), profile = sample.metadata.profiles.large
+  profile.widgets.cruise_limits.height = 168
+  profile.widgets.cruise_limits.confirmation = { x: 172, y: -12, width: 419, height: 204 }
+  profile.widgets.torque_bar.confirmationObstacle = { x: 0, y: -48, width: 1250, height: 289 }
+  assert.equal(documentHelpers.overlapsReserved(profile, 'cruise_limits', 88, 550, sample.document.layouts.large), true)
+  delete profile.widgets.torque_bar.confirmationObstacle
+  assert.equal(documentHelpers.overlapsReserved(profile, 'cruise_limits', 88, 550, sample.document.layouts.large), false)
+  profile.widgets.cruise_limits.height = 276
+  assert.equal(documentHelpers.overlapsReserved(profile, 'cruise_limits', 88, 500, sample.document.layouts.large), true)
+}

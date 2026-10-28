@@ -14,6 +14,7 @@ import struct
 from openpilot.common.constants import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.starpilot.flm.canonical_surface_adapter import NAMES, PROBE_GROUPS, probe_names, full_profile_sha256
 from openpilot.starpilot.flm.fullrate_collector import ControlEvidence, AppliedEvidence
+from openpilot.starpilot.flm.live_trial_contract import MAX_STEP
 from openpilot.starpilot.flm.live_tracking import TrackingEpisode, HookSensitivity
 from openpilot.starpilot.flm.live_tracking_response import validate_certificate, validate_response_witness, physical_calibration_generation
 from openpilot.starpilot.flm.original_source_capture import OriginalSourcePose, validate_pose
@@ -562,6 +563,18 @@ class TrackingEpisodeBuilder:
   def _sensitivities(self, points, probes, *, requested=None):
     rows = self._gradient_rows(points, probes)
     coverage = self._gradient_coverage(points, probes, set(probes) if requested is None else requested, rows)
+    def directed_effect(row, side):
+      coordinate = getattr(row, side + '_coordinate') - row.baseline_coordinate
+      native = getattr(row, side + '_delivered') - row.baseline_delivered
+      native_width = row.plus_delivered - row.minus_delivered
+      if coordinate == 0 or native_width == 0:
+        return 0.0
+      # Recover the same measured/native conversion used by the secant,
+      # then measure THIS direction against the encoded baseline. A visible
+      # opposite probe cannot make a quantized selected direction visible.
+      gain = abs(row.physical_derivative * (row.plus_coordinate - row.minus_coordinate) / native_width)
+      return abs(native) * gain * MAX_STEP / abs(coordinate)
+
     return tuple(
       HookSensitivity(
         name,
@@ -571,6 +584,10 @@ class TrackingEpisodeBuilder:
         len(values),
         math.sqrt(sum(row.max_step_physical_delta**2 for _, row in values) / len(values)),
         coverage.get(name, False),
+        sum(row.minus_delivered != row.baseline_delivered for _, row in values),
+        sum(row.plus_delivered != row.baseline_delivered for _, row in values),
+        math.sqrt(sum(directed_effect(row, 'minus')**2 for _, row in values) / len(values)),
+        math.sqrt(sum(directed_effect(row, 'plus')**2 for _, row in values) / len(values)),
       )
       for name, values in rows.items()
       if values

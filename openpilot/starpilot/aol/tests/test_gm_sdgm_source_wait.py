@@ -48,17 +48,20 @@ class Capture:
     self.messages[name] = messaging.log_from_bytes(raw)
 
 
-def joined_case(cleanup, bridge, *, c9=False, pedal='none', engage=False):
+def joined_case(cleanup, bridge, *, c9=False, pedal='none', engage=False, cp=None):
   saved = Params()
   cleanup.callback(saved._finalizer)
   for key in ('OpenpilotEnabledToggle', 'AlwaysOnLateral', 'AlphaLongitudinalEnabled'):
     saved.put_bool(key, True, block=True)
-  cp = sdgm_params(alpha=True, brake_c9=c9)
+  default_sdgm = cp is None
+  cp = sdgm_params(alpha=True, brake_c9=c9) if cp is None else cp
   card = gm_fixture.TestGmAol.card(cp, saved)
   cleanup.callback(card.vehicle_startup.close)
-  assert card.CP.flags == 16 and card.CP.alternativeExperience == 32
-  if not c9:
-    assert card.CP.safetyConfigs[0].safetyParam == 0x5007
+  assert card.CP.flags == cp.flags and card.CP.alternativeExperience == 32
+  assert card.CP.safetyConfigs[0].safetyParam == cp.safetyConfigs[0].safetyParam
+  assert card.CP.pcmCruise == cp.pcmCruise and card.CP.openpilotLongitudinalControl == cp.openpilotLongitudinalControl
+  if default_sdgm and not c9:
+    assert card.CP.flags == 16 and card.CP.safetyConfigs[0].safetyParam == 0x5007
   card.ci_initialized = True  # No ECU/device I/O; native permission is earned below.
   card.pm = Capture()
   case = caller_fixture.IoniqAvailabilityTests(methodName='runTest')

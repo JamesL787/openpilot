@@ -53,7 +53,14 @@ def test_exact_identity_current_tunes_and_stock_pair(candidate, address, stock):
     'steerRatio',
     'centerToFront',
   ):
-    assert cp.to_dict()[field] == baseline.to_dict()[field], field
+    if field == 'longitudinalActuatorDelay':
+      expected_delay = (.05 if candidate in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) or
+                        candidate == CAR.TOYOTA_CAMRY and cp.flags & ToyotaFlags.HYBRID else
+                        .4 if candidate == CAR.TOYOTA_HIGHLANDER and not cp.flags & ToyotaFlags.HYBRID else
+                        .5 if candidate == CAR.TOYOTA_SIENNA else baseline.longitudinalActuatorDelay)
+      assert cp.longitudinalActuatorDelay == pytest.approx(expected_delay)
+    else:
+      assert cp.to_dict()[field] == baseline.to_dict()[field], field
   if stock:
     assert dsu_bypass.prepare_stock(cp) and dsu_bypass.configured(cp) and qualified(cp)
     assert not cp.openpilotLongitudinalControl and cp.safetyConfigs[0].safetyParam == dsu_bypass.PROFILES[candidate] | 0x200

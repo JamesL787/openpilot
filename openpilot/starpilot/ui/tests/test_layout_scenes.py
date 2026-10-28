@@ -63,7 +63,7 @@ def test_every_scene_matches_native_border_mode_and_widget_visibility(target):
       if scene['id'] != 'general':
         expected['stopped_timer'] = state.stopped_duration_s is None
         expected['torque_bar'] = not state.lateral_active
-        expected['speed_limit_actions'] = not slc_controls(profile, state)
+        expected['speed_limit_actions'] = scene['id'] in ('slc_pending', 'slc_notice') or not slc_controls(profile, state)
         if profile == Profile.LARGE:
           expected['cem_gauge'] = gauge_data(state) is None
         else:

@@ -54,6 +54,6 @@ def create_intent(cp, settings):
 
 
 def sng_standstill_lateral_inhibit(cp, state):
-  # Native still requires movement. Withdraw the request before its expected denial,
+  # All stock Subaru native profiles require movement. Withdraw the request before its expected denial,
   # preserving ordinary stock ACC without granting either active axis.
-  return bool(qualified(cp, marked_only=True) and cp.safetyConfigs[0].safetyParam in (8, 520) and state.standstill)
+  return bool(qualified(cp, marked_only=True) and state.standstill)

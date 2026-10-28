@@ -134,7 +134,14 @@ class FordCardIntent(AolCardIntent):
       self.main_available = available
     if self.auto_main and not available:
       self.allowed_latch = False
+    if not any(self.settings.cancel_actions):
+      # Unassigned CANCEL belongs to cruise. Keep it in the published CarState
+      # and ordinary event path, but it is not a separate lateral toggle.
+      events = [event for event in events if event.type != structs.CarState.ButtonEvent.Type.cancel]
     state.buttonEvents = events
+    if self.auto_main and self.main_pulse:
+      # Automatic MAIN-on arms AOL even if ordinary cruise engaged first.
+      kwargs['standard_enabled'] = False
     super().update(state.as_reader(), **kwargs)
 
 
@@ -165,5 +172,34 @@ def temporary_eps_pedal_recovery(cp, state):
       state.gearShifter == structs.CarState.GearShifter.drive and not state.regenBraking and
       not state.doorOpen and not state.seatbeltUnlatched and not state.accFaulted and
       not state.vehicleSensorsInvalid and not state.steeringDisengage and not state.buttonEvents)
+  except (AttributeError, KeyError, IndexError, TypeError, ValueError, OverflowError):
+    return False
+
+
+def physical_cancel_lateral_allowed(cp, cs, intent, native, *, settings, previous,
+                                    source_ns, now_ns, axis_session_id) -> bool:
+  """Cruise CANCEL may retain only an already active, independently granted LAT axis."""
+  from openpilot.starpilot.aol.intent import ButtonType
+  from openpilot.starpilot.aol.runtime import (AXIS_MAX_AGE_NS, INTENT_MAX_AGE_NS, SAFETY_MAX_AGE_NS,
+                                               native_inventory_matches_cp)
+  try:
+    return bool(qualified(cp, marked_only=True) and settings is not None and settings.enabled and not any(settings.cancel_actions) and
+      previous is not None and previous.lateral_active and previous.native_acknowledged and
+      intent is not None and intent.settingsQualified and intent.allowedLatch and intent.lateralArmed and
+      not intent.pauseLateral and intent.producerSessionId and intent.carStateLogMonoTime == source_ns and
+      0 < source_ns <= intent.observedMonoTime <= now_ns <= intent.validUntilMonoTime and
+      now_ns - source_ns <= AXIS_MAX_AGE_NS and now_ns - intent.observedMonoTime <= INTENT_MAX_AGE_NS and
+      intent.validUntilMonoTime - intent.observedMonoTime <= SAFETY_MAX_AGE_NS and
+      cs.canValid and not cs.canTimeout and cs.cruiseState.available and not cs.steerFaultTemporary and
+      not cs.steerFaultPermanent and not cs.accFaulted and not cs.doorOpen and not cs.seatbeltUnlatched and
+      not cs.vehicleSensorsInvalid and cs.gearShifter == structs.CarState.GearShifter.drive and
+      any(event.type == ButtonType.cancel for event in cs.buttonEvents) and
+      native is not None and native.compatible and int(native.protocolVersion) == 1 and
+      axis_session_id and native.axisSessionId == axis_session_id and native.requestedLateral and native.lateralAllowed and
+      native_accepts_cp(cp, native.safetyModel, native.safetyParam) and native.pandaInventory and
+      native_inventory_matches_cp(native, cp) and
+      0 < native.observedMonoTime <= now_ns <= native.validUntilMonoTime and
+      now_ns - native.observedMonoTime <= SAFETY_MAX_AGE_NS and
+      native.validUntilMonoTime - native.observedMonoTime <= SAFETY_MAX_AGE_NS)
   except (AttributeError, KeyError, IndexError, TypeError, ValueError, OverflowError):
     return False

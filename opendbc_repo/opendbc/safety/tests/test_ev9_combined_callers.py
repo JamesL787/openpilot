@@ -1,5 +1,7 @@
 """Same real pending owner, actual callers, C++ requests and native emitted frames."""
 import os
+
+import pytest
 from threading import Event
 from time import perf_counter
 from unittest.mock import patch
@@ -21,7 +23,8 @@ from openpilot.starpilot.aol.tests.test_classic_location_stock_intent import hos
 from openpilot.starpilot.aol.wire import PandaSlot, SafetyState, encode_safety
 
 
-def test_pending_ev9_to_real_card_callers_cpp_native_lateral_and_pedal_recovery(monkeypatch, host_heartbeat_bridge):
+@pytest.mark.parametrize('main_available_on_arm', [False, True])
+def test_pending_ev9_to_real_card_callers_cpp_native_lateral_and_pedal_recovery(monkeypatch, host_heartbeat_bridge, main_available_on_arm):
   case = native_fixture.TestEV9PendingControllerNativeDebug(methodName='runTest')
   callers = caller_fixture.IoniqAvailabilityTests(methodName='runTest')
   owner = card = None
@@ -241,22 +244,29 @@ def test_pending_ev9_to_real_card_callers_cpp_native_lateral_and_pedal_recovery(
 
       for _ in range(120):
         step()
+      if main_available_on_arm:
+        for _ in range(2):
+          step(main=1)
+        for _ in range(8):
+          step()
+      # Route3b: a fresh LKAS press must arm while gas is held, even with MAIN off.
       for _ in range(2):
-        step(main=1)
-      for _ in range(8):
-        step()
-      for _ in range(2):
-        step(lkas=1)
+        step(lkas=1, gas=True)
       for _ in range(40):
-        state, axis, host, command = step()
+        state, axis, host, command = step(gas=True)
       assert state.canValid and owner.handed_off and card.aol_card_intent.allowed_latch
       assert native.aol_get_permission_mask() == 1 and not native.get_controls_allowed()
       assert axis.lateralActive and command.latActive and not host.enabled and not command.longActive
       assert emitted_active > 0 and native_rejections == 0
+      if not main_available_on_arm:
+        for _ in range(2):
+          step(main=1)
+        for _ in range(8):
+          step()
       for pedal in ('gas', 'brake'):
         for _ in range(24):
           state, axis, host, command = step(**{pedal: True})
-          assert not axis.lateralActive and not command.latActive
+          assert axis.lateralActive and command.latActive
           assert not axis.longitudinalActive and not command.longActive
           assert card.aol_card_intent.allowed_latch, pedal
         for _ in range(30):

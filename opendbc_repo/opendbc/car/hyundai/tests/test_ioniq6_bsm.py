@@ -28,14 +28,25 @@ def long_params():
 
 
 class TestIoniq6BlindspotStatus(unittest.TestCase):
-  def test_all_sixteen_frozen_executable_outputs_and_integrity(self):
+  def test_all_sixteen_reference_outputs_without_overlapping_sound_alias(self):
     for case in CASES:
       with self.subTest(case=case):
         left = 1 + int(case["leftBlinker"]) if case["left"] else 0
         right = 1 + int(case["rightBlinker"]) if case["right"] else 0
         frames = create_ioniq6_blindspot_status(case["counter"], BlindspotStatus(left, right))
         self.assertEqual([(addr, bus) for addr, _, bus in frames], [(0x1BA, 1), (0x1E5, 1)])
-        self.assertEqual([payload.hex() for _, payload, _ in frames], [case["rear"], case["front"]])
+        expected_rear = bytearray.fromhex(case["rear"])
+        expected_rear[5] = 0  # Retired FL_INDICATOR alias overlaps BCW_RtSndWrngSta.
+        expected_rear[:2] = hkg_can_fd_checksum(0x1BA, None, expected_rear).to_bytes(2, "little")
+        self.assertEqual([payload.hex() for _, payload, _ in frames], [expected_rear.hex(), case["front"]])
+        rear = frames[0][1]
+        sound_word = int.from_bytes(rear, "little")
+        self.assertEqual((sound_word >> 34) & 0x3, 0)
+        self.assertEqual((sound_word >> 36) & 0x3ff, 0)
+        self.assertEqual(rear[16] & 3, left)
+        self.assertEqual((rear[16] >> 2) & 0x3f, right)
+        self.assertEqual((rear[3] >> 6) & 3, left)
+        self.assertEqual(rear[4] & 3, right)
         for addr, payload, _ in frames:
           self.assertEqual(int.from_bytes(payload[:2], "little"), hkg_can_fd_checksum(addr, None, bytearray(payload)))
 

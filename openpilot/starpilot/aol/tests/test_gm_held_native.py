@@ -50,6 +50,9 @@ def parse(card, now, gesture=None, counter=0, *, belt_unlatched=False, packets_o
                      {'INTERCEPTOR_GAS': 0., 'INTERCEPTOR_GAS2': 0., 'STATE': 0, 'COUNTER_PEDAL': counter})[1])
   sensor[5] = pedal_crc(sensor)
   packets.append((0x201, bytes(sensor), 0))
+  if card.CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and int(card.CP.safetyConfigs[0].safetyParam) == 0x1CD:
+    if now % 40_000_000 < 10_000_000:
+      packets.append(packer.make_can_msg('EBCMFrictionBrakeCmd', 2, {'RollingCounter': (now // 40_000_000) % 4}))
   if packets_only:
     return packets
   if now == NOW:
@@ -940,3 +943,20 @@ def test_sdgm_alpha_pedal_does_not_erase_armed_lateral(c9, gesture, event_first,
       assert card.aol_card_intent.allowed_latch and not native.longitudinalAllowed
     finally:
       card.vehicle_startup.close()
+
+
+def test_factory_brake_clock_packets_are_scoped_and_follow_25hz_cycles():
+  for candidate in (CAR.CHEVROLET_BOLT_CC_2017, CAR.CHEVROLET_BOLT_CC_2018_2021,
+                    CAR.CHEVROLET_BOLT_CC_2022_2023, CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL):
+    for removed in (False, True):
+      cp = params(candidate, pedal=True, camera=not removed, removed=removed)
+      card = SimpleNamespace(CP=cp)
+      for tick in range(9):
+        now = NOW + tick * 10_000_000
+        packets = parse(card, now, counter=tick % 4, packets_only=True)
+        clock = [row for row in packets if row[0] == 0x315]
+        expected = candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and not removed and tick % 4 == 0
+        assert len(clock) == int(expected)
+        if expected:
+          assert clock[0][2] == 2 and len(clock[0][1]) == 5
+          assert clock[0][1][4] & 3 == (now // 40_000_000) % 4

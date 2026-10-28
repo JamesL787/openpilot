@@ -90,16 +90,16 @@ class DrawerNativeTest(unittest.TestCase):
         validate_document({**doc, 'speedAlign': bad})
 
   def test_sources_grow_the_cruise_widget_by_one_row_or_an_attached_card(self):
-    from openpilot.starpilot.ui.large_speed_geometry import CARD_HEIGHT, GAP, SOURCE_ROW_HEIGHT, WIDTH
+    from openpilot.starpilot.ui.large_speed_geometry import CARD_HEIGHT, GAP, SOURCE_ROW_HEIGHT, SOURCE_TOP, WIDTH
     from openpilot.starpilot.ui.onroad_customization import customization_metadata, widget_size
     doc = default_document()
     self.assertEqual(widget_size(doc, 'large', 'cruise_limits'), (WIDTH, CARD_HEIGHT))
     doc['speedSources'] = True
-    self.assertEqual(widget_size(doc, 'large', 'cruise_limits'), (WIDTH, CARD_HEIGHT + SOURCE_ROW_HEIGHT))
+    self.assertEqual(widget_size(doc, 'large', 'cruise_limits'), (WIDTH, SOURCE_TOP + SOURCE_ROW_HEIGHT))
     doc['speedSourcesCard'] = True
-    self.assertEqual(widget_size(doc, 'large', 'cruise_limits'), (WIDTH, CARD_HEIGHT + GAP + SOURCE_ROW_HEIGHT))
+    self.assertEqual(widget_size(doc, 'large', 'cruise_limits'), (WIDTH, SOURCE_TOP + GAP + SOURCE_ROW_HEIGHT))
     self.assertEqual(customization_metadata()['profiles']['large']['widgets']['cruise_limits']['sourcesExtent'],
-                     {'inline': SOURCE_ROW_HEIGHT, 'card': GAP + SOURCE_ROW_HEIGHT})
+                     {'inline': SOURCE_TOP - CARD_HEIGHT + SOURCE_ROW_HEIGHT, 'card': SOURCE_TOP - CARD_HEIGHT + GAP + SOURCE_ROW_HEIGHT, 'actionGap': GAP})
 
   def test_expired_producer_and_old_drive_transport_cannot_supply_readings(self):
     sm, cp = replay_inputs()
@@ -164,5 +164,6 @@ class DrawerNativeTest(unittest.TestCase):
 @pytest.fixture(autouse=True)
 def mock_sign_graphics(monkeypatch):
   monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_shapes.SpeedLimitShapes.outline', Mock())
+  monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_shapes.SpeedLimitShapes.confirmation', Mock())
   for name in ('draw_rectangle_rounded_lines_ex', 'draw_circle', 'draw_ring'):
     monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_widget.rl.' + name, Mock())

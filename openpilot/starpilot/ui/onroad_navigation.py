@@ -11,12 +11,8 @@ from openpilot.starpilot.ui.presentation import FontRole, Profile
 
 
 def _overlaps_slc_actions(rect, profile, state) -> bool:
-  from openpilot.starpilot.ui.onroad_state import slc_controls
-  for control in slc_controls(profile, state):
-    left, top, right, bottom = control.bounds
-    if left < rect.x + rect.width and rect.x < right and top < rect.y + rect.height and rect.y < bottom:
-      return True
-  return False
+  from openpilot.starpilot.ui.onroad_state import slc_action_occludes
+  return slc_action_occludes(profile, state, (rect.x, rect.y, rect.x + rect.width, rect.y + rect.height))
 
 
 def arrival_time(remaining_seconds: float, now: datetime) -> str:

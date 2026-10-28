@@ -17,7 +17,7 @@ import pytest
 from openpilot.starpilot.flm.canonical_surface_adapter import NAMES
 from openpilot.starpilot.flm.live_tracking import HookSensitivity, LiveTrackingOptimizer, TrackingEpisode, _critical
 from openpilot.starpilot.flm.live_tracking_response import ResponseCertificate, ResponseWitness, VERSION, _revision, validate_certificate
-from openpilot.starpilot.flm.live_trial_contract import LiveTrialBinding
+from openpilot.starpilot.flm.live_trial_contract import LiveTrialBinding, MAX_STEP
 
 NS = 1_000_000_000
 HOOK = 'ff_gain_left'
@@ -49,10 +49,14 @@ def _ack(owner, offer, now):
     confirmed_target_sha256=offer.target_sha256 if offer.phase == 'confirmed' else '')
 
 
+# Same synthetic plant slope; physical RMS is measured at the current trial cap.
+FIXTURE_PHYSICAL_DERIVATIVE = 3.0
+
+
 def _episode(owner, index, now, profile, goal, score, speed):
   # A physically visible algorithmic probe can still have the wrong causal
   # direction. Future observations, rather than this probe, must decide keep.
-  sensitivity = HookSensitivity(HOOK, .06, 1., 20, 80, .015, native_gradient_complete=True)
+  sensitivity = HookSensitivity(HOOK, .06, 1., 20, 80, FIXTURE_PHYSICAL_DERIVATIVE * MAX_STEP, native_gradient_complete=True)
   return TrackingEpisode(owner.binding, owner._hash(profile), hashlib.sha256(f'rollout-{index}'.encode()).hexdigest(),
     now-4*NS, now, 'large', 1, speed, speed*1.02, goal, score*goal, .1,
     80, 10_000_000, (sensitivity,), (1.,)*8, native_gradient_complete=True)
@@ -209,7 +213,7 @@ def test_subtle_proportional_demand_change_below_score_floor_never_confirms():
     # exactly unchanged: error/desired=1 on both sets of maneuvers.
     goal = .016 if active else .020
     row = replace(_episode(owner, index, now, profile, goal, 1., 22.), kind='subtle',
-      sensitivity=(HookSensitivity('center_taper_max', .06, 1., 20, 80, .015),))
+      sensitivity=(HookSensitivity('center_taper_max', .06, 1., 20, 80, FIXTURE_PHYSICAL_DERIVATIVE * MAX_STEP),))
     owner.observe_episode(row, now_ns=now)
     offer = owner.offer(now)
     if offer is None:

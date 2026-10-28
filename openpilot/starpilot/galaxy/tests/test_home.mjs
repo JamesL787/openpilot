@@ -55,9 +55,38 @@ const drives = { schemaVersion: 1, isMetric: true, analysis: { running: false, p
 const driving = driveSummary({ status: "ready", data: drives })
 assert.equal(driving.last.distance, "12.0 km")
 assert.equal(driving.last.distracted, "Unavailable")
+assert.equal(driving.last.aol, "Unavailable")
+assert.equal(driving.last.aolDuration, "Unavailable")
+assert.equal(driving.totals.aol, "Unavailable")
+const withAol = driveSummary({ status: "ready", data: { ...drives,
+  lastDrive: { ...route, aolSeconds: 900, aolPercent: 25 },
+  totals: { ...drives.totals, aolSeconds: 900, aolDrives: 1 },
+  week: { ...drives.week, aolPercent: 25, aolDrives: 1 },
+  recentDrives: [{ ...route, aolPercent: 25 }] } })
+assert.equal(withAol.last.aol, "25%")
+assert.equal(withAol.last.aolDuration, "15m")
+assert.equal(withAol.totals.aol, "15m")
+assert.equal(withAol.totals.aolDrives, 1)
+assert.equal(withAol.week.aol, "25%")
+assert.equal(withAol.recent[0].aol, "25%")
+assert.match(Home.template, /AOL steering only/)
 assert.equal(driving.week.days[0].height, 0)
 assert.equal(driving.week.days[6].height, 100)
 assert.equal(driving.records[0].display, "12.0 km")
+const incomplete = { ...route, complete: false, reason: "End of route was not recorded" }
+const paused = driveSummary({ status: "ready", data: { ...drives, lastDrive: incomplete, recentDrives: [incomplete],
+  analysis: { ...drives.analysis, failures: [{ routeId: route.routeId, reason: incomplete.reason, retryStopped: true }] } } })
+assert.equal(paused.last.analysisLabel, "Analysis paused")
+assert.equal(paused.recent[0].analysisError, incomplete.reason)
+assert.equal(paused.recent[0].analysisLabel, "Analysis paused")
+const retrying = driveSummary({ status: "ready", data: { ...drives, recentDrives: [incomplete],
+  analysis: { ...drives.analysis, failures: [{ routeId: route.routeId, reason: "TimeoutError", retryStopped: false }] } } })
+assert.equal(retrying.recent[0].analysisLabel, "Retry scheduled")
+assert.equal(retrying.recent[0].analysisError, "TimeoutError")
+const pendingAnalysis = driveSummary({ status: "ready", data: { ...drives, recentDrives: [incomplete] } })
+assert.equal(pendingAnalysis.recent[0].analysisLabel, "Analysis pending")
+assert.equal(pendingAnalysis.recent[0].analysisError, incomplete.reason)
+assert.doesNotMatch(Home.template, /'Analyzing'|still being analyzed|Waiting for analysis/)
 const imperial = driveSummary({ status: "ready", data: { ...drives, isMetric: false } })
 assert.equal(imperial.last.distance, "7.5 mi")
 assert.equal(imperial.week.days[6].distance, "7.5 mi")

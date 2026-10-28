@@ -88,6 +88,7 @@ class HyundaiSafetyFlags(IntFlag):
   NON_SCC = 4096
   CAN_CANFD_BLENDED = 8192  # classic Hyundai mode only
   CARNIVAL_ALT_RESUME = 8192
+  CANFD_LKAS_DAMPING_100 = 8192  # torque LKA + LONG only; stock Carnival resume and angle bank are separate
   CANFD_ANGLE_STEERING = 16384
   CAN_REFRESH_MSGS = 32768
 

@@ -468,7 +468,7 @@ class MapOverlay:
       self._world = (self._world[0] + (target_world[0] - self._world[0]) * k,
                      self._world[1] + (target_world[1] - self._world[1]) * k)
     self._latitude = fix.latitude
-    target_zoom = zoom_for_speed(fix.speed)
+    target_zoom = zoom_for_speed(fix.speed) if math.isfinite(fix.speed) else self._m_per_px
     self._m_per_px += (target_zoom - self._m_per_px) * min(1.0, dt * 0.8)
 
   def _route(self, route: tuple[tuple[float, float], ...]) -> None:
@@ -862,9 +862,9 @@ class MapFeed:
     if selected is not None:
       stamp, gps = selected
       speed = float(getattr(gps, "speed", float("nan")))
-      if math.isfinite(speed) and -85 < gps.latitude < 85:
+      if -85 < gps.latitude < 85:
         # The fix's own timestamp, so dead reckoning starts from when it was measured.
-        self._fix = MapFix(gps.latitude, gps.longitude, bearing(gps), max(0.0, speed), stamp / 1e9)
+        self._fix = MapFix(gps.latitude, gps.longitude, bearing(gps), max(0.0, speed) if math.isfinite(speed) else math.nan, stamp / 1e9)
         self._source = chosen[0]
     if self._fix is not None and now - self._fix.monotonic > max(5.0, fix_hold_seconds(self._source)):
       self._fix = None

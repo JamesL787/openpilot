@@ -14,6 +14,7 @@ import time
 
 from openpilot.starpilot.flm.local_logs import DIR_FLAGS, FILE_FLAGS, MAX_COMPRESSED_BYTES, LocalLogUnavailable
 from openpilot.starpilot.flm.log_decode import LogDecodeError, decode_segment
+from openpilot.starpilot.galaxy.lateral_stats import ControlSamples, aol_statistics
 from openpilot.starpilot.galaxy.drive_history import MAX_ROOT_ENTRIES, MAX_SEGMENT_ENTRIES, MAX_STATS_SEGMENTS_PER_ROUTE, SEGMENT_NAME
 from openpilot.starpilot.models.catalog import model_entries
 from openpilot.starpilot.models.receipt import logged_model_load
@@ -24,7 +25,7 @@ MAX_ANALYSIS_SECONDS = 30.0
 MAX_PAIR_SECONDS = 1.0
 MAX_SPEED_MPS = 70.0
 MAX_ROUTE_COMPRESSED_BYTES = 256 * 1024 * 1024
-ANALYSIS_VERSION = 3
+ANALYSIS_VERSION = 4
 MAX_MODEL_METADATA_SECONDS = 4.0
 DISTRACTED_EVENT = 'driverDistracted2'
 UNRESPONSIVE_EVENT = 'driverUnresponsive3'
@@ -255,7 +256,7 @@ def analyze_route(root: Path, route: dict, *, permitted: Callable[[], bool], pre
   """Return a complete route only when every selected source and sample span is sound."""
   result = {'routeId': route.get('routeId') if isinstance(route, dict) else None,
             'startTime': None, 'endTime': None, 'distanceMeters': None, 'durationSeconds': None,
-            'engagedSeconds': None, 'engagedPercent': None, 'model': None,
+            'engagedSeconds': None, 'engagedPercent': None, 'aolSeconds': None, 'aolPercent': None, 'model': None,
             'distractedMoments': None, 'unresponsiveMoments': None,
             'complete': False, 'reason': None, 'segmentCount': 0, 'analysisVersion': ANALYSIS_VERSION}
   segment_count = len(route.get('segments', [])) if isinstance(route, dict) else 0
@@ -279,6 +280,7 @@ def analyze_route(root: Path, route: dict, *, permitted: Callable[[], bool], pre
 
     first_car = last_car = first_state = last_state = None
     previous_car = previous_state = None
+    control_samples = ControlSamples()
     distance = engaged = 0.0
     car_pairs = state_pairs = 0
     coverage_gap = False
@@ -305,13 +307,15 @@ def analyze_route(root: Path, route: dict, *, permitted: Callable[[], bool], pre
         raise _Incomplete('Route source changed or exceeds analysis limit')
       events = decode_segment(compressed, codec, cancelled=lambda: not allowed(),
                               retain=frozenset(('clocks', 'initData', 'logMessage', 'modelV2', 'drivingModelData',
-                                                'carState', 'selfdriveState', 'onroadEvents', 'sentinel')))
+                                                'carState', 'selfdriveState', 'carControl', 'onroadEvents', 'sentinel')))
       segment_end = False
       for event in events:
         if not allowed():
           raise _Incomplete('Analysis cancelled')
         kind = event.which()
         stamp = int(event.logMonoTime)
+        if kind == 'carControl':
+          control_samples.append(stamp, bool(event.valid), bool(event.carControl.latActive and not event.carControl.enabled))
         if stamp <= 0 or not event.valid:
           continue
         if kind == 'clocks':
@@ -423,6 +427,7 @@ def analyze_route(root: Path, route: dict, *, permitted: Callable[[], bool], pre
     if state_pairs and not coverage_gap:
       result['engagedSeconds'] = round(min(engaged, duration), 3)
       result['engagedPercent'] = round(min(engaged, duration) / duration * 100, 1)
+    result.update(aol_statistics(control_samples, first, last, max_pair_seconds=MAX_PAIR_SECONDS))
     if not end_of_route:
       raise _Incomplete('End of route was not recorded')
     if not car_pairs or not state_pairs or coverage_gap or \

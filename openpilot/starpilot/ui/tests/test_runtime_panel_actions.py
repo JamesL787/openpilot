@@ -1,5 +1,5 @@
 """Route live large-panel requests into native owners with effects isolated."""
-from unittest.mock import patch
+from unittest.mock import patch, call
 
 
 import atexit
@@ -868,20 +868,18 @@ class TestRuntimePanelActions(unittest.TestCase):
       self.assertTrue(state.destination(destination).available, destination)
     self.assertFalse(state.destination(Destination.PAIR).available)
 
-  def test_compact_network_in_drive_shows_status_without_native_network_owner(self):
+  def test_compact_network_in_drive_uses_native_network_owner(self):
     layout = runtime_app.StarMiciMainLayout.__new__(runtime_app.StarMiciMainLayout)
-    self.enterContext(patch.object(layout, 'star', NS(connectivity_allowed=Mock(return_value=False),
-                     snapshot=Mock(return_value=NS(home=NS(network="wifi")))), create=True))
-    page = NS(_scroller=NS(add_widgets=Mock()))
-    with patch("openpilot.system.ui.widgets.scroller.NavScroller", return_value=page), \
-         patch("openpilot.selfdrive.ui.mici.widgets.button.GreyBigButton", side_effect=lambda *args: args), \
-         patch("openpilot.selfdrive.ui.mici.layouts.settings.network.network_layout.NetworkLayoutMici") as native, \
+    self.enterContext(patch.object(layout, 'star', NS(connectivity_allowed=Mock(return_value=False)), create=True))
+    self.enterContext(patch.object(layout, '_compact_panels', {}, create=True))
+    page = NS()
+    with patch("openpilot.selfdrive.ui.mici.layouts.settings.network.network_layout.NetworkLayoutMici", return_value=page) as native, \
          patch.object(runtime_app.gui_app, "push_widget") as push:
       layout._open_compact_destination(Destination.NETWORK)
-    native.assert_not_called()
-    self.assertEqual(page._scroller.add_widgets.call_args.args[0], [("network", "Wi-Fi"),
-                                                                     ("network changes", "Use Offroad mode to change network settings")])
-    push.assert_called_once_with(page)
+      layout._open_compact_destination(Destination.NETWORK)
+    native.assert_called_once_with()
+    self.assertEqual(push.call_args_list, [call(page), call(page)])
+    layout.star.connectivity_allowed.assert_not_called()
 
   def test_software_check_owner_and_waiting_gate_with_mocked_final_effect(self):
     self.layout.star.selected = Destination.SOFTWARE

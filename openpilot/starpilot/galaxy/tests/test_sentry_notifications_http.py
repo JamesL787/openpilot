@@ -12,6 +12,43 @@ from openpilot.starpilot.sentry_mode.notifications import NotificationOwner
 
 
 class NotificationHTTPTests(unittest.TestCase):
+  def test_app_subscription_test_and_simulation(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory).resolve()
+      owner = NotificationOwner(root / 'notifications')
+      from openpilot.starpilot.sentry_mode.storage import EventStore
+      owner.store = EventStore(root / 'events')
+      parked = [True]
+      server = make_server(port=0, owner=GalaxyAccessOwner(root / 'access'), notifications=owner, parked=lambda: parked[0])
+      thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
+      thread.start()
+      def request(payload=None, cookie=''):
+        connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+        headers = {'Cookie': cookie, 'Origin': f'http://127.0.0.1:{server.server_port}', 'Content-Type': 'application/json'}
+        connection.request('POST' if payload is not None else 'GET', '/api/sentry/notifications' if payload is not None else '/api/auth/session',
+                           json.dumps(payload) if payload is not None else None, headers)
+        reply = connection.getresponse()
+        result = reply.status, json.loads(reply.read()), dict(reply.getheaders())
+        connection.close()
+        return result
+      try:
+        cookie = request()[2]['Set-Cookie'].split(';', 1)[0]
+        code, result, _ = request({'action': 'appSubscribe', 'token': 'test-token', 'appId': 'com.starpilot.galaxy', 'label': 'Phone'}, cookie)
+        self.assertEqual(code, 200)
+        self.assertNotIn('test-token', json.dumps(result))
+        self.assertEqual(request({'action': 'test', 'target': 'app', 'id': 'missing'}, cookie)[0], 404)
+        self.assertEqual(request({'action': 'test', 'target': 'app', 'id': result['appSubscriptions'][0]['id']}, cookie)[0], 200)
+        parked[0] = False
+        self.assertEqual(request({'action': 'simulate'}, cookie)[0], 403)
+        parked[0] = True
+        self.assertEqual(request({'action': 'simulate'}, cookie)[0], 200)
+        self.assertTrue(owner.store.snapshot()['events'][0]['simulated'])
+        self.assertEqual(request({'action': 'simulate'}, cookie)[0], 429)
+      finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
   def test_auth_origin_secret_redaction_and_session_change(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory).resolve()

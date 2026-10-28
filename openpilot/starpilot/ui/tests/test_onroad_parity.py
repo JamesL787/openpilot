@@ -16,6 +16,7 @@ from openpilot.starpilot.ui.onroad import OnroadView
 from openpilot.starpilot.ui.onroad_customization import default_document
 from openpilot.starpilot.ui.onroad_state import AlertSize, BorderSignals, ObservationKind, OnroadAlert, OnroadState, SpeedLimitObservation
 from openpilot.starpilot.ui.presentation import Profile
+from openpilot.starpilot.ui.speed_limit_shapes import SpeedLimitShapes
 from openpilot.starpilot.ui.tests.test_unified_speed_native import foreground_calls
 from openpilot.starpilot.ui.runtime_snapshot import _model_confidence
 
@@ -184,13 +185,12 @@ def test_valid_vision_limit_has_persistent_sign_without_action_receipt():
   renderer = CompactHudRenderer(fonts, Mock())
   valid = SpeedLimitObservation(kind=ObservationKind.VALID, source='vision', speed_limit_mps=24.6)
   shown = replace(road(), appearance=replace(road().appearance, show_speed_limit_sign=True), speed_limit=valid)
-  with patch.object(rl, 'draw_rectangle_rounded') as fill, patch.object(rl, 'draw_rectangle_rounded_lines_ex') as outline:
+  with patch.object(rl, 'draw_rectangle_rounded') as fill, patch.object(SpeedLimitShapes, 'outline') as outline:
     renderer._speed_limit_sign(shown)
     fill.assert_not_called()
     outline.assert_called_once()
-    rect = outline.call_args.args[0]
-    assert (rect.width, rect.height) == (100, 116)
-    assert [call.args[0] for call in foreground_calls(fonts.draw)] == ['VISION', 'LIMIT', '55']
+    assert outline.call_args.args[:2] == (389, 86)
+    assert [call.args[0] for call in foreground_calls(fonts.draw)] == ['VISION', '55']
     outline.reset_mock()
     renderer._speed_limit_sign(replace(shown, speed_limit=SpeedLimitObservation(kind=ObservationKind.STALE)))
     outline.assert_not_called()
@@ -212,12 +212,16 @@ def test_pending_confirmation_omits_redundant_speed_heading():
   view.fonts = Mock(profile=Profile.COMPACT)
   view.fonts.measure.return_value = NS(width=50, height=20)
   view.fonts.vertical_ink.return_value = (0, 20)
-  with patch.object(rl, 'draw_line_ex'):
+  view.fonts.horizontal_ink.return_value = (0, 50)
+  from openpilot.starpilot.ui.onroad_compact_widgets import CompactHudRenderer
+  view.compact_hud = CompactHudRenderer(view.fonts, Mock())
+  with patch.object(rl, 'draw_line_ex'), patch.object(rl, 'draw_rectangle_rounded'), patch.object(SpeedLimitShapes, 'confirmation'):
     view._slc_actions(state)
-  assert [call.args[0] for call in foreground_calls(view.fonts.draw)] == ['Accept', 'Decline']
+  assert [call.args[0] for call in foreground_calls(view.fonts.draw)] == ['35', 'mph', 'VISION', 'Accept', 'Reject']
 
 
 def test_compact_pending_label_and_button_follow_saved_action_placement():
+  from openpilot.starpilot.ui.onroad_state import slc_controls
   document = default_document()
   document['layouts']['compact']['speed_limit_actions']['x'] = 120
   observation = SpeedLimitObservation(kind=ObservationKind.VALID, speed_limit_mps=20,
@@ -229,10 +233,14 @@ def test_compact_pending_label_and_button_follow_saved_action_placement():
   view.fonts = Mock(profile=Profile.COMPACT)
   view.fonts.measure.return_value = NS(width=50, height=20)
   view.fonts.vertical_ink.return_value = (0, 20)
-  with patch.object(rl, 'draw_rectangle_rounded') as button, patch.object(rl, 'draw_line_ex'):
+  view.fonts.horizontal_ink.return_value = (0, 50)
+  from openpilot.starpilot.ui.onroad_compact_widgets import CompactHudRenderer
+  view.compact_hud = CompactHudRenderer(view.fonts, Mock())
+  with patch.object(rl, 'draw_rectangle_rounded') as button, patch.object(rl, 'draw_line_ex'), patch.object(SpeedLimitShapes, 'confirmation'):
     view._slc_actions(state)
-  assert foreground_calls(view.fonts.draw)[0].args[3:5] == (179, 203)
-  button.assert_not_called()
+  assert [call.args[0] for call in foreground_calls(view.fonts.draw)][-2:] == ['Accept', 'Reject']
+  assert button.call_count == 4
+  assert slc_controls(Profile.COMPACT, state)[0].bounds == (156., 48., 300., 160.)
 
 
 def test_fresh_physical_blinker_uses_upstream_art_without_optional_border():

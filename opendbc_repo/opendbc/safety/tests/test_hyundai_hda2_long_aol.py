@@ -240,4 +240,5 @@ class TestHyundaiHda2LongAol(unittest.TestCase):
         self.assertEqual([(f[0], f[2]) for f in frames], [(0x12A, 1), (0x110 if alternate else 0x50, 0)])
         self.assertEqual(frames[0][1][3:7], frames[1][1][3:7])
         self.assertEqual(frames[0][1][7:], bytes(6) + b'\x64' + bytes(2))
-        self.assertEqual(frames[1][1][7:], b'\0\x64' + bytes(len(frames[1][1]) - 9))
+        damping = 100 if identity == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN else 0
+        self.assertEqual(frames[1][1][7:], bytes((0, damping)) + bytes(len(frames[1][1]) - 9))

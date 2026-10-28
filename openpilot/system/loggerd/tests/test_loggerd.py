@@ -35,6 +35,9 @@ CEREAL_SERVICES = [f for f in log.Event.schema.union_fields if f in SERVICE_LIST
 
 
 class TestLoggerd(OpenpilotTestCase):
+  def test_opening_model_metadata(self):
+    subprocess.check_call([str(Path(BASEDIR) / "openpilot/system/loggerd/tests/test_model_metadata")])
+
   def _get_latest_log_dir(self):
     log_dirs = sorted(Path(Paths.log_root()).iterdir(), key=lambda f: f.stat().st_mtime)
     return log_dirs[-1]

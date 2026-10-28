@@ -1,11 +1,11 @@
-"""The cheap rejection must preserve the original live qualification policy."""
+"""The cheap rejection must preserve the current fail-closed qualification policy."""
 from unittest.mock import patch
 from types import SimpleNamespace
 
 import pytest
 from opendbc.car.gm.aol import qualified_gm
 from opendbc.car.gm.cancel_remap import aol_enabled
-from opendbc.car.gm.values import CAR, is_volt_sdgm_profile, is_bolt_present_no_acc_pedal_profile
+from opendbc.car.gm.values import CAR, is_volt_sdgm_profile
 from openpilot.starpilot.aol.panda_faults import _diagnostic_mask, blocking_fault_list, blocking_fault_mask
 from openpilot.starpilot.aol.tests.test_gm_diagnostic_faults import owner
 
@@ -18,9 +18,6 @@ def original_mask(cp):
     if (cp.carFingerprint == CAR.CHEVROLET_VOLT_2019 and word == 0x1005 and
         is_volt_sdgm_profile(cp, longitudinal=False) and cp.pcmCruise and not cp.openpilotLongitudinalControl):
       return 1 << 18
-    if (cp.carFingerprint == CAR.CHEVROLET_BOLT_CC_2018_2021 and word == 0x9D and
-        is_bolt_present_no_acc_pedal_profile(cp) and cp.openpilotLongitudinalControl and not cp.pcmCruise):
-      return 12
   except (AttributeError, TypeError, ValueError, OverflowError, IndexError):
     pass
   return 0
@@ -43,8 +40,11 @@ def test_recorded_long_volt_skips_expensive_policy_but_eligible_configs_stay_liv
   for label in ('volt', 'bolt'):
     cp, _ = owner(label)
     with patch('opendbc.car.gm.aol.qualified_gm', wraps=qualified_gm) as checked:
-      assert _diagnostic_mask(cp) == (1 << 18 if label == 'volt' else 12)
-      checked.assert_called_once_with(cp)
+      assert _diagnostic_mask(cp) == (1 << 18 if label == 'volt' else 0)
+      if label == 'volt':
+        checked.assert_called_once_with(cp)
+      else:
+        checked.assert_not_called()
       cp.alternativeExperience = 0
       assert _diagnostic_mask(cp) == 0
 
@@ -77,7 +77,7 @@ def test_full_startup_matrix_keeps_original_classification():
                                   'openpilotLongitudinalControl', 'alternativeExperience', 'flags'])
 def test_mutable_configuration_is_always_requalified(label, field):
   cp, _ = owner(label)
-  assert _diagnostic_mask(cp)
+  assert _diagnostic_mask(cp) == (1 << 18 if label == 'volt' else 0)
   setattr(cp, field, not getattr(cp, field) if field not in ('alternativeExperience', 'flags') else 0)
   assert _diagnostic_mask(cp) == original_mask(cp)
 

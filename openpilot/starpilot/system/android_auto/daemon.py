@@ -28,7 +28,7 @@ from openpilot.starpilot.system.android_auto.source_verifier import GalaxySource
 from openpilot.starpilot.system.android_auto.supervisor import Supervisor
 
 PAIRING_COMMANDS = {"prepare_pairing", "pairing_status", "pairing_response", "cancel_pairing", "pair_device"}
-AUTHENTICATED_COMMANDS = {"start", "set_auto_connect", "select_receiver", "set_view", "set_connection",
+AUTHENTICATED_COMMANDS = {"start", "set_auto_connect", "select_receiver", "set_view", "set_connection", "set_car_type", "set_car_profile",
                           "prepare_pairing", "pairing_status", "pairing_response", "cancel_pairing", "pair_device", "devices", "bluetooth_action",
                           "phone_window", "bluetooth_power"}
 
@@ -124,6 +124,10 @@ def handle(supervisor: Supervisor, request: dict[str, Any], verifier: GalaxySour
     supervisor.set_view(str(request.get("view", "")))
   elif command == "set_connection":
     supervisor.set_connection(str(request.get("connection", "")))
+  elif command == "set_car_type":
+    supervisor.set_car_type(str(request.get("car_type", "")))
+  elif command == "set_car_profile":
+    supervisor.set_car_profile(str(request.get("profile", "")))
   elif command == "prepare_pairing":
     supervisor.prepare_pairing()
   elif command == "pairing_status":

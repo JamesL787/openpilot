@@ -157,9 +157,9 @@ class JetlinkModelState:
     # model manager key off this flag
     self.chestnut = True
 
-    # a warp.Warp, loaded and warmed ahead: its first call links the JIT, and
-    # this runs on modeld's frame thread. Frames go out of its output as they
-    # are, over either transport
+    # a warp.Warp or the adapter's model_warp, loaded and warmed ahead: its
+    # first call links the JIT, and this runs on modeld's frame thread. Frames
+    # go out of its output as they are, over either transport
     self.warp = warp
 
     self.input_shapes = spec.input_shapes
@@ -305,9 +305,9 @@ class JetlinkModelState:
       # over the cable: how frames go, how many never came back, and what the
       # kernel dropped on the way in (softnet), since the link came up
       drops = getattr(self.client.t, 'net_drops', lambda: None)()
-      cable = (f"; frames {'as datagrams' if self.client.t.datagrams else 'on the stream'}, "
+      cable = (f"; frames {'as datagrams' if self.client.t.datagrams else 'on the stream'}, " +
                f"{self.client.frames_lost} lost, net drops {drops}" if drops is not None else '')
-      self._log.warning("jetlink: frame %d warp %.1f data %.1f send %.1f wait %.1f ms%s; "
+      self._log.warning("jetlink: frame %d warp %.1f data %.1f send %.1f wait %.1f ms%s; " +
                         "server gpu %.1f queue %.1f total %.1f ms; ffs maxima prepare %.1f read_wait %.1f handoff %.1f ms%s",
                         self._frame_id, (frame.t1 - frame.t0) * 1e3, (frame.t2 - frame.t1) * 1e3,
                         (frame.sent - frame.t2) * 1e3, (t4 - waiting_from) * 1e3,

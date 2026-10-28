@@ -44,6 +44,7 @@ class SentryEvents:
           raise ValueError("Invalid motion event")
         events.append({"eventId": value["eventId"], "kind": value["kind"],
                        "systemTimeMs": value["wallTimeNs"] // 1_000_000,
+                       **({"simulated": True} if value.get("simulated") else {}),
                        "images": cast(Callable[[str], list], self.store.images)(value["eventId"]) if hasattr(self.store, "images") else []})
       result = {"schemaVersion": 1, "source": "local", "scanIncomplete": source["incomplete"],
                 "capacity": source["capacity"], "events": events,

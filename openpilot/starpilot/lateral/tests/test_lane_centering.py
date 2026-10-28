@@ -1,10 +1,14 @@
 """Native model-message fixtures for the standalone curvature contribution."""
 from dataclasses import replace
+import json
 import math
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 import unittest
 from unittest.mock import patch
+
+import numpy as np
 
 from openpilot.cereal import messaging
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
@@ -45,6 +49,33 @@ def settled(controller, source, ticks=300):
 
 
 class TestLaneCentering(unittest.TestCase):
+  def test_lane_width_avoids_first_use_numpy_median_import(self):
+    from openpilot.starpilot.lateral.lane_tracking import SingleLineTracker
+    tracker = SingleLineTracker()
+    with patch.object(np, 'median', side_effect=AssertionError('No lazy masked-array import in Controls')):
+      result = tracker.target(model(), 1, 10.0, 0.01, 0.0)
+    self.assertFalse(result.blocked)
+    assert tracker.width is not None
+    self.assertAlmostEqual(tracker.width, 3.6, places=5)
+
+  def test_single_line_spacing_avoids_first_use_numpy_median_import(self):
+    from openpilot.starpilot.lateral.lane_tracking import SingleLineTracker
+    tracker = SingleLineTracker()
+    with patch.object(np, 'median', side_effect=AssertionError('No lazy masked-array import in Controls')):
+      for frame in range(8):
+        tracker.target(single(line=-1.7, edge=10.), frame, 20., .05, 0.)
+    assert tracker.spacing is not None
+    self.assertAlmostEqual(tracker.spacing, 1.7, places=5)
+
+  def test_lane_width_rejects_nonfinite_gradient_before_median(self):
+    from openpilot.starpilot.lateral.lane_tracking import SingleLineTracker
+    for value in (float('nan'), float('inf'), float('-inf')):
+      tracker = SingleLineTracker()
+      with patch.object(np, 'gradient', return_value=np.full(len(XS), value)):
+        result = tracker.target(model(), 1, 10.0, 0.01, 0.0)
+      self.assertTrue(result.blocked)
+      self.assertIsNone(tracker.width)
+
   def test_reader_cache_detects_mutation_samples_and_reset(self):
     from openpilot.starpilot.lateral import lane_centering as module
     builder = model()
@@ -243,19 +274,27 @@ class TestLaneCentering(unittest.TestCase):
     self.assertEqual(fading.reason, "unqualified_model")
     self.assertGreater(controller.update(source).correction, fading.correction)
 
-  def test_signal_pause_precedes_lane_change_as_in_frozen_source(self):
-    controller = LaneCenteringController()
-    source = observation()
-    before = settled(controller, source).correction
-    changed_model = model()
-    changed_model.meta.laneChangeState = "laneChangeStarting"
-    signaled = controller.update(replace(source, model=changed_model, turn_signal_active=True))
-    self.assertEqual(signaled.reason, "signal_release")
-    self.assertGreater(signaled.correction, 0.0)
-    self.assertLess(signaled.correction, before)
-    unsignaled = controller.update(replace(source, model=changed_model))
-    self.assertEqual(unsignaled.reason, "lane_change")
-    self.assertEqual(unsignaled.correction, 0.0)
+  def test_lane_change_clears_seeded_correction_even_with_signal_pause(self):
+    from openpilot.cereal import log
+    for state in (log.LaneChangeState.preLaneChange, log.LaneChangeState.laneChangeStarting,
+                  log.LaneChangeState.laneChangeFinishing):
+      for signal in (False, True):
+        for pause in (False, True):
+          with self.subTest(state=state, signal=signal, pause=pause):
+            controller = LaneCenteringController()
+            source = observation(settings=LaneCenteringSettings(True, 0., 0., pause))
+            self.assertGreater(settled(controller, source).correction, 0.)
+            changed_model = model()
+            changed_model.meta.laneChangeState = state
+            changed = controller.update(replace(source, model=changed_model, turn_signal_active=signal))
+            self.assertEqual(changed.reason, 'lane_change')
+            self.assertEqual(changed.correction, 0.)
+            self.assertEqual(changed.candidate_curvature, source.base_curvature)
+            self.assertEqual(controller._correction, 0.)
+            self.assertIsNone(controller._tracker.path)
+            self.assertEqual(controller.guard_applied(changed_model, source.base_curvature, source.base_curvature,
+                                                     source.base_curvature, source.speed_mps, .1), source.base_curvature)
+
 
   def test_unqualified_native_models_have_no_new_correction(self):
     for bad_model in (model(prob=0.2), model(std=0.4), model(left=-0.5, right=0.5),
@@ -320,3 +359,450 @@ class TestLaneCentering(unittest.TestCase):
     result = controller.update(observation(elapsed_seconds=0.2))
     self.assertEqual(result.reason, "qualified")
     self.assertGreater(result.correction, 0.0)
+
+
+def single(*, missing_right=True, line=-0.9, edge=3.0, path=0.0):
+  m = model(left=line if missing_right else -3.0, right=2.0 if missing_right else -line, path=path)
+  m.laneLineProbs = [0., .95 if missing_right else .05, .05 if missing_right else .95, 0.]
+  m.init('roadEdges', 2)
+  for item, y in zip(m.roadEdges, (-3.0 if missing_right else -edge, edge if missing_right else 3.0), strict=True):
+    item.x = XS
+    item.y = [y] * len(XS)
+  m.roadEdgeStds = [.1, .1]
+  return m
+
+
+class TestSingleBoundary(unittest.TestCase):
+  def test_recorded_bd_missing_right_line_recovers_bounded_clearance(self):
+    fixture = json.loads((Path(__file__).parent / 'fixtures/route_bd_single_boundary.json').read_text())
+    m = messaging.new_message('modelV2').modelV2
+    m.from_dict(fixture['model'])
+    self.assertTrue(fixture['recordedCarControl']['latActive'])
+    self.assertEqual(fixture['recordedFeedback']['requestedCorrection'], 0.)
+    self.assertEqual(fixture['recordedFeedback']['reason'], 'unqualified_model')
+    self.assertLess(m.laneLineProbs[2], .6)
+    raw = raw_correction(m, fixture['speedMps'], 0., 0.)
+    assert raw is not None
+    self.assertGreater(raw, 0.)
+    self.assertAlmostEqual(raw, fixture['expectedRaw'], places=12)
+    result = settled(LaneCenteringController(), observation(m, speed_mps=fixture['speedMps']))
+    self.assertLessEqual(abs(result.correction), MAX_CORRECTION)
+    # At the exact earlier bookmark BOTH line probabilities are low and the
+    # left-line std is .919 m. Preserve that refusal rather than invent a lane.
+    refused = messaging.new_message('modelV2').modelV2
+    refused.from_dict(fixture['firstBookmarkRefusal']['model'])
+    self.assertIsNone(raw_correction(refused, 15.75, 0., 0.))
+
+  def test_missing_either_line_recovers_clearance_without_centering_on_edge(self):
+    for missing_right, sign in ((True, 1), (False, -1)):
+      for edge in (2.5, 3.0):
+        with self.subTest(missing_right=missing_right, edge=edge):
+          m = single(missing_right=missing_right, edge=edge)
+          raw = raw_correction(m, 20., 0., 0.)
+          assert raw is not None
+          self.assertAlmostEqual(raw, sign * 2. * (.2 - .08) / 400., places=8)
+          result = settled(LaneCenteringController(), observation(m))
+          self.assertEqual(result.reason, 'qualified')
+          self.assertGreater(sign * result.correction, 0.)
+          self.assertLessEqual(abs(result.correction), MAX_CORRECTION)
+
+  def test_safe_model_path_is_retained_and_missing_line_geometry_is_unused(self):
+    m = single(line=-1.5)
+    self.assertEqual(raw_correction(m, 20., 0., 0.), 0.)
+    m.laneLines[2].x = []
+    m.laneLines[2].y = []
+    self.assertEqual(raw_correction(m, 20., 0., 0.), 0.)
+
+  def test_refuses_both_missing_and_unqualified_path_edge_or_corridor(self):
+    for defect in ('both', 'path_std', 'edge_std', 'nan_edge', 'no_edge', 'crossed', 'wide', 'narrow',
+                   'path_outside', 'near_crossing', 'missing_std', 'short_edge', 'bad_x', 'nan_prob'):
+      with self.subTest(defect=defect):
+        m = single()
+        if defect == 'both':
+          m.laneLineProbs = [0., .05, .05, 0.]
+        elif defect == 'path_std':
+          m.position.yStd = [.36] * len(XS)
+        elif defect == 'edge_std':
+          m.roadEdgeStds = [.1, .31]
+        elif defect == 'nan_edge':
+          m.roadEdges[1].y = [float('nan')] * len(XS)
+        elif defect == 'no_edge':
+          m.roadEdges = []
+        elif defect == 'crossed':
+          m.roadEdges[1].y = [-2.] * len(XS)
+        elif defect == 'wide':
+          m.roadEdges[1].y = [4.] * len(XS)
+        elif defect == 'narrow':
+          m.roadEdges[1].y = [1.] * len(XS)
+        elif defect == 'path_outside':
+          m.position.y = [-1.] * len(XS)
+        elif defect == 'near_crossing':
+          m.roadEdges[1].y = [-2. if x <= 10 else 3. for x in XS]
+        elif defect == 'missing_std':
+          m.position.yStd = []
+        elif defect == 'short_edge':
+          m.roadEdges[1].x = XS[:10]
+          m.roadEdges[1].y = [3.] * 10
+        elif defect == 'bad_x':
+          m.roadEdges[1].x = list(reversed(XS))
+        else:
+          m.laneLineProbs = [0., .95, float('nan'), 0.]
+        self.assertIsNone(raw_correction(m, 20., 0., 0.))
+
+  def test_current_edge_is_rechecked_for_held_reader(self):
+    m = single()
+    source = observation(m.as_reader())
+    controller = LaneCenteringController()
+    first = controller.update(source)
+    self.assertGreater(first.correction, 0.)
+    m.roadEdgeStds = [.1, .31]
+    refused = controller.update(source)
+    self.assertEqual(refused.reason, 'unqualified_model')
+    self.assertAlmostEqual(refused.correction, first.correction * math.exp(-.01 / .2))
+    m.roadEdgeStds = [.1, .1]
+    self.assertEqual(controller.update(source).reason, 'qualified')
+
+  def test_single_boundary_still_obeys_override_freshness_signal_and_axis(self):
+    source = observation(single())
+    for updates in ({'driver_override':True}, {'model_valid':False}, {'lateral_active':False},
+                    {'time_discontinuity':True}):
+      controller = LaneCenteringController()
+      self.assertGreater(settled(controller, source).correction, 0.)
+      self.assertEqual(controller.update(replace(source, **updates)).correction, 0.)
+    controller = LaneCenteringController()
+    prior = settled(controller, source).correction
+    faded = controller.update(replace(source, turn_signal_active=True))
+    self.assertEqual(faded.reason, 'signal_release')
+    self.assertLess(faded.correction, prior)
+
+
+class TestSingleLineTracking(unittest.TestCase):
+  def test_without_width_tracks_independent_spacing_in_both_directions(self):
+    from openpilot.starpilot.lateral.lane_tracking import SingleLineTracker
+    for missing_right, sign in ((True, 1), (False, -1)):
+      for distance in (1.45, 1.5, 1.55):
+        with self.subTest(missing_right=missing_right, distance=distance):
+          tracker = SingleLineTracker()
+          m = single(missing_right=missing_right, line=-distance, edge=10.)
+          for frame in range(8):
+            target = tracker.target(m, frame, 20., .05, 0.)
+          self.assertIsNone(tracker.width)
+          assert tracker.pending is not None and tracker.spacing is not None and target.y is not None
+          self.assertAlmostEqual(tracker.pending, distance)
+          self.assertAlmostEqual(tracker.spacing, 1.7)
+          self.assertFalse(target.blocked)
+          self.assertAlmostEqual(target.y, sign * (1.7 - distance))
+          raw = raw_correction(m, 20., 0., 0., _single_target=target.y)
+          assert raw is not None
+          self.assertGreater(sign * raw, 0.)
+
+  def test_observed_narrow_width_precedes_nominal_and_edge_still_vetoes(self):
+    from openpilot.starpilot.lateral.lane_tracking import SingleLineTracker
+    for known_width in (False, True):
+      with self.subTest(known_width=known_width):
+        tracker = SingleLineTracker()
+        if known_width:
+          tracker.target(model(left=-1.35, right=1.35), 0, 20., .05, 0.)
+        blocked = False
+        for frame in range(1, 10):
+          target = tracker.target(single(line=-1.35, edge=1.35), frame, 20., .05, 0.)
+          blocked |= target.blocked
+          if not known_width:
+            self.assertIsNone(target.y)
+        if known_width:
+          self.assertFalse(target.blocked)
+          assert tracker.spacing is not None and target.y is not None
+          self.assertAlmostEqual(tracker.spacing, 1.35)
+          self.assertAlmostEqual(target.y, 0.)
+        else:
+          self.assertTrue(blocked)
+          self.assertIsNone(target.y)
+
+  def test_spacing_preference_cannot_bypass_current_line_geometry_or_path_uncertainty(self):
+    m = single(line=-1.2, edge=10.)
+    m.laneLines[1].x = XS[:10]
+    m.laneLines[1].y = [-1.2] * 10
+    self.assertIsNone(raw_correction(m, 20., 0., 0., _single_target=.6))
+    m = single(line=-1.2, edge=10.)
+    m.position.yStd = [.36] * len(XS)
+    self.assertIsNone(raw_correction(m, 20., 0., 0., _single_target=.6))
+
+  def test_trusted_width_transfers_to_current_line_across_wide_road(self):
+    controller = LaneCenteringController()
+    for frame in range(10):
+      controller.update(observation(model(left=-1.8, right=1.8), model_sample_id=1_000_000_000 + frame * 50_000_000,
+                                    elapsed_seconds=.05))
+    for frame in range(10, 30):
+      m = single(line=-1.2, edge=10.)
+      result = controller.update(observation(m.as_reader(), model_sample_id=1_000_000_000 + frame * 50_000_000,
+                                             elapsed_seconds=.05))
+    self.assertEqual(result.reason, 'qualified')
+    self.assertGreater(result.correction, .0002)
+    assert controller._tracker.spacing is not None
+    self.assertAlmostEqual(controller._tracker.spacing, 1.8, places=6)
+
+  def test_normal_offset_tracks_a_sloping_line_in_both_directions(self):
+    from openpilot.starpilot.lateral.lane_tracking import SingleLineTracker
+    for side in (0, 1):
+      tracker = SingleLineTracker()
+      for frame in range(10):
+        m = model(left=-1.8, right=1.8)
+        for index, intercept in ((1, -1.8), (2, 1.8)):
+          m.laneLines[index].y = [intercept + .15 * x for x in XS]
+        m.position.y = [.15 * x for x in XS]
+        tracker.target(m, frame, 20., .05, 0.)
+      m.laneLineProbs = [0., .95 if side == 0 else .05, .05 if side == 0 else .95, 0.]
+      for index, intercept in ((1, -1.8), (2, 1.8)):
+        m.laneLines[index].y = [intercept + .2 + .15 * x for x in XS]
+      target = tracker.target(m, 11, 20., .05, 0.)
+      self.assertFalse(target.blocked)
+      assert target.y is not None
+      self.assertAlmostEqual(target.y, 3.2, places=5)
+
+  def test_new_line_needs_acquisition_and_jumps_discard_spacing(self):
+    from openpilot.starpilot.lateral.lane_tracking import SingleLineTracker
+    tracker = SingleLineTracker()
+    for frame in range(8):
+      target = tracker.target(single(line=-1.7, edge=10.), frame, 20., .05, 0.)
+      if frame < 4:
+        self.assertIsNone(target.y)
+    assert tracker.spacing is not None
+    self.assertAlmostEqual(tracker.spacing, 1.7, places=6)
+    jump = tracker.target(single(line=-1.1, edge=10.), 9, 20., .05, 0.)
+    self.assertTrue(jump.blocked)
+    self.assertIsNone(jump.y)
+    self.assertIsNone(tracker.spacing)
+
+  def test_missing_sources_and_driver_override_cannot_keep_line_history(self):
+    controller = LaneCenteringController()
+    for frame in range(12):
+      source = observation(single(line=-1.7, edge=10.), model_sample_id=frame + 1, elapsed_seconds=.05)
+      controller.update(source)
+    self.assertIsNotNone(controller._tracker.spacing)
+    controller.update(replace(source, driver_override=True))
+    self.assertIsNone(controller._tracker.spacing)
+    for frame in range(20, 32):
+      controller.update(replace(source, model_sample_id=frame))
+    controller.update(replace(source, turn_signal_active=True, model_sample_id=33))
+    self.assertIsNone(controller._tracker.spacing)
+
+  def test_line_loss_and_reacquisition_remain_filtered_and_bounded(self):
+    controller = LaneCenteringController()
+    previous = 0.
+    for frame in range(100):
+      m = model(left=-1.8, right=1.8) if frame < 10 or frame >= 70 else single(line=-1.2, edge=10.)
+      if 45 <= frame < 50:
+        m.laneLineProbs = [0., .05, .05, 0.]
+      result = controller.update(observation(m, model_sample_id=frame + 1, elapsed_seconds=.05))
+      self.assertLessEqual(abs(result.correction), MAX_CORRECTION)
+      self.assertLessEqual(abs(result.correction - previous), 2 * MAX_CORRECTION * (1 - math.exp(-.05 / .2)) + 1e-15)
+      if 45 <= frame < 50:
+        self.assertEqual(result.reason, 'unqualified_model')
+        self.assertLessEqual(abs(result.correction), abs(previous))
+      previous = result.correction
+
+
+class TestVehicleClearance(unittest.TestCase):
+  def test_required_unknown_body_preserves_nominal_and_clears_retained_state(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions
+    for body in (None, BodyDimensions(1.88, math.nan)):
+      with self.subTest(body=body):
+        controller = LaneCenteringController(body=body, body_required=True)
+        controller._correction = .001
+        controller._tracker.path = (np.array(XS), np.full(len(XS), .3))
+        source = observation(base_curvature=-.006)
+        result = controller.update(source)
+        self.assertEqual((result.candidate_curvature, result.correction, result.reason), (-.006, 0., 'unqualified_body'))
+        self.assertIsNone(controller._tracker.path)
+        self.assertIsNone(controller._geometry_cache)
+        controller._correction = .001
+        controller._tracker.path = (np.array(XS), np.full(len(XS), .3))
+        self.assertEqual(controller.guard_applied(source.model, -.006, -.005, -.006, 20., .1), -.006)
+        self.assertEqual(controller._correction, 0.)
+        self.assertIsNone(controller._tracker.path)
+
+  def test_required_known_body_retains_prediction_and_withdraws_when_lost(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions
+    controller = LaneCenteringController(body=BodyDimensions(1.88, 4.855), body_required=True)
+    m = single(edge=10.)
+    m.roadEdges[0].y = [-10.] * len(XS)
+    for frame in range(30):
+      source = observation(m, model_sample_id=frame + 1, elapsed_seconds=.05,
+                           measured_curvature=0., lateral_delay_s=.1)
+      result = controller.update(source)
+    self.assertGreater(result.correction, 0.)
+    self.assertIsNotNone(controller._tracker.path)
+    controller._body = None
+    result = controller.update(replace(source, turn_signal_active=True))
+    self.assertEqual((result.candidate_curvature, result.correction), (source.base_curvature, 0.))
+    self.assertIsNone(controller._tracker.path)
+
+  def test_final_command_guard_rejects_worsening_tracking_and_preserves_limits(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions
+    controller = LaneCenteringController(body=BodyDimensions(1.88, 4.855))
+    m = single(edge=3.)
+    controller._correction = .001
+    result = controller.guard_applied(m, .006, .007, .006, 20., .1)
+    self.assertEqual(result, .006)
+    self.assertEqual(controller._correction, 0.)
+    controller._tracker.path = (np.array(XS), np.full(len(XS), .3))
+    self.assertEqual(controller.guard_applied(m, -.006, -.007, -.006, 20., .1), -.006)
+
+  def test_commanded_curvature_is_checked_independently_of_model_position(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions, limit_correction
+    body = BodyDimensions(1.88, 4.855)
+    m = single(line=-1.8, edge=3.)
+    self.assertEqual(m.position.y[20], 0.)
+    # Same perceived path, different actual commanded motion: adding rightward
+    # steering to an already rightward command must not worsen edge intrusion.
+    self.assertEqual(limit_correction(m, .006, .001, .006, 20., .1, body), 0.)
+    self.assertEqual(limit_correction(m, .006, -.001, .006, 20., .1, body), -.001)
+
+  def test_wide_clear_corridor_keeps_the_requested_contribution(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions, limit_correction
+    m = single(line=-1.8, edge=10.)
+    m.roadEdges[0].y = [-10.] * len(XS)
+    body = BodyDimensions(1.88, 4.855)
+    for correction in (-.001, .001):
+      self.assertEqual(limit_correction(m, 0., correction, 0., 20., .1, body), correction)
+
+  def test_short_or_malformed_edge_does_not_gain_extrapolated_clearance(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions, limit_correction
+    for bad in ('short', 'nan', 'reversed', 'negative_std'):
+      with self.subTest(bad=bad):
+        m = single(edge=10.)
+        if bad == 'short':
+          m.roadEdges[1].x = XS[:5]
+          m.roadEdges[1].y = [10.] * 5
+        elif bad == 'nan':
+          m.roadEdges[1].y = [math.nan] * len(XS)
+        elif bad == 'reversed':
+          m.roadEdges[1].x = list(reversed(XS))
+        else:
+          m.roadEdgeStds = [.1, -.1]
+        self.assertEqual(limit_correction(m, 0., .001, 0., 20., .1, BodyDimensions(1.88, 4.855)), 0.)
+
+  def test_body_guard_withdraws_extra_correction_without_changing_nominal_command(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions
+    controller = LaneCenteringController(body=BodyDimensions(1.88, 4.855))
+    m = single(edge=10.)
+    m.roadEdges[0].y = [-10.] * len(XS)
+    for frame in range(30):
+      source = observation(m, model_sample_id=frame + 1, elapsed_seconds=.05,
+                           measured_curvature=0., lateral_delay_s=.1)
+      result = controller.update(source)
+    self.assertGreater(result.correction, 0.)
+    refused = controller.update(replace(source, measured_curvature=None))
+    self.assertEqual(refused.reason, 'clearance_limited')
+    self.assertEqual(refused.correction, 0.)
+    self.assertEqual(refused.candidate_curvature, source.base_curvature)
+    self.assertEqual(controller.update(replace(source, driver_override=True)).correction, 0.)
+
+  def test_dimensions_are_explicit_and_invalid_values_are_rejected(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions, interface_dimensions
+    self.assertIsNone(interface_dimensions(object(), object()))
+    for width, length in ((True, 4.8), (1.8, math.nan), (0., 4.8), (1.8, 20.)):
+      self.assertFalse(BodyDimensions(width, length).valid)
+    for dimensions in ((1.88,), (1.88, 4.855, 0.), 'unknown', (1.88, math.nan)):
+      interface = SimpleNamespace(get_lateral_body_dimensions=lambda cp, bounds=dimensions: bounds)
+      self.assertIsNone(interface_dimensions(interface, object()))
+
+  def test_height_envelope_rejects_close_edges_and_keeps_wide_observed_space(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions, limit_correction
+    body = BodyDimensions(1.88, 4.855, 1.495)
+    for side in (0, 1):
+      for distance, expected in ((1.8, 0.), (10., .001)):
+        m = single(edge=10.)
+        m.roadEdgeStds = [1., 1.]
+        m.roadEdgeStds[side] = .1
+        m.roadEdges[side].y = [distance * (-1 if side == 0 else 1)] * len(XS)
+        contribution = .001 * (-1 if side == 0 else 1)
+        self.assertEqual(abs(limit_correction(m, 0., contribution, 0., 20., .1, body)), expected)
+
+  def test_height_envelope_requires_absolute_margin_on_the_same_left_edge(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions, _center_motion, limit_correction
+    m = single(edge=10.)
+    x, y, _ = _center_motion(.006, .006, 20., .1)
+    m.roadEdges[0].y = (np.interp(XS, np.r_[0., x], np.r_[0., y]) - 1.8).tolist()
+    m.roadEdgeStds = [0., 1.]
+    self.assertEqual(limit_correction(m, .006, -.001, .006, 20., .1, BodyDimensions(1.88, 4.855, 1.495)), 0.)
+
+  def test_height_clearance_transitions_preserve_native_curvature_rate_and_nominal(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions
+    controller = LaneCenteringController(body=BodyDimensions(1.88, 4.855, 1.495), body_required=True)
+    previous = 0.
+    nonzero = 0
+    for frame in range(90):
+      m = model(left=-1.2, right=2.4)
+      m.init('roadEdges', 2)
+      for edge, side in zip(m.roadEdges, (-1., 1.), strict=True):
+        edge.x, edge.y = XS, [10. * side] * len(XS)
+      m.roadEdgeStds = [.1, .1]
+      if frame >= 20:
+        m.laneLineProbs = [0., .9, .1, 0.]
+      if 40 <= frame < 60:
+        m.roadEdges[1].y = [1.8] * len(XS)
+      source = observation(m, model_sample_id=frame + 1, base_curvature=0., measured_curvature=0., lateral_delay_s=.1)
+      result = controller.update(source)
+      self.assertIsNotNone(result.candidate_curvature)
+      proposed, _ = clip_curvature(20., previous, result.candidate_curvature, 0.)
+      nominal, _ = clip_curvature(20., previous, 0., 0.)
+      applied = controller.guard_applied(m, nominal, proposed, 0., 20., .1)
+      self.assertLessEqual(abs(applied - previous), 5. / 20. ** 2 * .01 + 1e-12)
+      if 40 <= frame < 60:
+        self.assertEqual((result.correction, applied), (0., nominal))
+      elif frame >= 60:
+        nonzero += applied != nominal
+      previous = applied
+    self.assertGreater(nonzero, 0)
+    controller._body = None
+    refused = controller.update(replace(source, model_sample_id=100))
+    self.assertEqual((refused.reason, refused.correction, refused.candidate_curvature), ('unqualified_body', 0., 0.))
+    self.assertIsNone(controller._tracker.path)
+
+  def test_height_envelope_checks_the_edge_between_rectangle_corners(self):
+    from openpilot.starpilot.lateral.lane_clearance import _interval_edge_margin
+    bounds = np.array([0.]), np.array([10.]), np.array([2.])
+    margin = _interval_edge_margin(bounds, np.array([0., 4., 5., 6., 10.]), np.array([10., 10., 1., 10., 10.]), 1)
+    self.assertLess(margin[0], 0.)
+
+  def test_height_envelope_contains_unknown_camera_reference_and_initial_roll(self):
+    from itertools import product
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions, _center_motion, _interval_body_bounds
+    body = BodyDimensions(1.88, 4.855, 1.495)
+    bounds = _interval_body_bounds(.015, -.003, 20., .2, body)
+    x, y, heading = _center_motion(.015, -.003, 20., .2)
+    poses = np.column_stack((np.r_[0., x], np.r_[0., y], np.r_[0., heading]))
+    corners = list(product((-body.length / 2, body.length / 2), (-body.width / 2, body.width / 2), (0., body.height)))
+    combinations = np.asarray(list(product(corners, corners, corners)))
+    point, reference, camera = combinations[:, 0], combinations[:, 1], combinations[:, 2]
+    for index in range(16):
+      for fraction in (.25, .5, .75):
+        tx, ty, angle = poses[index] * (1 - fraction) + poses[index + 1] * fraction
+        relative = point - reference
+        px = tx + reference[:, 0] - camera[:, 0] + np.cos(angle) * relative[:, 0] - np.sin(angle) * relative[:, 1]
+        py = ty + reference[:, 1] - camera[:, 1] + np.sin(angle) * relative[:, 0] + np.cos(angle) * relative[:, 1]
+        pz = point[:, 2] - camera[:, 2]
+        self.assertGreaterEqual(float(np.min(px)), bounds[0][index] - 1e-12)
+        self.assertLessEqual(float(np.max(px)), bounds[1][index] + 1e-12)
+        for roll in (-math.pi, -.7, 0., math.pi / 2, math.pi):
+          projected = py * math.cos(roll) - pz * math.sin(roll)
+          self.assertLessEqual(float(np.max(np.abs(projected))), bounds[2][index] + 1e-12)
+
+  def test_height_envelope_refuses_short_or_invalid_observation_and_bounds(self):
+    from openpilot.starpilot.lateral.lane_clearance import BodyDimensions, limit_correction
+    for bad in ('short', 'nonfinite', 'duplicate', 'negative_std', 'nan_std'):
+      m = single(edge=10.)
+      m.roadEdges[0].y = [-10.] * len(XS)
+      if bad == 'short':
+        m.roadEdges[1].x, m.roadEdges[1].y = XS[:5], [10.] * 5
+      elif bad == 'nonfinite':
+        m.roadEdges[1].y = [math.nan] * len(XS)
+      elif bad == 'duplicate':
+        m.roadEdges[1].x = [0.] * len(XS)
+      else:
+        m.roadEdgeStds = [.1, -.1 if bad == 'negative_std' else math.nan]
+      self.assertEqual(limit_correction(m, 0., .001, 0., 20., .1, BodyDimensions(1.88, 4.855, 1.495)), 0.)
+    for height in (True, 0., math.nan, math.inf, 4.):
+      self.assertFalse(BodyDimensions(1.88, 4.855, height).valid)
+

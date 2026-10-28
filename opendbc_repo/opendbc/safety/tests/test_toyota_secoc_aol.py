@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Always On Lateral on SecOC TSS2 Toyotas (2021+ Sienna, safety param 2121 = EPS scale 73 | SECOC).
+"""Always On Lateral on SecOC TSS2 Toyotas: camera2121, Yaris stock2633 and radar takeover6217.
 
 They have no 0x3BC GEAR_PACKET: the gear is read from 0x127 GEAR_PACKET_HYBRID (P 0, R 1, N 2, D 3, B 4; checksummed,
 ~60 Hz). Everything else is the TSS2 rule: main switch, doors, EPS state, and for longitudinal also cruise and belt.
@@ -25,6 +25,9 @@ def checksum(address, data):
 
 
 class TestToyotaSecocAol(unittest.TestCase):
+  WORD = WORD
+  BOTH_PERMISSION = 3
+
   def setUp(self):
     self.safety = libsafety_py.libsafety
 
@@ -32,7 +35,8 @@ class TestToyotaSecocAol(unittest.TestCase):
     self.safety.set_alternative_experience(0)
     self.safety.set_safety_hooks(CarParams.SafetyModel.noOutput, 0)
 
-  def init(self, word=WORD, ae=32):
+  def init(self, word=None, ae=32):
+    word = self.WORD if word is None else word
     self.omit_addresses = set()
     self.safety.init_tests()
     self.safety.set_alternative_experience(ae)
@@ -74,7 +78,7 @@ class TestToyotaSecocAol(unittest.TestCase):
       self.physical(gear=g)
       self.assertEqual(self.safety.aol_get_permission_mask(), 1)
       self.physical(gear=g, cruise=True)
-      self.assertEqual(self.safety.aol_get_permission_mask(), 3)
+      self.assertEqual(self.safety.aol_get_permission_mask(), self.BOTH_PERMISSION)
 
   def test_park_reverse_neutral_deny(self):
     for g in (P, R, N, 5, 15):
@@ -151,7 +155,7 @@ class TestToyotaSecocAol(unittest.TestCase):
     for changes in ({"belt": False}, {"brake": True}, {"gas": True}):
       self.init()
       self.physical(cruise=True)
-      self.assertEqual(self.safety.aol_get_permission_mask(), 3)
+      self.assertEqual(self.safety.aol_get_permission_mask(), self.BOTH_PERMISSION)
       self.physical(cruise=True, **changes)
       self.assertEqual(self.safety.aol_get_permission_mask(), 1, changes)
 
@@ -172,11 +176,11 @@ class TestToyotaSecocAol(unittest.TestCase):
   def test_lta_stays_blocked(self):
     self.init()
     self.physical(gear=D, cruise=True)
-    self.assertEqual(self.safety.aol_get_permission_mask(), 3)
+    self.assertEqual(self.safety.aol_get_permission_mask(), self.BOTH_PERMISSION)
     self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(0x131, 0, bytes([8]) + bytes(7))))
 
   def test_exact_admission(self):
-    for word, ae in ((WORD, 0), (WORD, 160), (WORD, 288), (WORD, 33), (WORD | 512, 32), (2120, 32), (2122, 32)):
+    for word, ae in ((self.WORD, 0), (self.WORD, 160), (self.WORD, 288), (self.WORD, 33), (self.WORD ^ 1, 32), (self.WORD ^ 2, 32)):
       self.init(word, ae)
       self.physical()
       self.assertEqual(self.safety.aol_get_request_mask(), 0, (word, ae))
@@ -220,7 +224,7 @@ class TestToyotaSecocAol(unittest.TestCase):
   def test_host_heartbeat_request_and_required_rx_health_are_independent(self):
     self.init()
     self.physical(cruise=True)
-    self.assertEqual(self.safety.aol_get_permission_mask(), 3)
+    self.assertEqual(self.safety.aol_get_permission_mask(), self.BOTH_PERMISSION)
     self.safety.set_aol_test_heartbeat(False)
     self.assertEqual(self.safety.aol_get_permission_mask(), 0)
     self.safety.set_aol_test_heartbeat(True)
@@ -241,17 +245,17 @@ class TestToyotaSecocAol(unittest.TestCase):
       self.physical(cruise=True)
       self.safety.set_timer(1_000_000 + elapsed)
       self.physical(cruise=True, request=False)
-      self.assertEqual(self.safety.aol_get_permission_mask(), 3 if allowed else 0)
+      self.assertEqual(self.safety.aol_get_permission_mask(), self.BOTH_PERMISSION if allowed else 0)
 
   def test_optional_source_corruption_revokes_until_fresh_recovery(self):
     for address in (0x1D3, 0x127, 0x620, 0x262):
       self.init()
       self.physical(cruise=True)
-      self.assertEqual(self.safety.aol_get_permission_mask(), 3)
+      self.assertEqual(self.safety.aol_get_permission_mask(), self.BOTH_PERMISSION)
       self.safety.safety_rx_hook(libsafety_py.make_CANPacket(address, 0, bytes(7)))
       self.assertEqual(self.safety.aol_get_permission_mask(), 0)
       self.physical(cruise=True)
-      self.assertEqual(self.safety.aol_get_permission_mask(), 3)
+      self.assertEqual(self.safety.aol_get_permission_mask(), self.BOTH_PERMISSION)
       if address != 0x620:
         self.safety.safety_rx_hook(libsafety_py.make_CANPacket(address, 0, bytes(8)))
         self.assertEqual(self.safety.aol_get_permission_mask(), 0)
@@ -265,11 +269,58 @@ class TestToyotaSecocAol(unittest.TestCase):
       self.init()
       self.physical(cruise=True)
       packet = libsafety_py.make_CANPacket(0x183, 0, (accel & 0xffff).to_bytes(2, 'big') + bytes(6))
-      self.assertEqual(bool(self.safety.safety_tx_hook(packet)), allowed)
+      self.assertEqual(bool(self.safety.safety_tx_hook(packet)), allowed and self.BOTH_PERMISSION == 3)
     self.init()
     self.physical(cruise=False)
     self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(0x183, 0, bytes([0, 1]) + bytes(6))))
     self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(0x343, 0, bytes([0, 1]) + bytes(6))))
+
+
+class TestYarisStockSecocAol(TestToyotaSecocAol):
+  WORD = 2633
+  BOTH_PERMISSION = 1
+
+  def test_stock_never_requests_long_or_blocks_stock_accel_forwarding(self):
+    self.init()
+    self.physical(cruise=True)
+    self.assertEqual(self.safety.aol_get_request_mask(), 1)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+    for address in (0x183, 0x343):
+      self.assertEqual(self.safety.safety_fwd_hook(2, address), 0)
+    for value in (0, 100, -100):
+      self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(
+        0x183, 0, (value & 0xffff).to_bytes(2, 'big') + bytes(6))))
+
+
+class TestYarisAlphaSecocAol(TestToyotaSecocAol):
+  WORD = 6217
+
+  def test_release_refuses_secoc_aol_and_radar_keepalive(self):
+    release = libsafety_py.ffi.dlopen(libsafety_py._build_libsafety(release=True))
+    native = TestToyotaSecocAol(methodName='runTest')
+    native.safety = release
+    for word in (2121, 2633, 6217):
+      native.init(word)
+      native.physical(cruise=True)
+      self.assertEqual(release.aol_get_request_mask(), 0)
+      self.assertEqual(release.aol_get_permission_mask(), 0)
+      self.assertFalse(release.safety_tx_hook(libsafety_py.make_CANPacket(
+        0x750, 0, bytes.fromhex('0f023e0000000000'))))
+    native.tearDown()
+
+  def test_radar_keepalive_is_exact_and_profile_scoped(self):
+    for word in (2121, 2633, 6217, 6216, 6218):
+      self.init(word)
+      for bus in (0, 1, 2):
+        for payload in (bytes.fromhex('0f023e0000000000'), bytes.fromhex('0f03280101000000'),
+                        bytes.fromhex('6d023e0000000000'), bytes.fromhex('0f023e0000000001')):
+          packet = libsafety_py.make_CANPacket(0x750, bus, payload)
+          self.assertEqual(bool(self.safety.safety_tx_hook(packet)),
+                           word == 6217 and bus == 0 and payload == bytes.fromhex('0f023e0000000000'))
+    self.init()
+    self.physical(cruise=True)
+    for address in (0x183, 0x343):
+      self.assertEqual(self.safety.safety_fwd_hook(2, address), -1)
 
 
 if __name__ == "__main__":

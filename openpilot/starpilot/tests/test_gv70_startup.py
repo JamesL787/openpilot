@@ -27,7 +27,7 @@ class TestGV70Startup(unittest.TestCase):
     self.assertIs(holder.owner.outcome, Outcome.SENT_UNCONFIRMED)
     self.assertIsInstance(ci.CC.adrv_template, GV70Template)
     self.assertNotIsInstance(ci.CC.adrv_template, EV6Template)
-    self.assertEqual(ci.CP.safetyConfigs[-1].safetyParam, 0x15)
+    self.assertEqual(ci.CP.safetyConfigs[-1].safetyParam, 0x2015)
     self.assertIn(b'\x28\x83\x01', requests)
     self.assertNotIn(b'\x28\x03\x01', requests)
     ci.CP.safetyConfigs[-1].safetyParam ^= 4

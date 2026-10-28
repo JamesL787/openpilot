@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from openpilot.starpilot.system.android_auto import identity as identity_store
+from openpilot.starpilot.system.android_auto import identity as identity_store, system_slice
 from openpilot.starpilot.system.android_auto.bugsink_diagnosis import attempt_records, diagnosis, elapsed, sanitize
 from openpilot.starpilot.system.android_auto.bugsink_summary import batch_summary, failure_summary, pairing_summary, session_timeline, software_tags
 
@@ -25,6 +25,16 @@ LOG_SETTLE_S = 120         # a log written this recently may still be a live ses
 MAX_SESSIONS = 20          # per drive report; the rest go in the next one
 MAX_FAILURES = 5           # distinct failures detailed per drive report
 MAX_BREADCRUMBS = 100
+TRACE_QUIET = frozenset({"nav_guidance_sent", "nav_focus", "nav_focus_requested", "nav_status_state", "media_key", "media_audio_state",
+                         "media_audio_focus", "media_status_state", "hfp_command", "video_focus"})
+TRACE_SESSION_BYTES = 40 << 10   # per failed session; the oldest events go first
+TRACE_TOTAL_BYTES = 160 << 10    # all traces in one report, well under the sender's event cap
+EVENT_BUDGET = 400 << 10         # a report is shed down to this before sending; the sender refuses more than 512 KB
+MAX_ATTENTION = 6                # sessions per report that get a trace and a device slice
+SERIES_KEYS = ("fps", "encode_ms", "frame_age_p95_ms", "wifi_dbm", "wifi_link", "wifi_noise", "load1", "mem_available_mb",
+               "temp_max_c", "cpu0_mhz", "cpu4_mhz", "frames_sent", "focused")
+SERIES_MAX = 240
+EXTRA_TAIL_LINES = 80
 FINISHED_EVENT = '"event": "session_stop"'
 OUTCOME_RANK = ("streamed", "recovered", "stopped", "dropped", "failed")
 
@@ -59,6 +69,21 @@ def stage_timings(events: list[dict]) -> list[dict]:
   return [{"stage": stage, "at_s": at} for stage, at in seen.items()]
 
 
+def stats_series(events: list[dict]) -> dict:
+  """Every 30 s stats sample as columns (seconds since the start, then one list per reading), thinned to SERIES_MAX."""
+  stats = [event for event in events if event["event"] == "stats"]
+  stride = -(-len(stats) // SERIES_MAX) if stats else 1
+  stats = stats[::stride]
+  if not stats:
+    return {}
+  columns = {"at_s": [elapsed(events[0], event) for event in stats]}
+  for key in SERIES_KEYS:
+    values = [event.get(key) if isinstance(event.get(key), (int, float, bool)) else None for event in stats]
+    if any(value is not None for value in values):
+      columns[key] = values
+  return columns
+
+
 def video_summary(events: list[dict]) -> dict:
   """The video mode and the frame rate delivered while the car showed StarPilot, from the 30 s stats lines."""
   ready = next((event for event in reversed(events) if event["event"] == "projection_ready"), {})
@@ -88,8 +113,49 @@ def video_summary(events: list[dict]) -> dict:
     "wifi_dbm_min": min(wifi) if wifi else None,
     "encoder_recoveries": max((int(event.get("encoder_recoveries") or 0) for event in stats), default=0),
     "frames_sent": max((int(event.get("frames_sent") or 0) for event in stats), default=0),
+    "unfocused_samples": sum(1 for event in events if event["event"] == "stats" and event.get("focused") is False),
   }
   return {key: value for key, value in summary.items() if value is not None}
+
+
+def _trim(value):
+  if isinstance(value, str):
+    return value[:300]
+  if isinstance(value, (dict, list)) and len(json.dumps(value, default=str)) > 600:
+    return json.dumps(value, default=str)[:600]
+  return value
+
+
+def trace_events(events: list[dict]) -> list[dict]:
+  """The session log without routine media and navigation chatter, each event stamped with seconds since the start."""
+  trace = []
+  for event in events:
+    if event["event"] in TRACE_QUIET:
+      continue
+    values = {key: _trim(value) for key, value in event.items() if key not in ("t", "mono_s", "event")}
+    trace.append({"at_s": elapsed(events[0], event), "event": event["event"], **values})
+  return trace
+
+
+def quiet_counts(events: list[dict]) -> dict:
+  """How often each routine event the trace leaves out happened, so nav and media activity stays visible."""
+  counts: dict[str, int] = {}
+  for event in events:
+    if event["event"] in TRACE_QUIET:
+      counts[event["event"]] = counts.get(event["event"], 0) + 1
+  return counts
+
+
+def bounded_trace(trace: list[dict], limit: int) -> dict:
+  """The newest events that fit in ``limit`` bytes of JSON, with how many older ones were left out."""
+  kept, size = [], 0
+  for event in reversed(trace):
+    size += len(json.dumps(event, default=str)) + 2
+    if size > limit:
+      break
+    kept.append(event)
+  kept.reverse()
+  return {"events": kept, "omitted": len(trace) - len(kept)}
 
 
 def session_record(path: Path) -> dict:
@@ -115,7 +181,7 @@ def session_record(path: Path) -> dict:
   car = report["car"]
   start = next((e for e in events if e["event"] == "session_start"), {})
   software, settings = start.get("software", {}), start.get("settings")
-  return {
+  record = {
     "software": {key: str(software.get(key) or "unknown") for key in ("commit", "branch")} if isinstance(software, dict) else {},
     "settings": settings if isinstance(settings, dict) else {},
     "seq": _session_number(path),
@@ -143,9 +209,37 @@ def session_record(path: Path) -> dict:
     "tls": report["tls"].get("version") or None,
     "head_unit": {key: car[key] for key in ("head_unit_make", "head_unit_model", "head_unit_software_version",
                                             "car_make", "car_model", "car_year") if car.get(key)},
+    "series": stats_series(events),
+    "quiet_events": quiet_counts(events),
     "_report": report,
+    "_trace": trace_events(events),
+    "_system": system_slice.read_sidecar(path),
+    "_dir": path.parent,
     "_names": [car.get("bluetooth_name", ""), car.get("display_name", "")],
   }
+  record["attention"] = attention_reasons(record)
+  return record
+
+
+def attention_reasons(session: dict) -> list[str]:
+  """Why a session needs its full trace and device slice; empty for one that streamed cleanly."""
+  video, reasons = session["video"], []
+  if session["outcome"] != "streamed":
+    reasons.append(session["outcome"])
+  if session["stalls"]:
+    reasons.append("stalls")
+  if session["focus_lost"]:
+    reasons.append("focus_lost")
+  if video.get("encoder_recoveries"):
+    reasons.append("encoder_recoveries")
+  target = video.get("target_fps") or video.get("car_fps")
+  if target and video.get("fps_p10") is not None and video["fps_p10"] < 0.5 * target:
+    reasons.append("low_fps")
+  if video.get("unfocused_samples"):
+    reasons.append("unfocused")
+  if video.get("wifi_dbm_min") is not None and video["wifi_dbm_min"] <= -75:
+    reasons.append("weak_wifi")
+  return reasons
 
 
 def _finished(path: Path) -> bool:
@@ -309,7 +403,16 @@ def drive_event(sessions: list[dict]) -> dict:
     message += "".join(f"\n\n--- Session {session['seq']} ---\n" + sanitize(session_timeline(session), session.get("_names", ()))
                        for session in failed)
   latest = failures[0] if failures else {}
-  return {
+  watched = [session for session in sessions if session["attention"]][-MAX_ATTENTION:]
+  per_trace = min(TRACE_SESSION_BYTES, TRACE_TOTAL_BYTES // max(1, len(watched)))
+  traces = {f"android_auto_trace_session_{session['seq']}": sanitize(
+    {**bounded_trace(session.get("_trace", []), per_trace), "routine_events": session.get("quiet_events", {})},
+    session.get("_names", ())) for session in watched}
+  slices = {f"android_auto_system_session_{session['seq']}": slice_context(session["_system"], session.get("_names", ()))
+            for session in watched[-3:] if session.get("_system")}
+  extra = extra_logs(watched[-1]) if watched else {}
+  reasons = sorted({reason for session in watched for reason in session["attention"]})
+  event = {
     "message": message,
     "level": {"streamed": "info", "recovered": "info", "failed": "error"}.get(summary["outcome"], "warning"),
     "fingerprint": ["android-auto-drive", summary["transport"] or "unknown", label] + (["failures"] if failures else []),
@@ -318,14 +421,76 @@ def drive_event(sessions: list[dict]) -> dict:
              "aa.encoder": video.get("encoder", "unknown"),
              "aa.fps": str(summary["fps_avg"]) if summary["fps_avg"] is not None else "none",
              "aa.failures": str(len(failures)),
+             **({"aa.attention": ",".join(reasons)[:190]} if reasons else {}),
              **({"aa.cause": latest["cause"], "aa.stage": latest["stage"], "aa.error_kind": latest["error_kind"]} if latest else {})},
     "breadcrumbs": {"values": attempt_breadcrumbs(sessions)},
     "contexts": {"android_auto_drive": summary, "android_auto_head_unit": head_unit,
                  **{f"android_auto_session_{index + 1}": _public(session) for index, session in enumerate(sessions)},
                  **{f"android_auto_failure_{index + 1}": {key: value for key, value in failure.items() if key != "summary"}
                     for index, failure in enumerate(failures)},
-                 **{f"android_auto_compat_report_session_{session['seq']}": {"text": compat_text(session)} for session in failed}},
+                 **{f"android_auto_compat_report_session_{session['seq']}": {"text": compat_text(session)} for session in watched},
+                 **traces, **slices, **extra},
   }
+  return fit_event(event)
+
+
+def slice_context(system: dict, names=()) -> dict:
+  """A saved device slice with every line scrubbed of names and SSIDs."""
+  sources = system.get("sources", {})
+  return {"window": system.get("window", {}),
+          **{name: ({"lines": [system_slice.scrub_line(line, names) for line in source["lines"]]} if "lines" in source
+                    else {"error": scrub(source.get("error", ""))}) for name, source in sources.items() if isinstance(source, dict)}}
+
+
+def extra_logs(session: dict) -> dict:
+  """The newest lines of the renderer profile and the car UI log, which sit beside the session logs."""
+  from openpilot.starpilot.system.android_auto import compat_report
+  contexts = {}
+  for name, key in (("render_profile.txt", "android_auto_render_profile"), ("car_ui.log", "android_auto_car_ui")):
+    data = compat_report._tail(session["_dir"] / name, 32 << 10)
+    if data:
+      lines = system_slice.system_snapshot.redact(data).decode(errors="replace").splitlines()[-EXTRA_TAIL_LINES:]
+      contexts[key] = {"lines": [system_slice.scrub_line(line, session.get("_names", ())) for line in lines]}
+  return contexts
+
+
+def event_size(event: dict) -> int:
+  return len(json.dumps(sanitize(event), default=str, allow_nan=False))
+
+
+def shed_order(contexts: dict) -> list[str]:
+  """Context keys from the least to the most valuable, so an oversized report loses detail before it loses the story."""
+  def numbered(prefix):
+    return sorted((key for key in contexts if key.startswith(prefix)), key=lambda key: int(key.rsplit("_", 1)[-1]))
+  return [*(key for key in ("android_auto_render_profile", "android_auto_car_ui") if key in contexts),
+          *numbered("android_auto_system_session_"), *numbered("android_auto_compat_report_session_"),
+          *numbered("android_auto_trace_session_")]
+
+
+def fit_event(event: dict, budget: int = EVENT_BUDGET) -> dict:
+  """Drop optional detail, least valuable first, until the report fits; sessions then lose their series and attempts."""
+  shed = []
+  contexts = event["contexts"]
+  for key in shed_order(contexts):
+    if event_size(event) <= budget:
+      break
+    contexts.pop(key)
+    shed.append(key)
+  for key in [key for key in contexts if key.startswith("android_auto_session_")]:
+    if event_size(event) <= budget:
+      break
+    contexts[key] = {name: value for name, value in contexts[key].items() if name not in ("series", "attempts", "stages", "settings")}
+    shed.append(f"{key}:detail")
+  if shed:
+    event["tags"]["aa.truncated"] = "yes"
+    contexts["android_auto_shed"] = {"dropped": shed}
+  if event_size(event) > budget:
+    event["breadcrumbs"] = {"values": event["breadcrumbs"]["values"][-20:]}
+  if event_size(event) > budget:
+    keep = ("android_auto_drive", "android_auto_head_unit", "android_auto_shed")
+    event["contexts"] = {key: value for key, value in contexts.items() if key in keep or key.startswith("android_auto_failure_")}
+    event["contexts"]["android_auto_shed"] = {"dropped": ["everything but the totals and failures"]}
+  return event
 
 
 def record_pairing(record: dict, path: Path = PAIRING_PATH) -> None:
@@ -358,14 +523,25 @@ def new_pairings(last_seq: int, path: Path = PAIRING_PATH) -> list[dict]:
   return records
 
 
-def pairing_event(record: dict) -> dict:
+def pairing_system(record: dict, collector: Callable[..., dict]) -> dict:
+  """The device's Wi-Fi and Bluetooth activity during a pairing window that did not end in a pairing."""
+  try:
+    start = datetime.fromisoformat(record["started"]).timestamp()
+    system = collector(start, start + float(record.get("duration_s") or record.get("window_s") or 0))
+    return {"android_auto_pairing_system": slice_context(system)}
+  except Exception:
+    return {}
+
+
+def pairing_event(record: dict, collector: Callable[..., dict] | None = None) -> dict:
   result = str(record.get("result", "unknown"))
+  system = pairing_system(record, collector) if collector is not None and result != "paired" else {}
   return {
     "message": f"Android Auto pairing {result}\n\n" + sanitize(pairing_summary(record)),
     "level": "info" if result == "paired" else "warning",
     "fingerprint": ["android-auto-pairing", result],
     "tags": {**software_tags([record]), "aa.report": "pairing", "aa.pairing": result, "aa.transport": record.get("transport", "unknown")},
-    "contexts": {"android_auto_pairing": sanitize(record)},
+    "contexts": {"android_auto_pairing": sanitize(record), **system},
   }
 
 
@@ -386,6 +562,11 @@ class PairingAttempt:
     if len(self.record["steps"]) > 100:
       self.record["steps"].pop(0)
       self.record["steps_omitted"] = self.record.get("steps_omitted", 0) + 1
+
+  def reached_connection(self) -> bool:
+    """The car was approved or connected before the window ended."""
+    return any(step.get("step") == "status" and (step.get("approved") or step.get("state") in ("paired", "connected"))
+               for step in self.record["steps"])
 
   def finish(self, result: str, **values) -> None:
     self.step(result, **values)
@@ -414,7 +595,8 @@ def _write_atomic(path: Path, text: str) -> None:
 
 
 def send_reports(capture: Callable[..., bool], flush: Callable[[], None] = lambda: None, *, state_path: Path = STATE_PATH,
-                 log_dir: Path | None = None, pairing_path: Path = PAIRING_PATH, now: float | None = None) -> int:
+                 log_dir: Path | None = None, pairing_path: Path = PAIRING_PATH, now: float | None = None,
+                 collector: Callable[..., dict] | None = None) -> int:
   """Send what is new since the last call; returns how many reports were queued.
 
   Capture must return True only after the server accepts the event."""
@@ -424,7 +606,7 @@ def send_reports(capture: Callable[..., bool], flush: Callable[[], None] = lambd
   queued = 0
 
   for record in new_pairings(pairing_seq, pairing_path):
-    if not capture(**pairing_event(record)):
+    if not capture(**pairing_event(record, collector or system_slice.collect)):
       break
     pairing_seq, queued = int(record["seq"]), queued + 1
 

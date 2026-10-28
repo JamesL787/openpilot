@@ -50,7 +50,7 @@ def test_real_pose_status_precedes_optional_work_and_late_writes_use_current_clo
 
   monkeypatch.setattr(actor, 'tick', tick)
   monkeypatch.setattr(steerlearnerd, 'tracking_message', write_source)
-  monkeypatch.setattr(steerlearnerd, 'drain', lambda *args: None)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', lambda *args: None)
   fitter = NoLegacyFitter()
   with pytest.raises(LoopComplete):
     steerlearnerd.run(SimpleNamespace(), SM(), object(), object(), SimpleNamespace(send=send),

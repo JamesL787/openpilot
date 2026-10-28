@@ -90,6 +90,7 @@ def fixture(alpha=False):
     controls.sm.valid[name] = False
   controls.calibrated_pose = controls.last_lane_centering_result = None
   controls.lane_centering_applied = 0.
+  controls.lane_centering_inactive_reason = 'inactive'
   controls.pm = NS(send=lambda *args: None)
   lateral_log = messaging.new_message('controlsState').controlsState.lateralControlState.init(
     'torqueState' if controls.CP.lateralTuning.which() == 'torque' else 'pidState')

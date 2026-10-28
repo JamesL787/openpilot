@@ -228,6 +228,27 @@ class SharedBluetoothOwner(BluetoothOwner):
   def _admission_busy(self) -> bool:
     return self.phone_lease is not None or super()._admission_busy()
 
+  @staticmethod
+  def _start_scan(client) -> bool:
+    """BlueZ can hold a stale discovery request; reset it once, and still open the window (the car can pair to us) if it stays stuck."""
+    try:
+      client.operation('scan')
+      return True
+    except BluetoothRejected as error:
+      if 'InProgress' not in str(error):
+        raise
+    try:
+      client.operation('stop_scan')
+    except BluetoothRejected:
+      pass
+    try:
+      client.operation('scan')
+      return True
+    except BluetoothRejected as error:
+      if 'InProgress' not in str(error):
+        raise
+      return False
+
   def acquire_phone_role(self, session: tuple, phone: PhoneProfile, *, seconds: float = 180.0) -> PhoneRoleLease:
     if not session or not 0 < seconds <= 180:
       raise ValueError('Invalid phone-role session or duration')
@@ -290,8 +311,7 @@ class SharedBluetoothOwner(BluetoothOwner):
       self.phone_lease = lease
       self.admission_file = process_lock
       try:
-        client.operation('scan')
-        lease.discovering = True
+        lease.discovering = self._start_scan(client)
       except BaseException:
         self.release_phone_role(lease)
         raise

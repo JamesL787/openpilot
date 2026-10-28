@@ -12,6 +12,9 @@ ANGLE = 128
 ANGLE_BASE_WORDS = frozenset((18, 19, 32, 33, 66, 67))
 AOL_WORDS = (BASE_WORDS | frozenset(word | ANGLE for word in ANGLE_BASE_WORDS))
 AOL_WORDS |= frozenset(word | MANUAL for word in AOL_WORDS)
+from opendbc.car.ford.pinion import ENABLE, SHIFT, PROFILES, base_word, configured
+AOL_WORDS |= frozenset(word | ENABLE | index << SHIFT for index, words in PROFILES.items()
+                      for word in tuple(AOL_WORDS) if (word & ~MANUAL) in words)
 
 
 def aol_safety_config(cp):
@@ -33,6 +36,10 @@ def base_safety_param(cp):
   if cp.transmissionType not in (structs.CarParams.TransmissionType.automatic, structs.CarParams.TransmissionType.manual):
     return -1
   word = int(owner.safetyParam)
+  normalized = base_word(word)
+  if normalized != word and not configured(cp):
+    return -1
+  word = normalized
   if (word & MANUAL and not manual) or (manual and cp.alternativeExperience == AOL_EXPERIENCE and not word & MANUAL):
     return -1
   if word & ANGLE:

@@ -40,6 +40,7 @@ class TestBoltAccPedalFriction(unittest.TestCase):
     control.longActive = True
     control.actuators.accel = -3.
     state = structs.CarState()
+    state.canValid = True
     state.vEgo = 12.
     state.gearShifter = structs.CarState.GearShifter.low
     state.cruiseState.available = True
@@ -52,12 +53,26 @@ class TestBoltAccPedalFriction(unittest.TestCase):
                          buttons_counter=0,
                          pscm_status=dict.fromkeys(("HandsOffSWDetectionMode", "HandsOffSWlDetectionStatus", "LKATorqueDeliveredStatus",
                                         "LKADriverAppldTrq", "LKATorqueDelivered", "LKATotalTorqueDelivered", "RollingCounter", "PSCMStatusChecksum"), 0))
+    from opendbc.car.gm.steering_authority import SteeringAuthority
+    cs.steering_authority = SteeringAuthority(cp)
     return controller, control, state, cs
 
   def step(self, fixture, frame, now=1_000_000_000):
     controller, control, state, cs = fixture
     controller.frame = frame
+    now += (frame - 4) * 10_000_000
+    # Advance the declared healthy physical receipts with the 100 Hz fixture.
+    # Explicitly stale/absent receipts supplied by each test stay stale/absent.
+    previous = getattr(cs, '_healthy_fixture_stamps', {})
+    for name in ('pedal_sensor_ts_nanos', 'stock_acc_status_ts_nanos', 'bolt_pedal_gear_ts_nanos', 'bolt_pedal_main_ts_nanos'):
+      value = getattr(cs, name)
+      if value == previous.get(name, 950_000_000):
+        setattr(cs, name, now - 50_000_000)
+        previous[name] = now - 50_000_000
+    cs._healthy_fixture_stamps = previous
     cs.out = state.as_reader()
+    cs.bolt_acc_brake_clock_ns = now
+    cs.bolt_acc_brake_clock_counter = (frame // 4) % 4
     _, messages = controller.update(control.as_reader(), cs, now)
     return messages
 
@@ -250,3 +265,80 @@ class TestBoltAccPedalFriction(unittest.TestCase):
     payloads = {m[0]: m[1].hex() for m in messages if m[0] in (0x200, 0x1F5, 0xBD, 0x315)}
     self.assertEqual(payloads, {0x200: "056f02b888ce", 0x1F5: "0c0c000500020100",
                                 0xBD: "20000000000000", 0x315: "9000700000"})
+
+
+class TestBoltAccBrakeClock(unittest.TestCase):
+  def test_clock_is_fresh_nonrepeating_and_never_expands_authority(self):
+    from opendbc.car.gm.bolt_acc_brake_clock import BoltAccBrakeClock
+    clock = BoltAccBrakeClock()
+    clock.prepare(1_000_000_000, 24, True, False, False)
+
+    def sample(now, source, counter, **changes):
+      flags = dict(active=True, main_ready=True, source_valid=True)
+      flags.update(changes)
+      return clock.sample(now, source, counter, **flags)
+    self.assertEqual(sample(1_010_000_000, 1_005_000_000, 2), (24, 2, True, False, False))
+    self.assertIsNone(sample(1_020_000_000, 1_005_000_000, 2))
+    self.assertIsNone(sample(1_020_000_000, 1_015_000_000, 2))
+    self.assertIsNone(sample(1_020_000_000, 1_021_000_000, 3))
+    self.assertIsNone(sample(1_020_000_000, 0, 3))
+    self.assertIsNone(sample(1_020_000_000, 1_015_000_000, 3, source_valid=False))
+    self.assertEqual(sample(1_050_000_000, 1_045_000_000, 3, active=False), (0, 3, False, False, False))
+    self.assertIsNone(sample(1_090_000_000, 1_085_000_000, 0))
+    clock.prepare(1_090_000_000, 24, True, False, False)
+    self.assertIsNone(sample(1_090_000_000, 1_000_000_000, 0))
+    self.assertIsNone(sample(1_090_000_000, 1_085_000_000, 0, main_ready=False))
+    self.assertIsNone(sample(1_090_000_000, 1_085_000_000, 0))
+
+  def test_controller_emits_on_factory_cycle_between_pedal_slots(self):
+    fixture = TestBoltAccPedalFriction().fixture()
+    controller, control, state, cs = fixture
+    state.canValid = True
+    cs.out = state.as_reader()
+    cs.bolt_acc_brake_clock_ns = 995_000_000
+    cs.bolt_acc_brake_clock_counter = 2
+    controller.frame = 4
+    _, first = controller.update(control.as_reader(), cs, 1_000_000_000)
+    self.assertEqual(brake_fields(brake_frames(first)[0])[2], 2)
+    pedal_first = [m for m in first if m[0] == 0x200]
+    self.assertEqual(len(pedal_first), 1)
+    controller.frame = 5
+    _, duplicate = controller.update(control.as_reader(), cs, 1_010_000_000)
+    self.assertFalse(brake_frames(duplicate))
+    controller.frame = 8
+    _, waiting = controller.update(control.as_reader(), cs, 1_040_000_000)
+    self.assertFalse(brake_frames(waiting))
+    cs.bolt_acc_brake_clock_ns = 1_045_000_000
+    cs.bolt_acc_brake_clock_counter = 3
+    controller.frame = 9
+    _, next_cycle = controller.update(control.as_reader(), cs, 1_050_000_000)
+    self.assertEqual(brake_fields(brake_frames(next_cycle)[0])[2], 3)
+    self.assertFalse(any(m[0] == 0x200 for m in next_cycle))
+    self.assertFalse(any(m[0] in (0x2CB, 0xBD, 0x1F5) for m in next_cycle))
+
+  def test_scope_excludes_removed_camera_and_no_acc(self):
+    from opendbc.car.gm.tests.test_bolt_pedal import params
+    for identity in (CAR.CHEVROLET_BOLT_CC_2017, CAR.CHEVROLET_BOLT_CC_2018_2021,
+                     CAR.CHEVROLET_BOLT_CC_2022_2023, CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL):
+      cp = params(identity, pedal=True, removed=True)
+      controller = CarController(DBC[cp.carFingerprint], cp)
+      self.assertIsNone(controller.bolt_acc_brake_clock)
+
+  def test_lost_or_frozen_clock_releases_once_and_cannot_rearm_itself(self):
+    from opendbc.car.gm.bolt_acc_brake_clock import BoltAccBrakeClock
+    for failure in ('stale', 'frozen', 'invalid'):
+      clock = BoltAccBrakeClock()
+      clock.prepare(1_000_000_000, 24, True, False, False)
+      self.assertEqual(clock.sample(1_000_000_000, 1_000_000_000, 2,
+                                   active=True, main_ready=True, source_valid=True), (24, 2, True, False, False))
+      clock.prepare(1_090_000_000, 24, True, False, False)
+      source = 1_000_000_000 if failure == 'stale' else 1_090_000_000
+      self.assertEqual(clock.sample(1_090_000_000, source, 2,
+                                   active=True, main_ready=True, source_valid=failure != 'invalid'), (0, 3, False, False, False))
+      self.assertIsNone(clock.sample(1_100_000_000, source, 2, active=True, main_ready=True, source_valid=True))
+      clock.prepare(1_130_000_000, 24, True, False, False)
+      self.assertIsNone(clock.sample(1_130_000_000, 1_130_000_000, 3,
+                                    active=True, main_ready=True, source_valid=True))
+      clock.prepare(1_170_000_000, 24, True, False, False)
+      self.assertEqual(clock.sample(1_170_000_000, 1_170_000_000, 0,
+                                   active=True, main_ready=True, source_valid=True), (24, 0, True, False, False))

@@ -3,7 +3,7 @@ import math
 
 from opendbc.can import CANDefine, CANParser
 from opendbc.car.toyota import (
-  prius_longitudinal, dsu_bypass, pedal_composite, pedal, legacy_sdsu, advert_filter, legacy_advert_filter, prius_sdsu, prius_advert_filter
+  stock_aol, prius_longitudinal, dsu_bypass, pedal_composite, pedal, legacy_sdsu, advert_filter, legacy_advert_filter, prius_sdsu, prius_advert_filter
 )
 from opendbc.car.toyota.lexus_is import LexusIsCANParser
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
@@ -309,6 +309,15 @@ class CarState(CarStateBase):
       ret.steerFaultTemporary = ret.steerFaultTemporary or not eps_current or cp.hardware_ambiguous
       ret.accFaulted = ret.accFaulted or cp.hardware_ambiguous
 
+    if stock_aol.configured(self.CP):
+      main = 'DSU_CRUISE' if self.CP.safetyConfigs[0].safetyParam in stock_aol.ALT_MAIN_WORDS else 'PCM_CRUISE_2'
+      main_stamp = cp.ts_nanos[main]['MAIN_ON']
+      eps_stamp = cp.ts_nanos['EPS_STATUS']['LKA_STATE']
+      ret.cruiseState.available &= bool(cp.main_valid and main_stamp > 0 and
+                                       0 <= cp._last_update_nanos - main_stamp <= 303_031_000)
+      ret.steerFaultTemporary |= not (cp.eps_valid and eps_stamp > 0 and
+                                     0 <= cp._last_update_nanos - eps_stamp <= 400_000_000)
+
     if pedal.configured(self.CP):
       cp_pedal = can_parsers[Bus.alt] if pedal_composite.configured(self.CP) else cp
       stamp = cp_pedal.ts_nanos.get("GAS_SENSOR", {}).get("STATE", 0)
@@ -371,7 +380,8 @@ class CarState(CarStateBase):
 
     if pedal.configured(CP):
       pt_messages.append(("GAS_SENSOR", 50))
-    pt_parser = (prius_advert_filter.PriusAdvertCANParser if prius_advert_filter.configured(CP) else
+    stock = stock_aol.configured(CP)
+    pt_parser = (stock_aol.StockCANParser if stock else prius_advert_filter.PriusAdvertCANParser if prius_advert_filter.configured(CP) else
                  prius_sdsu.PriusSDSUCANParser if prius_sdsu.configured(CP) or prius_longitudinal.eps73_status_configured(CP) else
                  camera_2aa_filter.CameraTwoAACANParser if camera_twoaa else
                  legacy_advert_filter.LegacyAdvertCANParser if legacy_advert else
@@ -380,6 +390,7 @@ class CarState(CarStateBase):
                  advert_filter.AdvertFilterCANParser if advert_filter.configured(CP) else
                  Rav4hCANParser if rav4h_filter_configured(CP) else CANParser)
     return {
-      Bus.pt: pt_parser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0, **({"alternate_main": alternate_sdsu_main} if legacy_advert else {})),
+      Bus.pt: pt_parser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0, **({"stock_word": CP.safetyConfigs[0].safetyParam} if stock else
+        {"alternate_main": alternate_sdsu_main} if legacy_advert else {})),
       Bus.cam: CANParser(dbc_name, cam_messages, 2),
     }

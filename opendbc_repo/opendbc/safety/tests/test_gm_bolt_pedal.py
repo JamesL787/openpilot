@@ -580,7 +580,9 @@ class TestGmBoltPedalSafety(unittest.TestCase):
         _, commands = controller.update(control.as_reader(), cs, 1_000_000_000)
         acc_pedal = candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL
         self.assertEqual([msg[0] for msg in commands], ([0x3D1] if not acc_pedal else []) +
-                         [0x200, 0x1F5, 0xBD] + ([0x315] if acc_pedal else []))
+                         [0x200, 0x1F5, 0xBD])
+        # Sparse input has no valid factory brake clock; it must not emit friction braking.
+        self.assertNotIn(0x315, [msg[0] for msg in commands])
         self.safety.set_timer(1_000_000)
         if not acc_pedal:
           self.assertFalse(self.safety.safety_tx_hook(self.packet(commands[0])))  # Required physical status sources are absent.
@@ -588,8 +590,6 @@ class TestGmBoltPedalSafety(unittest.TestCase):
         self.assertTrue(self.safety.safety_tx_hook(self.packet(commands[0])))
         self.assertFalse(self.safety.safety_tx_hook(self.packet(commands[1])))
         self.assertFalse(self.safety.safety_tx_hook(self.packet(commands[2])))
-        if acc_pedal:
-          self.assertTrue(self.safety.safety_tx_hook(self.packet(commands[3])))
         self.assertEqual(self.recorded(), [])
         self.safety.safety_rx_hook(self.packet(packer.make_can_msg("ECMPRDNL2", 0, {"PRNDL2": 6})))
         self.safety.safety_rx_hook(self.packet(packer.make_can_msg("EBCMRegenPaddle", 0, {"RegenPaddle": 0})))
@@ -610,6 +610,63 @@ class TestGmBoltPedalSafety(unittest.TestCase):
         self.safety.safety_rx_hook(self.packet(packer.make_can_msg("ECMPRDNL2", 0, {"PRNDL2": 6})))
         self.safety.safety_rx_hook(self.packet(packer.make_can_msg("EBCMRegenPaddle", 0, {"RegenPaddle": 0})))
         self.assertEqual(self.recorded(), [(0x1F5, 0, released[1][1]), (0xBD, 0, released[2][1])])
+
+
+  def test_equipped_acc_friction_uses_real_parser_clock_and_native_acceptance(self):
+    from opendbc.car.gm.tests.test_bolt_pedal import TestBoltPedalStartupParser
+    from opendbc.car.gm.tests.test_bolt_acc_pedal_friction import brake_fields
+    candidate = CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL
+    cp = params(candidate, True, True)
+    self.assertEqual(cp.safetyConfigs[0].safetyParam, 0x1CD)
+    self.assertEqual(self.safety.set_safety_hooks(CarParams.SafetyModel.gm, cp.safetyConfigs[0].safetyParam), 0)
+    self.safety.init_tests()
+    ci, out = TestBoltPedalStartupParser().stream(cp, native=self.safety)
+    packer = CANPacker(DBC[candidate][Bus.pt])
+    wheels = [packer.make_can_msg("EBCMWheelSpdFront", 0, {"FLWheelSpd": 43.2, "FRWheelSpd": 43.2}),
+              packer.make_can_msg("EBCMWheelSpdRear", 0, {"RLWheelSpd": 43.2, "RRWheelSpd": 43.2,
+                                                        "RLWheelDir": 1, "RRWheelDir": 1})]
+    for message in wheels:
+      self.assertTrue(self.safety.safety_rx_hook(self.packet(message)))
+    out = ci.update([(3_490_000_000, wheels)])
+    self.assertTrue(out.canValid)
+    self.assertFalse(out.canTimeout)
+    self.assertGreater(out.vEgo, 10.)
+    self.assertTrue(self.safety.safety_config_valid())
+    self.assertEqual(ci.CS.bolt_acc_brake_clock_ns, 3_480_000_000)
+    self.assertEqual(ci.CS.bolt_acc_brake_clock_counter, 0)
+    self.assertTrue(out.cruiseState.available)
+    self.assertFalse(out.cruiseState.enabled)
+    self.safety.set_controls_allowed(True)
+    controller = CarController(DBC[candidate], cp)
+    controller.frame = controller.last_steer_frame = 4
+    control = structs.CarControl(enabled=True, longActive=True)
+    control.actuators.accel = -3.
+    control.actuators.longControlState = structs.CarControl.Actuators.LongControlState.pid
+    self.assertTrue(controller.bolt_pedal_admission(control.as_reader(), ci.CS, 3_490_000_000)[0])
+    _, commands = controller.update(control.as_reader(), ci.CS, 3_490_000_000)
+    friction = [msg for msg in commands if msg[0] == 0x315]
+    self.assertEqual(len(friction), 1)
+    mode, brake, counter = brake_fields(friction[0])
+    self.assertGreater(brake, 0)
+    self.assertNotEqual(mode, 1)
+    self.assertEqual(counter, ci.CS.bolt_acc_brake_clock_counter)
+    self.assertEqual(friction[0][2], 0)
+    self.assertEqual(len(friction[0][1]), 5)
+    self.assertTrue(self.safety.safety_tx_hook(self.packet(friction[0])))
+    controller.frame = 5
+    _, duplicate = controller.update(control.as_reader(), ci.CS, 3_500_000_000)
+    self.assertFalse(any(msg[0] == 0x315 for msg in duplicate))
+    ci.update([(3_580_000_000, [])])
+    controller.frame = 6
+    _, expired = controller.update(control.as_reader(), ci.CS, 3_580_000_000)
+    release = [msg for msg in expired if msg[0] == 0x315]
+    self.assertEqual(len(release), 1)
+    self.assertEqual(brake_fields(release[0]), (1, 0, 1))
+    self.safety.set_timer(3_580_000)
+    self.assertTrue(self.safety.safety_tx_hook(self.packet(release[0])))
+    controller.frame = 7
+    _, still_expired = controller.update(control.as_reader(), ci.CS, 3_590_000_000)
+    self.assertFalse(any(msg[0] == 0x315 for msg in still_expired))
 
   def test_recorded_independent_adc_keeps_set_lateral_and_driver_override(self):
     for sample in ('053502ba0164', '04e30286048f', '046c024108e3', '0279012a06f6'):

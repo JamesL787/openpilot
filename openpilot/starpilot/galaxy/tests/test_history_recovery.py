@@ -41,13 +41,17 @@ class HistoryRecoveryTest(unittest.TestCase):
       current = owner()
       current._run()
       self.assertEqual(len(calls), MAX_RETRY_ATTEMPTS)
-      self.assertEqual(current._snapshot_locked()['analysis']['state'], 'ready')
+      self.assertEqual(current._snapshot_locked()['analysis']['state'], 'failed')
+      self.assertEqual(current._snapshot_locked()['analysis']['failed'], 1)
+      self.assertTrue(current._snapshot_locked()['analysis']['failures'][0]['retryStopped'])
+      self.assertEqual(current._snapshot_locked()['analysis']['failures'][0]['attempts'], MAX_RETRY_ATTEMPTS)
       self.assertEqual(current._snapshot_locked()['analysis']['quarantined'], 1)
       source.write_bytes(b'repaired')
       current._run()
       self.assertEqual(len(calls), MAX_RETRY_ATTEMPTS + 1)
       self.assertEqual(current._snapshot_locked()['totals']['drives'], 1)
       self.assertFalse(current._failures)
+      self.assertEqual(current._snapshot_locked()['analysis']['state'], 'ready')
       current.close()
 
   def test_interruption_does_not_consume_failure_budget(self):

@@ -113,30 +113,34 @@ class TestSlcUiRuntime(unittest.TestCase):
     self.assertIsNotNone(result.command)
     self.assertGreater(result.command.slcCruiseCommand.targetMps, 60.0 / 3.6)
 
-  def test_visible_reject_then_use_limit_restores_rejected_presentation(self):
-    sm, cp = replay_inputs()
-    runtime = Runtime(parse({"SpeedLimitController": True, "SLCConfirmation": True,
-                             "SLCConfirmationHigher": True, "SLCPriority1": "Dashboard"}), session_id="ui-reject")
-    pending = runtime.step(sm, cp, now_ns=START).message
-    reject = ui_request(pending, profile=Profile.COMPACT, kind=SlcActionKind.REJECT)
-    self.assertEqual(reject.kind, SlcActionKind.REJECT)
-    action = publish_request(pending.slcState, reject, START)
-    sm.advance(START + 50_000_000)
-    rejected = runtime.step(sm, cp, now_ns=START + 50_000_000, request=action)
-    self.assertEqual(rejected.message.slcState.actionStatus, "reject")
-    self.assertFalse(rejected.message.slcState.hasPending)
-    self.assertIsNone(rejected.command)
-    observation = speed_limit_from_message(rejected.message.slcState)
-    view_state = OnroadState(True, False, 20.0, 60.0, observation,
-                             longitudinal_active=True, slc_system_long_available=True)
-    self.assertEqual(slc_controls(Profile.COMPACT, view_state), ())
-    adopt = ui_request(rejected.message, profile=Profile.LARGE, kind=SlcActionKind.ADOPT)
-    self.assertEqual(adopt.kind, SlcActionKind.ADOPT)
-    restore = publish_request(rejected.message.slcState, adopt, START + 50_000_000)
-    sm.advance(START + 100_000_000)
-    restored = runtime.step(sm, cp, now_ns=START + 100_000_000, request=restore)
-    self.assertEqual(restored.message.slcState.actionStatus, "adopt")
-    self.assertIsNotNone(restored.command)
+  def test_reject_or_timeout_then_use_limit_restores_rejected_presentation(self):
+    for profile in Profile:
+      for response in ('reject', 'timeout'):
+        with self.subTest(profile=profile, response=response):
+          sm, cp = replay_inputs()
+          sm['slcDashboardObservation'].validUntilMonoTime = START + 20_000_000_000
+          runtime = Runtime(parse({"SpeedLimitController": True, "SLCConfirmation": True,
+                                   "SLCPriority1": "Dashboard"}), session_id="ui-reject")
+          pending = runtime.step(sm, cp, now_ns=START).message
+          action = None
+          now_ns = START + 10_000_000_000
+          if response == 'reject':
+            reject = ui_request(pending, profile=profile, kind=SlcActionKind.REJECT)
+            action = publish_request(pending.slcState, reject, START)
+            now_ns = START + 50_000_000
+          sm.advance(now_ns)
+          rejected = runtime.step(sm, cp, now_ns=now_ns, request=action)
+          self.assertEqual(rejected.result.acceptance.basis, 'driver_reject' if action else 'timeout_reject')
+          self.assertFalse(rejected.message.slcState.hasPending)
+          self.assertIsNone(rejected.command)
+          adopt = ui_request(rejected.message, profile=profile, kind=SlcActionKind.ADOPT)
+          self.assertEqual(adopt.kind, SlcActionKind.ADOPT)
+          restore = publish_request(rejected.message.slcState, adopt, now_ns)
+          sm.advance(now_ns + 50_000_000)
+          restored = runtime.step(sm, cp, now_ns=now_ns + 50_000_000, request=restore)
+          self.assertEqual(restored.message.slcState.actionStatus, "adopt")
+          self.assertIsNotNone(restored.command)
+          self.assertAlmostEqual(restored.command.slcCruiseCommand.targetMps, 25.0)
 
   def test_same_accepted_limit_can_be_used_with_lower_selected_cruise(self):
     sm, cp = replay_inputs()
@@ -182,7 +186,7 @@ class TestSlcUiRuntime(unittest.TestCase):
         result = runtime.step(sm, cp, now_ns=START + 50_000_000, request=action)
         self.assertEqual(result.message.slcState.actionStatus, 'adopt')
         self.assertIsNotNone(result.command)
-        cruise = VCruiseHelper.__new__(VCruiseHelper)
+        cruise = VCruiseHelper(cp)
         cruise.apply_slc_target(result.command.slcCruiseCommand.targetMps, metric)
         applied = replace(state, cruise_kph=cruise.v_cruise_cluster_kph,
                           speed_limit=speed_limit_from_message(result.message.slcState))

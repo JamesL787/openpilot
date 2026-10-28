@@ -85,6 +85,10 @@ class PriusSDSUCANParser(Rav4hCANParser):
     for stamp, frames in strings:
       accepted = []
       for address, data, bus in frames:
+        # pandad marks TX confirmations/rejections with bus >= 128; they
+        # are not received hardware (see panda.h CAN_*_BUS_OFFSET).
+        if bus >= 128:
+          continue
         if address in (0x201, 0x2AA) or address == 0x2FF and (bus not in (0, 2) or len(data) == 4):
           self.hardware_ambiguous = True
         if bus == self.bus and address in (0x1D3, 0x262):

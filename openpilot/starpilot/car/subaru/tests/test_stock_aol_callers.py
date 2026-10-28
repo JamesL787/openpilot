@@ -9,7 +9,7 @@ from opendbc.car import Bus, gen_empty_fingerprint, structs
 from opendbc.car.subaru.values import CAR, DBC
 from opendbc.car.subaru.fingerprints import FW_VERSIONS
 from opendbc.safety.tests.libsafety import libsafety_py
-from openpilot.cereal import messaging
+from openpilot.cereal import log, messaging
 from openpilot.selfdrive.selfdrived.selfdrived import SelfdriveD
 from openpilot.selfdrive.controls.controlsd import Controls
 from openpilot.selfdrive.pandad import can_capnp_to_list
@@ -22,7 +22,8 @@ from openpilot.starpilot.car.subaru.tests.native_fixture import subaru_native_pa
 
 
 @pytest.mark.parametrize('candidate', [CAR.SUBARU_ASCENT_2023, CAR.SUBARU_LEGACY_2025, CAR.SUBARU_CROSSTREK_2025, CAR.SUBARU_FORESTER, CAR.SUBARU_OUTBACK])
-def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, subaru_native_pair, tmp_path, aol=True, manual=False):
+def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, subaru_native_pair, tmp_path, aol=True, manual=False, stop_resume=False,
+                                                                      hard_stop_native_first=False):
   fw = firmware_records(candidate, FW_VERSIONS, 'subaru')
   rows = []
   with actual_factory(candidate, gen_empty_fingerprint(), fw, '0' * 17, manual=manual, aol=aol) as (card, params, matches):
@@ -46,24 +47,29 @@ def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, 
     receipt = None
     steering_name = 'ES_LKAS_ANGLE' if cp.steerControlType == structs.CarParams.SteerControlType.angle else 'ES_LKAS'
     steering_address = ci.CC.packer.dbc.name_to_msg[steering_name].address
-    steering_bus = 0 if candidate in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_FORESTER, CAR.SUBARU_OUTBACK, CAR.SUBARU_FORESTER_2022, CAR.SUBARU_OUTBACK_2023) else 1
+    steering_bus = 0
     decoder = CANParser(DBC[candidate][Bus.pt], [(steering_name, 0)], steering_bus)
     dash_decoder = CANParser(DBC[candidate][Bus.pt], [('ES_LKAS_State', 0)], 0)
     dash_emissions = 0
     active_emissions = []
     base = time.monotonic_ns() + 100_000_000
     try:
-      for tick in range(460):
-        now = base + tick * 10_000_000
+      published = {}
+      ticks = (list(range(125)) + list(range(125, 135)) * 30 + list(range(135, 460))
+               if hard_stop_native_first else range(460))
+      for elapsed, tick in enumerate(ticks):
+        now = base + elapsed * 10_000_000
         cruise = 30 <= tick < 110 or tick >= 410
         brake = 90 <= tick < 110
         reverse = 150 <= tick < 185
         temporary = 225 <= tick < 260
         main = not 310 <= tick < 350
+        stopped = stop_resume and (125 <= tick < 135 if hard_stop_native_first else 185 <= tick < 195)
+        first_resume = 145 <= tick < 150 if hard_stop_native_first else 125 <= tick < 145
         values = {
           'Steering_Torque': {'Steer_Warning': int(temporary)},
           'Steering_2': {'Steering_Angle': 0},
-          'Wheel_Speeds': dict.fromkeys(('FL', 'FR', 'RL', 'RR'), 54),
+          'Wheel_Speeds': dict.fromkeys(('FL', 'FR', 'RL', 'RR'), 0 if stopped else 54),
           'Brake_Status': {'Brake': int(brake)},
           'CruiseControl': {'Cruise_On': int(main), 'Cruise_Activated': int(cruise)},
           'ES_Status': {'Cruise_Activated': int(cruise)},
@@ -75,6 +81,11 @@ def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, 
         for addr, data, bus in incoming:
           safety.safety_rx_hook(libsafety_py.make_CANPacket(addr, bus, data))
         safety.safety_tick()
+        hard_stop_receipt = hard_stop_native_first and elapsed == 125
+        if hard_stop_receipt:
+          # Native zero wheels and its USB poll precede the host's stopped CarState.
+          receipt, hard_order = pandad.step(driven, published, now)
+          assert hard_order['before'][:2] == (1, 0), hard_order
         panda = messaging.new_message('pandaStates', 1, valid=True, logMonoTime=now)
         panda.pandaStates[0].safetyModel = cp.safetyConfigs[0].safetyModel
         panda.pandaStates[0].safetyParam = cp.safetyConfigs[0].safetyParam
@@ -91,7 +102,7 @@ def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, 
         if 'carControl' in latest_controls:
           peers.append(latest_controls['carControl'])
         peers.extend(driven_new[s] for s in ('onroadEvents', 'selfdriveState', 'aolAxisState') if s in driven_new and s in card.sm.data)
-        if receipt is not None and tick % 10 == 1:
+        if receipt is not None and (tick % 10 == 1 or hard_stop_receipt):
           peers.append(receipt.as_reader())
         card.sm.update_msgs((now + 1000) / 1e9, peers)
         published = {}
@@ -122,14 +133,16 @@ def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, 
         assert cs.brakePressed == brake and cs.gearShifter == (structs.CarState.GearShifter.reverse if reverse else structs.CarState.GearShifter.drive)
         if tick >= 10:
           assert cs.canValid and safety.safety_config_valid()
+        if hard_stop_receipt:
+          _assert_hard_stop_fault_guards(card, cs, now + 2000)
         # Deliver each genuine10Hz native receipt once; do not refresh receive time/frequency from a cached snapshot.
-        new_native = receipt if receipt is not None and tick % 10 == 1 else None
+        new_native = receipt if receipt is not None and (tick % 10 == 1 or hard_stop_receipt) else None
         driven_new = selfdrive_step(sd, published, new_native, previous_controls, cp, safety, now, calibration='calibrated')
         driven.update(driven_new)
         order = None
         if aol and tick % 10 == 0:
           receipt, order = pandad.step(driven, published, now)
-        feed_perception_only(controls, now, tick, enabled=sd.enabled, active=sd.active)
+        feed_perception_only(controls, now, elapsed, enabled=sd.enabled, active=sd.active)
         plan = messaging.new_message('longitudinalPlan', valid=True, logMonoTime=now)
         plan.longitudinalPlan.aTarget = 0.5
         control_peers = [published['carState'], published['carOutput'], plan.as_reader()]
@@ -169,7 +182,7 @@ def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, 
             request = bool(decoder.vl[steering_name]['LKAS_Request'])
             output = decoder.vl[steering_name]['LKAS_Output']
             decoded_steering.append({'request': request, 'output': output, 'nativeAccepted': accepted})
-            if 65 <= tick < 90 or aol and (125 <= tick < 145 or 205 <= tick < 220 or 280 <= tick < 300):
+            if not stopped and (65 <= tick < 90 or aol and (first_resume or 205 <= tick < 220 or 280 <= tick < 300)):
               assert request and accepted, (tick, decoded_steering)
               if output != 0:
                 active_emissions.append(tick)
@@ -178,6 +191,9 @@ def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, 
         intent = decode_intent(published['aolIntentWire'].aolIntentWire) if aol else None
         row = {
           'tick': tick,
+          'elapsed': elapsed,
+          'clearReason': card.aol_card_intent.latch_clear_reason if card.aol_card_intent is not None else None,
+          'hardStopOrder': hard_order if hard_stop_receipt else None,
           'intent': bool(intent and intent.allowedLatch),
           'armed': bool(intent and intent.lateralArmed),
           'cardLatch': bool(card.aol_card_intent and card.aol_card_intent.allowed_latch),
@@ -197,12 +213,14 @@ def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, 
           'events': [str(e.name) for e in driven['onroadEvents'].onroadEvents],
         }
         rows.append(row)
+        if stopped:
+          assert not row['lat'] and row['cardLatch'] and row['permission'] == 0 and row['fault'] == 'none', row
         assert not command.longActive, row
         if 10 <= tick < 30:
           assert not command.latActive and not bool(intent and intent.allowedLatch) and row['permission'] == 0, row
         if 65 <= tick < 90:
           assert command.latActive and bool(intent and intent.allowedLatch) == aol and row['permission'] == int(aol), row
-        if 125 <= tick < 145 or 205 <= tick < 220 or 280 <= tick < 300:
+        if not stopped and (first_resume or 205 <= tick < 220 or 280 <= tick < 300):
           assert command.latActive == aol and bool(intent and intent.allowedLatch) == aol and row['permission'] == int(aol) and not row['controls'], row
         if 165 <= tick < 180:
           assert (not command.latActive and not bool(intent and intent.allowedLatch) and
@@ -218,3 +236,80 @@ def test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, 
     finally:
       pandad.close()
       (tmp_path / (str(candidate) + '-' + str(aol) + '-actual.json')).write_text(json.dumps(rows, indent=2) + '\n')
+
+
+@pytest.mark.parametrize('candidate', [CAR.SUBARU_CROSSTREK_2025, CAR.SUBARU_LEGACY_2025, CAR.SUBARU_FORESTER, CAR.SUBARU_OUTBACK])
+def test_actual_stop_retains_lateral_intent_and_resumes(candidate, subaru_native_pair, tmp_path):
+  test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(candidate, subaru_native_pair, tmp_path, stop_resume=True)
+  rows = json.loads((tmp_path / (str(candidate) + '-True-actual.json')).read_text())
+  commands = [command for row in rows if 185 <= row['tick'] < 195 for command in row['steering']]
+  assert commands and all(not command['request'] and command['nativeAccepted'] for command in commands)
+
+
+def _assert_hard_stop_fault_guards(card, state, now):
+  feedback, sm = card.aol_transport_feedback, card.sm
+  axis, stamp = sm['aolAxisState'], int(sm.logMonoTime['aolAxisState'])
+
+  def retained(sample, at=now):
+    return feedback._angle_stop_intent_current(sm, card.CP, sample, axis, stamp, at,
+      latched=True, producer=card.slc_producer_session)
+
+  assert retained(state)
+  for field, value in (('canValid', False), ('canTimeout', True), ('steerFaultPermanent', True),
+                       ('steerFaultTemporary', True), ('accFaulted', True)):
+    invalid = state.as_builder()
+    setattr(invalid, field, value)
+    assert not retained(invalid.as_reader()), field
+  rolling = state.as_builder()
+  rolling.standstill = False
+  rolling.vEgoRaw = rolling.vEgo = 1.0
+  assert not retained(rolling.as_reader())
+  assert not retained(state, now + 200_000_001)
+  for service in ('aolSafetyWire', 'onroadEvents', 'pandaStates'):
+    original = sm.valid[service]
+    try:
+      sm.valid[service] = False
+      assert not retained(state), service
+    finally:
+      sm.valid[service] = original
+  original = sm.data['pandaStates']
+  try:
+    for field, value in (('safetyRxChecksInvalid', True), ('heartbeatLost', True), ('faults', ['relayMalfunction'])):
+      invalid = messaging.new_message('pandaStates', len(original))
+      for index, panda in enumerate(original):
+        invalid.pandaStates[index] = panda
+      setattr(invalid.pandaStates[0], field, value)
+      sm.data['pandaStates'] = invalid.as_reader().pandaStates
+      assert not retained(state), field
+  finally:
+    sm.data['pandaStates'] = original
+  original = sm.data['onroadEvents']
+  try:
+    mismatch = messaging.new_message('onroadEvents', 1)
+    mismatch.onroadEvents[0].name = log.OnroadEvent.EventName.controlsMismatch
+    mismatch.onroadEvents[0].immediateDisable = True
+    sm.data['onroadEvents'] = mismatch.as_reader().onroadEvents
+    assert not retained(state)
+  finally:
+    sm.data['onroadEvents'] = original
+  assert retained(state)
+
+
+@pytest.mark.parametrize('candidate', [CAR.SUBARU_CROSSTREK_2025, CAR.SUBARU_LEGACY_2025, CAR.SUBARU_FORESTER, CAR.SUBARU_OUTBACK])
+def test_actual_native_first_hard_stop_retains_intent_and_resumes(candidate, subaru_native_pair, tmp_path):
+  test_actual_full_engage_brake_reverse_temporary_recovery_mainoff(
+    candidate, subaru_native_pair, tmp_path, stop_resume=True, hard_stop_native_first=True)
+  rows = json.loads((tmp_path / (str(candidate) + '-True-actual.json')).read_text())
+  stopped = [row for row in rows if 125 <= row['tick'] < 135]
+  assert len(stopped) == 300
+  assert all(row['cardLatch'] and not row['lat'] and row['permission'] == 0 for row in stopped)
+  commands = [command for row in stopped for command in row['steering']]
+  assert commands
+  if candidate in (CAR.SUBARU_CROSSTREK_2025, CAR.SUBARU_LEGACY_2025):
+    assert all(not command['request'] and command['nativeAccepted'] for command in commands)
+  else:
+    # Card can hold the preceding Controls command on the first torque frame.
+    # Native must reject that stale request; subsequent commands must be inactive.
+    assert all(not command['request'] or not command['nativeAccepted'] for command in stopped[0]['steering'])
+    settled = [command for row in stopped if row['elapsed'] >= 127 for command in row['steering']]
+    assert settled and all(not command['request'] and command['nativeAccepted'] for command in settled)

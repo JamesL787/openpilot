@@ -42,6 +42,7 @@ class VehicleStartupPreferences:
   toyota_filter: bool = True
   gm_longitudinal_tune: int = 0
   ford_lateral_mode: int = 0
+  ford_pinion: bool = field(default=False, kw_only=True)
   toyota_lock_doors: bool = False
   toyota_unlock_doors: bool = False
   toyota_radar_mode: int = 0
@@ -112,7 +113,9 @@ class VehicleStartupPreferences:
                subaru_sng=bool(enabled and readable and safe in (None, b"0") and read_saved(params, "SubaruSNG", 8) == (b"1", True)),
                subaru_software_cruise=bool(enabled and readable and safe in (None, b"0") and
                    read_saved(params, "SubaruRedneckCruise", 8) == (b"1", True)), toyota_radar_mode=toyota_radar_mode(params, enabled=enabled),
-               ford_lateral_mode=ford_mode(params, enabled=enabled), tesla_screen=screen,
+               ford_lateral_mode=ford_mode(params, enabled=enabled),
+               ford_pinion=bool(enabled and read_saved(params, "SafeMode", 8) in ((None, True), (b"0", True)) and
+                                read_saved(params, "FordPrefSteerAngleCurvature", 8) == (b"1", True)), tesla_screen=screen,
                tesla_screen_brake=screen_brake, toyota_auto_hold=toyota, jeep_brake_hold=jeep_hold,
                gm_longitudinal_tune=selected_tune(params, enabled=enabled),
                toyota_lock_doors=bool(enabled and readable and safe in (None, b"0") and
@@ -221,6 +224,8 @@ class VehicleStartupPreferences:
       apply_radar_mode(cp, self.toyota_radar_mode)
     from opendbc.bluepilot_lateral.hosts.starpilot import select as select_ford_lateral
     select_ford_lateral(cp, self.ford_lateral_mode)
+    from opendbc.car.ford.pinion import select as select_pinion
+    select_pinion(cp, self.ford_pinion)
     return cp
 
   def finalize(self, cp) -> None:

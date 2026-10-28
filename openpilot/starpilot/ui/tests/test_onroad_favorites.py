@@ -74,7 +74,8 @@ class TestOnroadFavorites(unittest.TestCase):
       session.feature_owner = FeatureSettingsOwner(params, session._feature_authority,
         vehicle_fingerprint=lambda: cp.carFingerprint, vehicle_params=lambda: cp)
       session.appearance_owner = AppearanceOwner(params, session._favorite_authority)
-      session.favorites_owner = FavoritesOwner(params, session._favorite_actions, session._favorite_authority)
+      session.favorites_owner = FavoritesOwner(params, session._favorite_actions, session._favorite_authority, session._favorite_render_actions,
+        current_action=lambda key: session._resolve_favorite_actions(frozenset((key,))).get(key))
       session.favorites = OnroadFavorites(NS(profile=Profile.COMPACT), session._favorite_request)
       session._favorite_read_at = None
       session._favorite_data = session._favorite_snapshot = None
@@ -88,11 +89,16 @@ class TestOnroadFavorites(unittest.TestCase):
           assert session.favorites_owner.snapshot().slots[0].available
         assert session.adapter.build.call_count == before
         session.confirmed_offroad.assert_not_called()
+        catalog = Mock(wraps=session.favorites_owner.actions)
+        session.favorites_owner.actions = catalog
+        tap_times = []
         for index, expected in enumerate((True, False, True)):
           now = 1.1 + index * .15  # Faster than the periodic Favorites refresh.
           session.favorites.press(80, 80, now)
           assert session.favorites.feedback is None
+          started = runtime_app.time.perf_counter()
           session.favorites.release(80, 80, now + .05)
+          tap_times.append(runtime_app.time.perf_counter() - started)
           assert params.get_bool('LaneCentering') == expected
           assert read_settings(params).enabled == expected
           assert session.favorites.feedback_text[1] == ('On' if expected else 'Off')
@@ -110,6 +116,8 @@ class TestOnroadFavorites(unittest.TestCase):
         session.favorites.release(80, 80, 2.15)
         assert not params.get_bool('LaneCentering')
         assert session.favorites.feedback is None
+        catalog.assert_not_called()
+        print(f'Actual saved LaneCentering tap callbacks: {tap_times}')
 
   def test_compact_invisible_thirds_activate_same_slot_0(self):
     index = 0

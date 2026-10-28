@@ -11,6 +11,7 @@ import re
 import time
 
 from openpilot.cereal.services import SERVICE_LIST
+from opendbc.car import structs
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.desire_helper import LANE_CHANGE_SPEED_MIN
@@ -21,7 +22,7 @@ from openpilot.starpilot.conditional_mode.policy import Authority, LeadEvidence,
 from openpilot.starpilot.conditional_mode.preferences import CEMOptions
 from openpilot.starpilot.conditional_mode.signal_lane import MonoSource, SignalLaneFrame, SignalLaneTracker
 from openpilot.starpilot.conditional_mode.slower_lead import SlowerLeadDetector, SlowerLeadFrame
-from openpilot.starpilot.conditional_mode.stop import StopFrame, StopLead, StopLightDetector, StopObservation
+from openpilot.starpilot.conditional_mode.stop import FORD_STOP_NAMES, StopFrame, StopLead, StopLightDetector, StopObservation
 from openpilot.starpilot.conditional_mode.turn_scene import committed_turn_scene
 from openpilot.starpilot.model_geometry import (
   STANDSTILL_MODEL_PREFIX_NOISE_M as STANDSTILL_MODEL_PREFIX_NOISE_M, STANDSTILL_SPEED_NOISE_MPS, normalized_origin,
@@ -460,7 +461,10 @@ class SceneProjector:
           # projecting forward. Use that endpoint only to clear an existing stop;
           # Curve geometry and cold stop acquisition retain strict validation.
           stop_horizon = _standstill_clear_horizon(model)
-        current_stop = model_should_stop if stop_horizon is not None else None
+        # A fresh discrete stop bit can corroborate an existing Ford stopped
+        # hold even when geometry is unavailable. Geometry admission stays strict.
+        current_stop = model_should_stop if (stop_horizon is not None or
+          _field(cp, 'carFingerprint') in FORD_STOP_NAMES and _field(car, 'standstill') is True) else None
     lead = _lead(radar) if radar is not None else None
     car_valid = speed is not None
     headway_fresh = (
@@ -626,6 +630,8 @@ class SceneProjector:
       model_tick_mono_s=model_stamp / 1e9 if model_stamp is not None else None,
       model_should_stop=current_stop,
       stationary_launch_clear=stationary_launch_clear,
+      longitudinal_stop_active=bool(_field(control, 'longActive') is True and _field(selfdrive, 'enabled') is True and
+        _field(controls, 'longControlState') == structs.CarControl.Actuators.LongControlState.stopping),
       standstill_path_extent_m=(_standstill_path_extent(model) if model_transport_current and car_valid and
                                 _field(car, 'standstill') is True else None),
     )

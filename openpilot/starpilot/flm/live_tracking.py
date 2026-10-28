@@ -11,7 +11,7 @@ from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict, cast
 import hashlib
 import math
 import statistics
@@ -101,6 +101,21 @@ class HookSensitivity:
   native_endpoints: int
   max_step_physical_rms: float  # RMS physical acceleration DELTA at .005, after native encoding and retained slope.
   native_gradient_complete: bool = False
+  minus_native_separated: int | None = None
+  plus_native_separated: int | None = None
+  minus_max_step_physical_rms: float | None = None
+  plus_max_step_physical_rms: float | None = None
+
+  def native_effect(self, step: float) -> tuple[int, float]:
+    if step == 0:
+      return 0, 0.0
+    if self.minus_native_separated is None:
+      # Older numerical episodes retain their original secant contract.
+      # Production probe episodes record both actual directions below.
+      return self.native_separated, self.max_step_physical_rms
+    if step < 0:
+      return self.minus_native_separated, cast(float, self.minus_max_step_physical_rms)
+    return cast(int, self.plus_native_separated), cast(float, self.plus_max_step_physical_rms)
 
   def validate(self):
     if (
@@ -117,6 +132,14 @@ class HookSensitivity:
       and self.native_endpoints < 4
     ):
       raise ValueError('actual finite hook/native probe support required')
+    directional = (self.minus_native_separated, self.plus_native_separated,
+                   self.minus_max_step_physical_rms, self.plus_max_step_physical_rms)
+    if any(value is not None for value in directional) and (
+      any(type(value) is not int or not 0 <= value <= self.native_endpoints for value in directional[:2])
+      or any(value is None or type(value) not in (int, float) or not math.isfinite(value) or value < 0 for value in directional[2:])
+      or any(count == 0 and effect != 0 for count, effect in zip(directional[:2], directional[2:], strict=True))
+    ):
+      raise ValueError('complete finite directional native probe support required')
     return self
 
 
@@ -493,9 +516,12 @@ class LiveTrackingOptimizer:
     # Retain only inert numerical study intent on missing/stale evidence. The
     # command still rolls back; a fresh baseline ACK must precede a NEW wire
     # trial. Completed scores, alpha and original deadline are never reset.
+    # Normalized source timing gaps reject the pair without changing identity.
+    # Wrong domains still arrive with context_changed=True and discard intent.
     transient = not context_changed and reason in (
       'acknowledged_trial_profile_withdrawn', 'expired_response_witness', 'stale_control', 'stale_applied_output',
-      'current_evidence_delayed', 'learning_evidence_delayed',
+      'current_evidence_delayed', 'learning_evidence_delayed', 'consumed_source_mismatch',
+      'consumer_pending_trial_interrupted',
       'fresh_physical_residual_window_required',
     )
     if not transient:
@@ -586,7 +612,11 @@ class LiveTrackingOptimizer:
         return None
       # No error/error_feature_sum/sign is inspected: the earlier coordinate
       # and bounded direction were fixed before these observations existed.
-      effects.append(feature.max_step_physical_rms * abs(target[name] - self.accepted[name]) / MAX_STEP / _score_scale(row))
+      delta = target[name] - self.accepted[name]
+      separated, effect = feature.native_effect(delta)
+      if separated / feature.native_endpoints < 0.09 or effect <= 0:
+        return None
+      effects.append(effect * abs(delta) / MAX_STEP / _score_scale(row))
     return min(effects) if effects else None
 
   def _comparison_allocation(
@@ -735,9 +765,12 @@ class LiveTrackingOptimizer:
         # that maneuver ends. Three unmatched whole windows release it by
         # source time alone, without inspecting any tracking outcomes. No
         # incomplete comparison can confirm or persist a target.
+        # Before launch, source-only discovery follows the current input regime.
+        # Waiting three unmatched windows also suppresses native discovery
+        # throughout a new short curve. No live trial or scored row is accepted.
         last_match = self.comparison[-1].end_ns if self.comparison else self.discovery['selected_end_ns']
         if (not _matches(self.discovery['anchor'], episode)
-            and episode.end_ns - last_match >= 3 * (episode.end_ns - episode.start_ns)):
+            and (self.rmse is None or episode.end_ns - last_match >= 3 * (episode.end_ns - episode.start_ns))):
           self._discard_selector()
       if self.discovery is not None:
         discovery = self.discovery
@@ -1038,14 +1071,27 @@ class LiveTrackingOptimizer:
               for old_name, old_direction, old_profile, demand, old_end in self.closed_loop_worse
             )
 
+          # Without a fitted plant, the secant sign is only an experiment
+          # preference. At a hard bound it must not veto the feasible direction.
+          # Actual worse/inconclusive directions below remain disqualified;
+          # independent baseline, later feedback and slew are unchanged.
+          low, high = coordinate_bounds(name)
+          step_limit = MAX_STEP if self.rmse is None else min(MAX_STEP, 0.1 * confidence)
+          if self.rmse is None and min(high, max(low, self.accepted[name] + sign * step_limit)) == self.accepted[name]:
+            sign = -sign
+
           if observed_worse(sign):
             if observed_worse(-sign):
               continue  # Both directions failed; do not oscillate guesses.
             sign = -sign
           if self.rmse is None and self._same_inconclusive_trial(name, sign, rows[-1], now_ns):
             continue
-          delta = sign * min(MAX_STEP, 0.1 * confidence)
-          predicted = min(features[id(row)][name].max_step_physical_rms for row in rows)
+          delta = sign * step_limit
+          directed = [features[id(row)][name].native_effect(delta) for row in rows]
+          if any(separated / features[id(row)][name].native_endpoints < 0.09
+                 for row, (separated, _) in zip(rows, directed, strict=True)):
+            continue
+          predicted = min(effect for _, effect in directed)
           expected = predicted * abs(delta) / MAX_STEP / max(_score_scale(row) for row in rows)
           if expected <= 0.0001:
             continue  # The original native effect must be visible.

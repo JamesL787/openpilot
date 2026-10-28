@@ -43,7 +43,7 @@ class CarInterface(CarInterfaceBase):
   CarController = CarController
   RadarInterface = RadarInterface
 
-  DRIVABLE_GEARS = (structs.CarState.GearShifter.sport,)
+  DRIVABLE_GEARS = (structs.CarState.GearShifter.sport, structs.CarState.GearShifter.brake)
 
   @staticmethod
   def get_pid_accel_limits(CP, current_speed, cruise_speed):
@@ -101,8 +101,7 @@ class CarInterface(CarInterfaceBase):
 
     if candidate in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT):
       stop_and_go = True
-      if candidate == CAR.TOYOTA_PRIUS_RETROFIT:
-        ret.flags |= ToyotaFlags.HYBRID.value
+      ret.flags |= ToyotaFlags.HYBRID.value
       # Only give steer angle deadzone to for bad angle sensor prius
       for fw in car_fw:
         if fw.ecu == "eps" and not fw.fwVersion == b'8965B47060\x00\x00\x00\x00\x00\x00':
@@ -158,6 +157,9 @@ class CarInterface(CarInterfaceBase):
 
     ret.openpilotLongitudinalControl = ((bool(ret.flags & ToyotaFlags.TSS2) and not (ret.flags & ToyotaFlags.RADAR_ACC)) or
                                         bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value) or (radar_filter and alpha_long))
+
+    if candidate == CAR.TOYOTA_YARIS and ret.flags & ToyotaFlags.DISABLE_RADAR:
+      ret.safetyConfigs[0].safetyParam |= int(ToyotaSafetyFlags.SECOC_RADAR_LONG)
 
     from opendbc.car.toyota import matrix_filter
     manual_matrix_filter = any(matrix_filter.hardware_supported(candidate, fingerprint, car_fw, length=size) for size in (4, 8))
@@ -263,6 +265,11 @@ class CarInterface(CarInterfaceBase):
       ret.safetyConfigs[0].safetyParam = pedal.long_word(candidate)
     if composite_pedal:
       assert pedal_composite.apply(ret)
+    from opendbc.car.toyota import stock_aol
+    if stock_aol.hardware_supported(candidate, fingerprint):
+      stock_aol.apply(ret)
+    from opendbc.car.toyota.dom_defaults import apply_defaults
+    apply_defaults(ret)
     return ret
 
   @staticmethod

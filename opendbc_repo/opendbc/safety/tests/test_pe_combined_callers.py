@@ -274,7 +274,7 @@ def test_pending_pe_to_real_card_callers_cpp_native_lateral_and_pedal_recovery(m
       for pedal in ('gas', 'brake'):
         for _ in range(24):
           state, axis, host, command = step(**{pedal: True})
-          assert not axis.lateralActive and not command.latActive
+          assert axis.lateralActive and command.latActive
           assert not axis.longitudinalActive and not command.longActive
           assert card.aol_card_intent.allowed_latch, pedal
         for _ in range(30):

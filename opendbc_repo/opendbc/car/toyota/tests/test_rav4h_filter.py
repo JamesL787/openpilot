@@ -36,11 +36,11 @@ class TestRav4hFilter(unittest.TestCase):
       self.assertEqual(cp.carFingerprint, CAR.TOYOTA_RAV4H)
       self.assertTrue(cp.autoResumeSng)
       self.assertEqual(cp.minEnableSpeed, -1)
-      self.assertAlmostEqual(cp.longitudinalActuatorDelay, .15)
+      self.assertAlmostEqual(cp.longitudinalActuatorDelay, .05)
       self.assertEqual(CarState(cp).eps_torque_scale, .73)
       self.assertTrue(qualified(cp))
       from openpilot.selfdrive.controls.lib.longcontrol import LongControl
-      self.assertAlmostEqual(LongControl(cp).stopping_decel_rate, 1.)
+      self.assertAlmostEqual(LongControl(cp).stopping_decel_rate, .3)
       self.assertEqual(DBC[cp.carFingerprint][Bus.pt], "toyota_tnga_k_pt_generated")
 
   def test_missing_or_mismatched_hardware_never_grants_long_or_aol(self):
@@ -52,7 +52,8 @@ class TestRav4hFilter(unittest.TestCase):
       cp = factory(fp=fp)
       self.assertFalse(enabled(cp), fp)
       self.assertFalse(cp.openpilotLongitudinalControl, fp)
-      self.assertFalse(qualified(cp), fp)
+      from opendbc.car.toyota import stock_aol
+      self.assertEqual(qualified(cp), stock_aol.configured(cp), fp)
     for ecu in (structs.CarParams.Ecu.eps, structs.CarParams.Ecu.fwdCamera, structs.CarParams.Ecu.fwdRadar):
       missing = [fw for fw in firmware() if fw.ecu != ecu]
       self.assertFalse(enabled(factory(fw=missing)))

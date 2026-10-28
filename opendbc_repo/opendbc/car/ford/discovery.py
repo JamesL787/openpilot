@@ -1,4 +1,6 @@
 """Normal-bus discovery for explicitly selected Ford CAN-FD vehicles."""
+import time
+
 from opendbc.car.ford.values import CAR, FordFlags
 
 
@@ -34,3 +36,51 @@ def normal_bus0_queries():
 def normal_bus0_selection(candidate):
   return bool(candidate in CAR and CAR(candidate).config.flags & FordFlags.CANFD and
               not CAR(candidate).config.flags & FordFlags.LKA_STEERING and normal_bus0_queries())
+
+
+# Normal harness PT/chassis and stock-camera messages. This selects only a
+# diagnostic query family; live VIN, ECU responses and fingerprinting still
+# determine the vehicle and its control configuration.
+NORMAL_BUS0_LAYOUT = {(0, 0x82): 8, (0, 0x165): 8, (0, 0x204): 8,
+                      (0, 0x217): 8, (2, 0x3CA): 8, (2, 0x3D6): 8}
+
+
+def normal_bus_query_brand(can_recv, hyundai_probe, *, gm_probe=None, clock=time.monotonic):
+  # Share the existing bounded passive HKG read, rather than consuming a second
+  # startup window or enabling the OBD mux to find out whether this is a Ford.
+  received = {}
+  gm_received = {}
+  gm_malformed = False
+  malformed = False
+  reads = 0
+  deadline = clock() + .12
+
+  def observe(**kwargs):
+    nonlocal malformed, gm_malformed, reads
+    reads += 1
+    packets = can_recv(**kwargs)
+    for packet in packets:
+      for frame in packet:
+        key = (frame.src, frame.address)
+        if gm_probe is not None:
+          bus = gm_received.setdefault(frame.src, {})
+          length = len(frame.dat)
+          gm_malformed |= frame.address in bus and bus[frame.address] != length
+          bus[frame.address] = length
+        if key in NORMAL_BUS0_LAYOUT:
+          length = len(frame.dat)
+          malformed |= length != NORMAL_BUS0_LAYOUT[key]
+          received[key] = length
+    return packets
+
+  if hyundai_probe(observe):
+    return 'hyundai'
+  # A Ford CAN1 frame can invalidate an HKG-only layout on the first read.
+  # Complete Ford evidence within the original time/read budget, not a new probe.
+  while not malformed and received != NORMAL_BUS0_LAYOUT and reads < 24 and clock() < deadline:
+    observe(wait_for_one=True)
+  if not malformed and received == NORMAL_BUS0_LAYOUT and normal_bus0_queries():
+    return 'ford'
+  if gm_probe is not None and not gm_malformed and gm_probe(gm_received):
+    return 'gm'
+  return None

@@ -16,7 +16,8 @@ export function validSentryEvents(value) {
   if (value.storageIncomplete !== undefined && typeof value.storageIncomplete !== "boolean") return false
   const seen = new Set()
   return value.events.every((event) => {
-    if (event === null || typeof event !== "object" || Object.keys(event).some((key) => !["eventId", "kind", "systemTimeMs", "images"].includes(key)) ||
+    if (event === null || typeof event !== "object" || Object.keys(event).some((key) => !["eventId", "kind", "systemTimeMs", "images", "simulated"].includes(key)) ||
+        (event.simulated !== undefined && event.simulated !== true) ||
         (event.images !== undefined && (!Array.isArray(event.images) || event.images.length > 2 ||
           new Set(event.images).size !== event.images.length || event.images.some((camera) => !["wide", "cabin"].includes(camera)))) ||
         typeof event.eventId !== "string" || !ID.test(event.eventId) || seen.has(event.eventId) ||

@@ -126,6 +126,46 @@ class TestModelReceipt(unittest.TestCase):
     owner.start()
     self.assertIsNone(read_receipt(self.path))
 
+  def test_unknown_or_failed_replacement_retires_previous_file_and_heartbeat(self):
+    write_receipt(self.load, self.path)
+    reasons = []
+    owner = ModelReceiptOwner(self.path, reasons.append, record=lambda _load: None)
+    owner.load = self.load
+    self.assertFalse(owner.loaded(None, ModelVariant.CHESTNUT))
+    self.assertIsNone(owner.load)
+    self.assertIsNone(read_receipt(self.path))
+    self.assertEqual(reasons, ['prepared-artifact-unavailable'])
+    write_receipt(self.load, self.path)
+    artifact = self.root / 'compiled.pkl'
+    artifact.write_bytes(b'compiled')
+    prepared = prepare_artifact(artifact, artifact_identity(artifact))
+    with mock.patch('openpilot.starpilot.models.receipt.record_prepared', side_effect=OSError('record unavailable')):
+      self.assertFalse(owner.loaded(prepared, ModelVariant.SMALL))
+    self.assertIsNone(read_receipt(self.path))
+    self.assertEqual(reasons[-1], 'record-failed')
+
+  def test_failed_clear_remains_nonfatal_and_unavailable_heartbeat(self):
+    write_receipt(self.load, self.path)
+    reasons = []
+    owner = ModelReceiptOwner(self.path, reasons.append, record=lambda _load: None)
+    owner.load = self.load
+    with mock.patch('openpilot.starpilot.models.receipt.clear_receipt', side_effect=OSError('unlink failed')):
+      self.assertFalse(owner.loaded(None, ModelVariant.CHESTNUT))
+    self.assertIsNone(owner.load)
+    self.assertEqual(read_receipt(self.path), self.load)  # Last-confirmed only, never current-identity proof.
+    self.assertEqual(reasons, ['clear-failed', 'prepared-artifact-unavailable'])
+
+    class Publisher:
+      raw = b''
+      def send(self, _service, message):
+        self.raw = message.to_bytes()
+
+    publisher = Publisher()
+    self.assertTrue(owner.publish(publisher, self.load.loaded_mono_ns + 1))
+    from openpilot.cereal import messaging
+    message = messaging.log_from_bytes(publisher.raw)
+    self.assertEqual(json.loads(str(message.logMessage))['msg']['event'], 'modeld.identity-unavailable')
+
   def test_runtime_stall_reason_roundtrips_without_altering_loaded_identity(self):
     load = replace(self.load, fallback_reason='chestnut-run-stalled')
     write_receipt(load, self.path)

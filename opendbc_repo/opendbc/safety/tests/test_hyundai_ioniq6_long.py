@@ -181,6 +181,29 @@ class TestHyundaiIoniq6Long(unittest.TestCase):
           self.assertTrue(self.safety.get_relay_malfunction())
           self.assertFalse(self.safety.safety_tx_hook(self.packet(rear)))
 
+  def test_bsm_legacy_indicator_sound_alias_is_rejected(self):
+    for raw in (*RAW_LONG.values(), *RAW_AOL.values()):
+      for left_lamp in (False, True):
+        with self.subTest(raw=hex(raw), left_lamp=left_lamp):
+          self.mode(raw)
+          _, cp = params("lkas_alt" if raw & 0x80 else "lkas")
+          packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
+          self.bsm_physical(packer, left=True, left_lamp=left_lamp)
+          level = 1 + int(left_lamp)
+          rear, front = create_ioniq6_blindspot_status(3, BlindspotStatus(level, 0))
+          self.assertEqual(rear[1][5], 0)
+          legacy = bytearray(rear[1])
+          legacy[5] = level << 1
+          legacy[:2] = hkg_can_fd_checksum(0x1BA, None, legacy).to_bytes(2, "little")
+          self.assertFalse(self.safety.safety_tx_hook(self.packet((0x1BA, bytes(legacy), 1))))
+          self.assertFalse(self.safety.safety_tx_hook(self.packet(front)))
+          if self.release:
+            self.assertFalse(self.safety.safety_tx_hook(self.packet(rear)))
+            self.assertFalse(self.safety.safety_tx_hook(self.packet(front)))
+          else:
+            self.assertTrue(self.safety.safety_tx_hook(self.packet(rear)))
+            self.assertTrue(self.safety.safety_tx_hook(self.packet(front)))
+
   def test_bsm_valid_crc_cannot_hide_altered_status_body(self):
     if self.release:
       self.skipTest("RELEASE denies all four exact Ioniq 6 LONG profiles")

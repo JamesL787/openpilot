@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 import pytest
 
-from openpilot.starpilot.sentry_mode.notifications import NotificationOwner, NotificationUnavailable, CHANNELS
+from openpilot.starpilot.sentry_mode.notifications import NotificationOwner, NotificationUnavailable
 from openpilot.starpilot.sentry_mode import web_push
 
 
@@ -120,7 +120,7 @@ def test_real_http_contracts_and_independent_channels(tmp_path):
     assert paths['/push'][0]['Authorization'].startswith('vapid t=')
     assert paths['/push'][0]['Content-Encoding'] == 'aes128gcm'
     assert len(paths['/push'][1]) > 100 and b'This is a test' not in paths['/push'][1]
-    assert all(owner.snapshot()['channels'][name]['lastState'] == 'sent' for name in CHANNELS)
+    assert all(owner.snapshot()['channels'][name]['lastState'] == 'sent' for name in ('webPush', 'discord', 'webhook', 'ntfy'))
   finally:
     owner.close()
     server.shutdown()
@@ -310,5 +310,76 @@ def test_missing_saved_images_send_original_text_contract(tmp_path, monkeypatch,
     else:
       assert sent['data']['content'] == 'StarPilot Sentry Mode: Parked motion detected (warning).'
       assert json.loads(sent['data']['event']) == {'eventId': 'a' * 32, 'kind': 'warning', 'systemTimeMs': 1000000}
+  finally:
+    owner.close()
+
+
+def test_app_subscription_dispatch_redaction_and_expired_removal(tmp_path):
+  calls = []
+  clock = [100.]
+  owner = NotificationOwner(tmp_path / 'notifications', store(), clock=lambda: clock[0], transport=lambda *args: calls.append(args) or 410)
+  try:
+    snapshot = owner.action({'action': 'appSubscribe', 'token': 'private-fcm-token', 'appId': 'com.starpilot.galaxy', 'label': 'Phone'})
+    sub_id = snapshot['appSubscriptions'][0]['id']
+    assert len(sub_id) == 12 and 'private-fcm-token' not in json.dumps(snapshot)
+    assert not snapshot['appPushAvailable']
+    owner.action({'action': 'configure', 'channel': 'appPush', 'enabled': True, 'url': 'https://relay.example', 'token': ''})
+    with pytest.raises(LookupError):
+      owner.action({'action': 'test', 'target': 'app', 'id': 'missing'})
+    owner.action({'action': 'test', 'target': 'app', 'id': sub_id})
+    owner.tick()
+    assert calls[0][0] == 'appPush' and calls[0][2]['token'] == 'private-fcm-token'
+    assert owner.snapshot()['appSubscriptions'] == []
+  finally:
+    owner.close()
+
+
+def test_app_success_dedupe_selfie_and_migration(tmp_path):
+  calls = []
+  clock = [100.]
+  events = []
+  root = tmp_path / 'notifications'
+  owner = NotificationOwner(root, store(events), clock=lambda: clock[0], transport=lambda *args: calls.append(args) or 200)
+  owner.action({'action': 'appSubscribe', 'token': 'token', 'appId': 'com.starpilot.galaxy', 'label': 'Phone'})
+  owner.action({'action': 'configure', 'channel': 'appPush', 'enabled': True, 'url': 'https://relay.example', 'token': ''})
+  events.extend([{'eventId': 'a' * 32, 'kind': 'selfie', 'wallTimeNs': int(101e9)}, {'eventId': 'b' * 32, 'kind': 'warning', 'wallTimeNs': int(101e9)}])
+  clock[0] = 102.
+  owner.tick()
+  owner.tick()
+  assert len(calls) == 1
+  assert owner.snapshot()['appSubscriptions'][0]['lastResult'] == 'Delivered to relay'
+  owner.close()
+  reopened = NotificationOwner(root, store(events), clock=lambda: clock[0])
+  assert reopened.available and len(reopened.snapshot()['appSubscriptions']) == 1
+  reopened.close()
+  state = json.loads((root / 'state.json').read_text())
+  state.pop('appSubscriptions')
+  state['channels'].pop('appPush')
+  state['jobs'] = {}
+  (root / 'state.json').write_text(json.dumps(state))
+  migrated = NotificationOwner(root, store())
+  assert migrated.available and migrated.snapshot()['appSubscriptions'] == []
+  migrated.close()
+
+
+def test_webhook_job_survives_restart_with_empty_subscription_id(tmp_path):
+  root = tmp_path / 'notifications'
+  owner = NotificationOwner(root, store())
+  configure(owner, 'webhook')
+  owner.action({'action': 'test', 'channel': 'webhook'})
+  owner.close()
+  reopened = NotificationOwner(root, store())
+  try:
+    assert reopened.available
+    assert reopened.snapshot()['channels']['webhook']['pending'] == 1
+  finally:
+    reopened.close()
+
+
+def test_ios_bundle_id_can_subscribe(tmp_path):
+  owner = NotificationOwner(tmp_path / 'notifications', store(), transport=lambda *args: 200)
+  try:
+    snapshot = owner.action({'action': 'appSubscribe', 'token': 'ios-fcm-token', 'appId': 'link.galaxy.bluetooth.natehuby76', 'label': 'iPhone'})
+    assert snapshot['appSubscriptions'][0]['appId'] == 'link.galaxy.bluetooth.natehuby76'
   finally:
     owner.close()

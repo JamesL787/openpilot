@@ -427,7 +427,7 @@ class TestVision(unittest.TestCase):
         self.logMonoTime = dict.fromkeys(self.data, stamp)
         self.data['slcDashboardObservation'].carStateLogMonoTime = stamp
 
-    cp = SimpleNamespace(carFingerprint='IONIQ6', openpilotLongitudinalControl=True)
+    cp = SimpleNamespace(brand='hyundai', carFingerprint='IONIQ6', openpilotLongitudinalControl=True)
     sm = SM(data)
     confirmed = Runtime(parse({'SpeedLimitController': True, 'SLCConfirmation': True,
                                'SLCConfirmationLower': True, 'SLCConfirmationHigher': True,

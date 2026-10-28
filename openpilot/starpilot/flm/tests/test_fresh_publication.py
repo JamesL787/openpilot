@@ -32,7 +32,7 @@ def publication(*, fresh, changes=None, snapshot_cost=0):
     raise StopIteration
 
   publisher.send.side_effect = send
-  with mock.patch.object(steerlearnerd, 'drain', return_value=None):
+  with mock.patch.object(steerlearnerd, 'drain_pair', return_value=None):
     with pytest.raises(StopIteration):
       steerlearnerd.run(SimpleNamespace(), sm, object(), object(), publisher,
         mock.Mock(), mock.Mock(), mock.Mock(return_value=old), mock.Mock(), mock.Mock(),

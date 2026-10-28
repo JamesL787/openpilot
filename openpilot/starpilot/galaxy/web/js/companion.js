@@ -1,6 +1,7 @@
 import { requestJson } from './startup.js'
 import { GxNotice } from './notice.js'
 import { BluetoothNotice, bluetoothConnection } from './bluetooth-notice.js'
+import { ANDROID_BETA_URL } from './install-app.js'
 
 export function newerCompanionVersion(available, installed) {
   const parts = version => typeof version === 'string' && /^\d+(?:\.\d+){1,3}$/.test(version) ? version.split('.').map(Number) : []
@@ -23,7 +24,7 @@ export const GalaxyCompanion = {
   components: { GxNotice, BluetoothNotice },
   emits: ['status'],
   props: { mode: String, unauthorized: Function },
-  data: () => ({ status: null, error: '', native: !!window.StarPilotApp, sharing: false, autoStart: false,
+  data: () => ({ status: null, error: '', betaUrl: ANDROID_BETA_URL, native: !!window.StarPilotApp?.uplinkState, sharing: false, autoStart: false,
     bluetooth: bluetoothConnection(), nativeBytes: 0, busy: false, generation: 0, alive: false }),
   computed: { windowAutoStart() { return !!window.StarPilotApp?.setAutoStart } },
   mounted() { this.start() },
@@ -66,11 +67,12 @@ export const GalaxyCompanion = {
       this.busy = true
       try {
         const enabled = this.native ? !this.sharing : !this.status.enabled
+        if (this.native && window.StarPilotApp.setUplinkEnabled(enabled) === false) { this.sharing = false; return }
         const status = await requestJson('./api/companion/settings', { request: { method: 'POST',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) } })
         if (!this.alive || generation !== this.generation) return
         this.adopt(status)
-        if (this.native) { window.StarPilotApp.setUplinkEnabled(enabled); this.sharing = enabled }
+        if (this.native) this.sharing = enabled
         this.error = ''
       } catch (e) {
         if (!this.alive || generation !== this.generation) return
@@ -85,15 +87,10 @@ export const GalaxyCompanion = {
   template: `<section class="gx-card gx-panel gx-stack"><h3>Android companion · Connections</h3>
     <p v-if="native"><button class="gx-btn gx-btn--tonal" @click="connectionOptions">Bluetooth, Galaxy Wi-Fi or LAN</button></p>
     <BluetoothNotice v-if="bluetooth" feature="Media transfers and phone internet">Phone internet requires the Galaxy hotspot. Settings and small requests remain available.</BluetoothNotice>
-    <p v-else>Share your phone’s mobile data over Galaxy Wi-Fi. Navigation and online services use your mobile plan. Log uploads, software updates and offline map downloads are blocked.</p>
-    <template v-if="!native"><p>Join TheGalaxy Wi-Fi, download the Android app, then allow your browser to install unknown apps when Android asks.</p>
-      <a v-if="status?.appAvailable && mode === 'local'" class="gx-btn" href="./app.apk">Download Android app</a>
-      <p v-else class="gx-note">Connect locally to a comma with the companion APK installed to download.</p>
-      <img v-if="status?.appAvailable && mode === 'local'" src="./api/companion/qr.svg" class="gx-tunnel__qr" alt="Download app over Galaxy Wi-Fi" />
+    <template v-if="!native"><p>Join the Android beta on Google Groups to get the app, then join TheGalaxy Wi-Fi.</p>
+      <a class="gx-btn" :href="betaUrl" target="_blank" rel="noopener">Join the Android beta</a>
     </template>
     <template v-if="status && mode === 'local'"><p>Status: <strong>{{ status.state }}</strong> {{ status.reason }} · {{ ((native ? nativeBytes : status.bytes) / 1048576).toFixed(1) }} MB today</p>
-      <button v-if="!bluetooth" class="gx-btn gx-btn--tonal" :disabled="busy" @click="toggle">{{ (native ? sharing : status.enabled) ? 'Disable phone internet' : 'Enable phone internet' }}</button>
-      <label v-if="!bluetooth && native && !!windowAutoStart"><input type="checkbox" v-model="autoStart" @change="setAutoStart" /> Resume sharing after phone restart (keeps a notification while waiting for Galaxy Wi-Fi)</label>
     </template><GxNotice v-if="error" tone="danger">{{ error }}</GxNotice>
   </section>`,
 }

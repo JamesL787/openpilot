@@ -110,4 +110,11 @@ assert.equal(requests, 0)
 
 window.StarPilotApp.bluetooth = () => false
 assert.equal(bluetoothConnection(), false)
+{
+  const { readFileSync } = await import('node:fs')
+  const lines = readFileSync(new URL('../web/js/bluetooth.js', import.meta.url), 'utf8').split('\n')
+  const chained = lines.findIndex((line) => line.trim() === '<template v-else-if="status">')
+  assert.ok(chained > 0)
+  assert.doesNotMatch(lines[chained - 1], /v-if="status"/, 'a notice before the device cards would swallow their v-else-if')
+}
 console.log('Bluetooth limits: blue notices, connection action, no blocked requests, supported settings and real errors verified')

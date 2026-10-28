@@ -28,18 +28,22 @@ def test_three_slow_flashes_stop_at_the_controller_deadline():
     assert rgba(pulse.color(rl.WHITE, now)) == (188, 132, 255, 255)
 
 
-def test_manual_confirmation_repeats_two_slow_pulses_rest_and_two_fast_pulses():
+def test_manual_confirmation_repeats_two_gentle_pulses_for_ten_seconds_without_tinting_content():
   pulse = SpeedLimitPulse()
   pulse.update(state(False), 10.)
   base = rl.Color(244, 247, 245, 96)
-  for cycle in (0., 4.4):
-    for elapsed in (.35, 1.25, 2.75, 3.25):
+  for cycle in (0., 3.2, 6.4):
+    for elapsed in (.35, 1.25):
       now = 10. + cycle + elapsed
       pulse.update(state(False), now)
-      assert rgba(pulse.color(base, now)) == (170, 115, 235, 96)
-    for elapsed in (0., .8, 1.6, 2.1, 2.59, 3., 3.4, 3.9, 4.39):
+      assert pulse.confirmation_strength(now) == pytest.approx(1.)
+      assert rgba(pulse.color(base, now)) == rgba(base)
+    for elapsed in (0., .8, 1.6, 2.1, 2.59, 3., 3.19):
       assert rgba(pulse.color(base, 10. + cycle + elapsed)) == rgba(base)
-  assert rgba(pulse.color(base, 9.9)) == rgba(base)
+  assert pulse.confirmation_strength(9.9) == 0.
+  assert pulse.confirmation_strength(19.95) > .9
+  assert pulse.confirmation_strength(20.) == 0.
+  assert pulse.confirmation_strength(22.75) == 0.
 
 
 @pytest.mark.parametrize('kind', list(ObservationKind))
@@ -57,14 +61,14 @@ def test_finished_or_unavailable_manual_decision_stops_pulsing(kind):
 def test_manual_widget_reappearance_and_new_decision_use_controller_time():
   pulse = SpeedLimitPulse()
   pulse.update(state(False), 10., visible=False)
-  pulse.update(state(False), 12.6)
-  assert rgba(pulse.color(rl.WHITE, 12.75)) == (170, 115, 235, 255)
+  pulse.update(state(False), 13.2)
+  assert pulse.confirmation_strength(13.55) == pytest.approx(1.)
   current = state(False)
   current = replace(current, speed_limit=replace(current.speed_limit, pending_since_ns=13_000_000_000,
                                                speed_limit_mps=25., pending_speed_limit_mps=25.))
   pulse.update(current, 13.)
   assert rgba(pulse.color(rl.WHITE, 13.)) == rgba(rl.WHITE)
-  assert rgba(pulse.color(rl.WHITE, 13.35)) == (170, 115, 235, 255)
+  assert pulse.confirmation_strength(13.35) == pytest.approx(1.)
 
 
 def test_missing_pending_timestamp_starts_once_and_resets_for_a_new_drive():
@@ -73,7 +77,7 @@ def test_missing_pending_timestamp_starts_once_and_resets_for_a_new_drive():
   current = replace(current, speed_limit=replace(current.speed_limit, pending_since_ns=0))
   pulse.update(current, 10.)
   pulse.update(current, 10.35)
-  assert rgba(pulse.color(rl.WHITE, 10.35)) == (170, 115, 235, 255)
+  assert pulse.confirmation_strength(10.35) == pytest.approx(1.)
   pulse.update(replace(current, drive_frame=2), 20.)
   assert pulse.start_time == 20.
 
@@ -82,7 +86,7 @@ def test_switching_between_manual_and_automatic_uses_the_current_rhythm():
   pulse = SpeedLimitPulse()
   pulse.update(state(), 10.)
   pulse.update(state(False), 10.)
-  assert rgba(pulse.color(rl.WHITE, 10.35)) == (170, 115, 235, 255)
+  assert pulse.confirmation_strength(10.35) == pytest.approx(1.)
   pulse.update(state(), 10.)
   assert rgba(pulse.color(rl.WHITE, 10.5)) == (188, 132, 255, 255)
   assert rgba(pulse.color(rl.WHITE, 13.)) == rgba(rl.WHITE)

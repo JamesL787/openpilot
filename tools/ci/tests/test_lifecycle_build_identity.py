@@ -59,6 +59,89 @@ class BuildIdentityTests(unittest.TestCase):
     path.write_bytes(b'unregistered artifact')
     self.assertFalse(helper.same_build_inputs(first, helper.build_identity(self.root)))
 
+  def test_logger_metadata_test_is_an_exact_optional_build_output(self):
+    name = 'openpilot/system/loggerd/tests/test_model_metadata'
+    recipe = 'openpilot/system/loggerd/SConscript'
+    self.assertEqual(self.inventory.get(name), {'recipe': recipe, 'required_tracked': False})
+    output = self.root / name
+    source = self.root / (name + '.cc')
+    source.write_text('native test source\n')
+    subprocess.run([*GIT, 'rm', '--cached', name], cwd=self.root, check=True, capture_output=True)
+    subprocess.run([*GIT, 'add', str(source.relative_to(self.root))], cwd=self.root, check=True)
+    subprocess.run([*GIT, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'Untracked native test output'],
+                   cwd=self.root, check=True)
+    output.chmod(0o755)
+    built = helper.build_identity(self.root)
+    self.assertNotIn(name, built['inputs']['untracked'])
+    self.assertEqual(built['declared_outputs'][name], helper.file_record(output))
+    self.assertIn(name + '.cc', built['inputs']['tracked_inputs'])
+    self.assertIn(recipe, built['inputs']['recipes'])
+    output.unlink()
+    checkout = helper.build_identity(self.root)
+    self.assertIsNone(checkout['declared_outputs'][name])
+    self.assertTrue(helper.same_build_inputs(built, checkout))
+    output.write_bytes(b'independently rebuilt native test')
+    rebuilt = helper.build_identity(self.root)
+    self.assertTrue(helper.same_build_inputs(built, rebuilt))
+    self.assertNotEqual(built['declared_outputs'][name]['sha256'], rebuilt['declared_outputs'][name]['sha256'])
+    self.assertNotEqual(built, rebuilt)  # Per-job before/after still fails closed.
+    for path in (source, self.root / recipe):
+      original = path.read_bytes()
+      path.write_bytes(b'changed input')
+      self.assertFalse(helper.same_build_inputs(built, helper.build_identity(self.root)))
+      path.write_bytes(original)
+    output.with_name(output.name + '_other').write_bytes(b'undeclared neighboring output')
+    self.assertFalse(helper.same_build_inputs(built, helper.build_identity(self.root)))
+    forged = copy.deepcopy(built)
+    del forged['declared_outputs'][name]
+    with self.assertRaises(ValueError):
+      helper.same_build_inputs(built, forged)
+
+  def test_pandad_exact_outputs_preserve_checkout_build_identity(self):
+    recipe = 'openpilot/selfdrive/pandad/SConscript'
+    objects = [f'openpilot/selfdrive/pandad/{name}.o' for name in ('main', 'panda', 'panda_safety', 'panda_usb', 'pandad', 'spi')]
+    executable = 'openpilot/selfdrive/pandad/tests/test_panda_debug'
+    for name in [*objects, executable]:
+      self.assertEqual(self.inventory.get(name), {'recipe': recipe, 'required_tracked': name != executable})
+    source = self.root / (executable + '.cc')
+    source.write_text('native test source\n')
+    subprocess.run([*GIT, 'rm', '--cached', executable], cwd=self.root, check=True, capture_output=True)
+    subprocess.run([*GIT, 'add', executable + '.cc'], cwd=self.root, check=True)
+    subprocess.run([*GIT, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'Pandad source fixture'],
+                   cwd=self.root, check=True)
+    (self.root / executable).unlink()
+    checkout = helper.build_identity(self.root)
+    for name in [*objects, executable]:
+      (self.root / name).write_bytes(b'independent host build')
+    (self.root / executable).chmod(0o755)
+    built = helper.build_identity(self.root)
+    self.assertTrue(helper.same_build_inputs(checkout, built))
+    self.assertNotEqual(checkout, built)  # In-job output mutation still fails the before/after guard.
+    self.assertIn(executable + '.cc', built['inputs']['tracked_inputs'])
+    self.assertIn(recipe, built['inputs']['recipes'])
+    for name in [*objects, executable]:
+      self.assertEqual(built['declared_outputs'][name], helper.file_record(self.root / name))
+      forged = copy.deepcopy(built)
+      del forged['declared_outputs'][name]
+      with self.assertRaises(ValueError):
+        helper.same_build_inputs(checkout, forged)
+    for path in (source, self.root / recipe):
+      original = path.read_bytes()
+      path.write_bytes(b'changed input')
+      self.assertFalse(helper.same_build_inputs(built, helper.build_identity(self.root)))
+      path.write_bytes(original)
+    neighbor = self.root / 'openpilot/selfdrive/pandad/undeclared.o'
+    neighbor.write_bytes(b'undeclared object')
+    self.assertFalse(helper.same_build_inputs(built, helper.build_identity(self.root)))
+    neighbor.unlink()
+    for name in objects:
+      path = self.root / name
+      original = path.read_bytes()
+      path.unlink()
+      with self.assertRaises(ValueError):
+        helper.build_identity(self.root)
+      path.write_bytes(original)
+
   def test_missing_declared_artifact_is_denied(self):
     (self.root / 'msgq_repo/msgq/ipc_pyx.so').unlink()
     with self.assertRaises(ValueError):

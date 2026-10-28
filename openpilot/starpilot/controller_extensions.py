@@ -10,13 +10,17 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.starpilot.controllers.toyota_cruise import ToyotaCruisePreference, capability as toyota_cruise_capability
 
 from opendbc.car.ford.values import CAR, FordFlags
+from opendbc.car.ford.pinion import configured as pinion_configured
 
 
 class ManualTurnInputs:
-  def __init__(self, params, *, track_assist_permission: bool = False):
+  def __init__(self, params, *, track_assist_permission: bool = False, pinion: bool = False):
     self.params = params
+    self.pinion = pinion
+    self.vehicle_parameters = None
     self.track_assist_permission = track_assist_permission
-    self.sm = messaging.SubMaster(["modelV2", "lateralDelay"] + (["pandaStates", "aolSafetyWire"] if track_assist_permission else []))
+    services = ["modelV2", "lateralDelay"] + (["pandaStates", "aolSafetyWire"] if track_assist_permission else [])
+    self.sm = messaging.SubMaster(services + (["vehicleParameters"] if pinion else []))
     self.enabled = bool(self.params.get("FordHumanTurnDetection", return_default=True))
     self.frames = 0
     self.blend_settings = self._read_blend_settings()
@@ -39,12 +43,16 @@ class ManualTurnInputs:
   def apply_blend_settings(self, controller):
     for name in ("mache_lateral", "classic_lateral", "new_port_curvature"):
       owner = getattr(controller, name, None)
+      if owner is not None and self.pinion:
+        owner.measurement.update_parameters(self.vehicle_parameters)
       if owner is not None and self._applied_blends.get(owner) != self.blend_settings:
         owner.set_blend_settings(*self.blend_settings)
         self._applied_blends[owner] = self.blend_settings
 
   def update(self):
     self.sm.update(0)
+    if self.pinion and self.sm.valid["vehicleParameters"] and self.sm.alive["vehicleParameters"]:
+      self.vehicle_parameters = self.sm["vehicleParameters"]
     if self.frames % 100 == 0:
       self.enabled = bool(self.params.get("FordHumanTurnDetection", return_default=True))
       self.blend_settings = self._read_blend_settings()
@@ -249,20 +257,20 @@ def configure_controller(CI, params):
   if (controller is not None and cp.brand == "ford" and cp.carFingerprint == CAR.FORD_MUSTANG_MACH_E_MK1 and
       not cp.flags & FordFlags.LKA_STEERING and not cp.passive and not cp.dashcamOnly and not cp.notCar and
       getattr(controller, "manual_turn", None) is not None):
-    controller.manual_turn_inputs = ManualTurnInputs(params, track_assist_permission=bool(cp.flags & FordFlags.CANFD))
+    controller.manual_turn_inputs = ManualTurnInputs(params, track_assist_permission=bool(cp.flags & FordFlags.CANFD), pinion=pinion_configured(cp))
 
   from opendbc.bluepilot_lateral.hosts.starpilot import qualified as angle_qualified
   if controller is not None and angle_qualified(cp) and getattr(controller, "bp_lat", None) is not None:
-    controller.bp_lat.host.inputs = ManualTurnInputs(params, track_assist_permission=True)
+    controller.bp_lat.host.inputs = ManualTurnInputs(params, track_assist_permission=True, pinion=pinion_configured(cp))
 
   from opendbc.car.ford.classic_lateral import qualified as classic_qualified
   from opendbc.car.ford.generic_canfd_lateral import qualified as generic_canfd_qualified
   if controller is not None and (classic_qualified(cp) or generic_canfd_qualified(cp)) and getattr(controller, "classic_lateral", None) is not None:
-    controller.manual_turn_inputs = ManualTurnInputs(params)
+    controller.manual_turn_inputs = ManualTurnInputs(params, pinion=pinion_configured(cp))
 
   from opendbc.car.ford.new_port_curvature import qualified as new_port_curvature_qualified
   if controller is not None and new_port_curvature_qualified(cp) and getattr(controller, "new_port_curvature", None) is not None:
-    controller.manual_turn_inputs = ManualTurnInputs(params)
+    controller.manual_turn_inputs = ManualTurnInputs(params, pinion=pinion_configured(cp))
 
   if controller is not None and cp.brand == "ford" and getattr(controller, "manual_turn_inputs", None) is not None:
     controller.manual_turn_inputs.apply_blend_settings(controller)

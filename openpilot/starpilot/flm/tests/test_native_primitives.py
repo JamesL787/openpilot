@@ -14,6 +14,8 @@ def fixture_binding(tmp_path, monkeypatch):
   here.mkdir(parents=True)
   monkeypatch.setattr(native, 'HERE', here)
   monkeypatch.setattr(native, '_enabled', False)
+  # Metadata-only bindings must not inherit an extension imported by another test.
+  monkeypatch.delitem(native.sys.modules, 'openpilot.starpilot.flm._primitive_walk', raising=False)
   clear_identity = native.native_identity.cache_clear
   clear_extension = native._extension.cache_clear
   clear_identity()

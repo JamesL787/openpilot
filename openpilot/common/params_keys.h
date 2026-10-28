@@ -42,6 +42,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HondaBoschARadar", {PERSISTENT, BOOL, "1"}},
     {"HondaGasFactorParams", {PERSISTENT, FLOAT, "1.0"}},
     {"HondaWindFactorParams", {PERSISTENT, FLOAT, "1.0"}},
+    {"FordPrefSteerAngleCurvature", {PERSISTENT, BOOL, "0"}},
     {"FordLateralMode", {PERSISTENT, INT, "0"}},
     {"FordHandsFreeCluster", {PERSISTENT, BOOL, "0"}},
     {"FordHumanTurnDetection", {PERSISTENT, BOOL, "1"}},

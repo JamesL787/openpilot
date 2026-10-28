@@ -191,7 +191,8 @@ def test_the_small_models_history_clears_in_place(layout):
     small.input_queues, small.npy, small.prev_desire = queues, npy, np.ones(8, dtype=np.float32)
     buffers = {name: q.uop.base.buffer for name, q in queues.items()}
     warp.init_device(logging.getLogger(__name__))  # as modeld: the reset's kernels compile with no compile pool
-    reset = adapter.adapter().small_reset(small)
+    with patch.object(Tensor, "assign", side_effect=AssertionError("reset must not compile a new GPU assignment")):
+      reset = adapter.adapter().small_reset(small)
     history = [name for name, q in queues.items() if q.device != "NPY" and name not in adapter.FRAME_INPUTS]
     for _ in range(3):
       for name in history:
@@ -199,7 +200,8 @@ def test_the_small_models_history_clears_in_place(layout):
       for array in npy.values():
         array.fill(3)
       small.prev_desire.fill(1)
-      reset()
+      with patch.object(Tensor, "assign", side_effect=AssertionError("reset must not submit a new GPU assignment")):
+        reset()
       assert {name: q.uop.base.buffer for name, q in queues.items()} == buffers
       for name in history:
         assert not queues[name].numpy().any(), name
@@ -209,9 +211,31 @@ def test_the_small_models_history_clears_in_place(layout):
 
 
 def test_the_reset_reads_what_the_catalog_runner_keeps():
-  # small_reset reads these; a rename would leave every fallback on a stale history
+  # small_reset reads these, and jetlink_warp the warp's; a rename would leave every fallback on a stale history
   tree = ast.parse((ROOT / "openpilot/starpilot/models/runner.py").read_text())
   runner = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "CatalogModelState")
   assigned = {n.attr for n in ast.walk(runner) if isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Store)
               and isinstance(n.value, ast.Name) and n.value.id == "self"}
-  assert {"input_queues", "npy", "prev_desire"} <= assigned
+  assert {"input_queues", "npy", "prev_desire", "_blob_cache", "camera_warp_descriptor", "frame_buf_size"} <= assigned
+
+
+@pytest.mark.parametrize("mapping", ["missing", "readonly", "short"])
+def test_small_reset_refuses_unusable_mapped_history(mapping):
+  from tinygrad import Tensor
+  from tinygrad.helpers import Context
+  from openpilot.starpilot.models.runner import CatalogModelState
+
+  with Context(DEV="CPU"):
+    q = Tensor.ones(4, device="CPU").realize()
+    small = CatalogModelState.__new__(CatalogModelState)
+    small.input_queues, small.npy, small.prev_desire = {"history": q}, {}, np.ones(8, np.float32)
+    buffer = q.uop.base.buffer
+    if mapping == "missing":
+      mocked = patch.object(buffer, "get_storage", return_value=SimpleNamespace(host=None))
+    else:
+      view = memoryview(bytes(buffer.nbytes)) if mapping == "readonly" else memoryview(bytearray(1))
+      mocked = patch.object(buffer, "as_memoryview", return_value=view)
+    with mocked, pytest.raises(ValueError, match="history"):
+      adapter.adapter().small_reset(small)
+    assert np.all(small.prev_desire == 1)
+    assert np.all(q.numpy() == 1)

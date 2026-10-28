@@ -1372,6 +1372,16 @@ class IpcAxisContractTests(unittest.TestCase):
       self.assertEqual(sd.AM.current_alert.alert_type, 'steerTempUnavailableSilent/warning')
       self.assertEqual(sd.AM.current_alert.alert_status, log.SelfdriveState.AlertStatus.userPrompt)
       self.assertEqual(sd.AM.current_alert.alert_text_1, 'Steering Assist Temporarily Unavailable')
+      # A hard driver override puts Honda EPS in NO_TORQUE_ALERT_1; the driver
+      # is already steering, so the warning waits until they let go.
+      state.steeringPressed = True
+      sd.sm.frame += 1
+      sd.step()
+      self.assertNotIn(log.OnroadEvent.EventName.steerTempUnavailableSilent, sd.events.names)
+      state.steeringPressed = False
+      sd.sm.frame += 1
+      sd.step()
+      self.assertIn(log.OnroadEvent.EventName.steerTempUnavailableSilent, sd.events.names)
       state.steerFaultTemporary = False
       native.requestedLateral = native.lateralAllowed = True
       sd.sm.frame += 1

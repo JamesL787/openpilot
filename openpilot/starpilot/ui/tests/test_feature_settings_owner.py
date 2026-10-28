@@ -100,7 +100,15 @@ class FeatureSettingsOwnerTests(unittest.TestCase):
     self.owner.vehicle_params = lambda: ordinary
     self.fingerprint = ordinary.carFingerprint
     self.owner.configuration_vehicle = lambda: True
+    self.assertEqual(ordinary.safetyConfigs[0].safetyParam, 0x6242)
+    self.assertTrue(self._row('aol', 'AlwaysOnLateral').available)
+    self.assertTrue(policy_for(ordinary).runtime_supported)
+    unconfigured = ordinary.as_reader().as_builder()
+    unconfigured.safetyConfigs = []
+    self.owner.vehicle_params = lambda: unconfigured
     self.assertFalse(self._row('aol', 'AlwaysOnLateral').available)
+    self.assertFalse(policy_for(unconfigured).runtime_supported)
+    self.assertFalse(policy_for(unconfigured).intent_supported)
     fw = [structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps, address=0x7A1, brand='toyota', bus=0,
           fwVersion=b'8965B47070\x00\x00\x00\x00\x00\x00')]
     actual = CarInterface.get_params(CAR.TOYOTA_PRIUS, {0: {0x2FF: 4}, 1: {}, 2: {}}, fw, False, False, False)

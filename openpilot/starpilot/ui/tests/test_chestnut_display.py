@@ -435,3 +435,63 @@ def test_model_source_box_sits_under_the_wheel_glyph_and_follows_the_layout():
   with patch.object(widgets, 'offset', return_value=(-40, 10)), patch.object(widgets, 'widget_size', return_value=(160, 160)):
     moved = widgets.model_source_box(content, state)
   assert (moved.x, moved.y, moved.width) == (2160 - 146 - 96 - 40 + 20, 55 + 160 + 24, 120)
+@pytest.mark.parametrize('phase,started,expected', [
+  ('connecting', False, ChestnutState.LOADING),
+  ('connected', False, ChestnutState.LOADING),
+  ('ready', False, ChestnutState.READY),
+  ('active', False, ChestnutState.READY),
+  ('unavailable', False, ChestnutState.FAILED),
+  ('disconnected', False, ChestnutState.DISCONNECTED),
+  ('connecting', True, ChestnutState.LOADING),
+  ('ready', True, ChestnutState.LOADING),
+  ('active', True, ChestnutState.ACTIVE),
+  ('unavailable', True, ChestnutState.FAILED),
+  ('disconnected', True, ChestnutState.DISCONNECTED),
+])
+def test_jetlink_uses_existing_gpu_feedback(phase, started, expected):
+  from openpilot.starpilot.models.jetlink_status import JetlinkStatus
+  sm = Mock()
+  sm.__getitem__ = Mock(side_effect=lambda service: SimpleNamespace(chestnutPresent=False) if service == 'deviceState' else SimpleNamespace(big=True))
+  sm.recv_frame = {'modelV2': 12}
+  sm.logMonoTime = {'modelV2': 1_000_000_000}
+  sm.valid = {'modelV2': True}
+  sm.alive = {'modelV2': True}
+  feed = Mock()
+  feed.snapshot.return_value = JetlinkStatus('Computer', phase, port='connected')
+  state = Mock(spec=UIState, sm=sm, started=started, started_frame=10, jetlink_status_feed=feed,
+                          chestnut_output_seen=False, chestnut_present=False)
+  with patch('openpilot.selfdrive.ui.ui_state.time.monotonic_ns', return_value=1_100_000_000):
+    UIState._update_chestnut_state(state)
+  assert state.chestnut_state == expected
+
+
+@pytest.mark.parametrize('big,valid,alive,age', [(False, True, True, 100_000_000),
+                                              (True, False, True, 100_000_000),
+                                              (True, True, False, 100_000_000),
+                                              (True, True, True, 300_000_000)])
+def test_jetlink_cannot_keep_green_without_fresh_big_output(big, valid, alive, age):
+  from openpilot.starpilot.models.jetlink_status import JetlinkStatus
+  sm = Mock()
+  sm.__getitem__ = Mock(side_effect=lambda service: SimpleNamespace(chestnutPresent=False) if service == 'deviceState' else SimpleNamespace(big=big))
+  sm.recv_frame = {'modelV2': 12}
+  sm.logMonoTime = {'modelV2': 1_000_000_000}
+  sm.valid = {'modelV2': valid}
+  sm.alive = {'modelV2': alive}
+  feed = Mock()
+  feed.snapshot.return_value = JetlinkStatus('Computer', 'active', port='connected')
+  state = Mock(spec=UIState, sm=sm, started=True, started_frame=10, jetlink_status_feed=feed,
+                          chestnut_output_seen=True, chestnut_present=True)
+  with patch('openpilot.selfdrive.ui.ui_state.time.monotonic_ns', return_value=1_000_000_000 + age):
+    UIState._update_chestnut_state(state)
+  assert state.chestnut_state == ChestnutState.FAILED
+
+
+def test_physical_chestnut_keeps_its_own_status_with_jetlink_feed():
+  sm = Mock()
+  sm.__getitem__ = Mock(return_value=SimpleNamespace(chestnutPresent=True))
+  feed = Mock()
+  state = Mock(spec=UIState, sm=sm, started=False, jetlink_status_feed=feed, chestnut_alert=False,
+                          chestnut_checking=False, chestnut_compiled=True)
+  UIState._update_chestnut_state(state)
+  feed.snapshot.assert_not_called()
+  assert state.chestnut_state == ChestnutState.READY

@@ -586,9 +586,9 @@ assert.equal(updateView.updateBanner.message, 'Connection lost')
 updateView.operations.repository = 'firestar5683/openpilot'
 updateView.draftBranch = 'beta'
 assert.equal(updateView.commitUrl, `https://github.com/firestar5683/openpilot/commit/${installed.commit}`)
-assert.equal(updateView.commitsUrl, 'https://github.com/firestar5683/StarPilot/commits/Dom/')
+assert.equal(updateView.commitsUrl, 'https://github.com/StarPilotHQ/StarPilot/commits/Dom/')
 assert.equal(SoftwarePage.computed.commitsUrl.call({ data: { installed: { branch: 'SecretGoodStarPilot' } } }),
-  'https://github.com/firestar5683/StarPilot/commits/SecretGoodStarPilot/')
+  'https://github.com/StarPilotHQ/StarPilot/commits/SecretGoodStarPilot/')
 
 // The same button installs a prepared build or requests the updater-owned automatic path.
 const ready = { actionDisabled: false, draftBranch: "Dom", operations: { canInstall: true, selectedTarget: "Dom" },

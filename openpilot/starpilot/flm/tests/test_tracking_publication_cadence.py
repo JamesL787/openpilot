@@ -70,7 +70,7 @@ def delivery_run(monkeypatch, producer, phase, *, stop=False, withdraw=False):
     value = source(stamp)
     return replace(value, enabled=False) if withdraw and stamp >= BASE+1_500_000_000 else value
   monkeypatch.setattr(producer, 'tracking_message', writer)
-  monkeypatch.setattr(producer, 'drain', lambda *args: None)
+  monkeypatch.setattr(producer, 'drain_pair', lambda *args: None)
   started = time.monotonic_ns()
   with pytest.raises(LoopComplete):
     producer.run(SimpleNamespace(), SM(), object(), object(), SimpleNamespace(send=send), None, None,

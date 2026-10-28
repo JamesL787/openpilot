@@ -28,7 +28,7 @@ from openpilot.starpilot.ui.feature_settings_state import (
   FeatureRow, FeatureSettingsRequest, FEATURE_CONFIRM_ACTIONS, is_long_confirm_action, row_change, row_default,
 )
 from openpilot.starpilot.saved_source import read_saved
-from openpilot.starpilot.galaxy.developer_settings import DeveloperSettingsOwner
+from openpilot.starpilot.galaxy.developer_settings import DRIVER_MONITORING_RESET, DeveloperSettingsOwner
 from openpilot.starpilot.speed_limits.vision_gate import diagnostic_choice_enabled
 from openpilot.starpilot.parked_evidence import ParkedEvidence, RESUME_SKEW_NS, fresh_offroad, host_parked
 from openpilot.starpilot.ui.pip_owner import EDITOR as PIP_EDITOR, FORMAT_PREFIX as PIP_FORMAT_PREFIX, RESET as PIP_RESET, PiPOwner, validated_editor_draft
@@ -42,10 +42,22 @@ PAGES = frozenset(("hub", "developer", "vehicle", "slc", "lane", "lane_change", 
                    "conditional", "conditional/cem", "conditional/ccm", "night_star",
                    *(f"{name}/{category}" for name in ("traffic", "aggressive", "standard", "relaxed")
                      for category in ("acceleration", "braking", "following"))))
-CONFIRM_ACTIONS = FEATURE_CONFIRM_ACTIONS
+CONFIRM_ACTIONS = FEATURE_CONFIRM_ACTIONS | {DRIVER_MONITORING_RESET}
 MAX_VIEWS = 64
 MAX_INTENTS = 64
 TTL = 60.0
+
+# Android Auto lists binary controls only.
+CAR_CONTROL_SECTIONS = (
+  ("lateral", "Lateral (Steering)", ("aol", "lane_change", "torque", "lane")),
+  ("longitudinal", "Longitudinal (Speed & Following)",
+   ("profiles", "conditional", "curve", "slc", "aggressive", "standard", "relaxed", "traffic")),
+  ("wheel", "Wheel Controls", ("wheel",)),
+  ("visual", "Visual (Display & UI)", ("appearance", "pip")),
+  ("sounds", "Sounds & Alerts", ("sounds",)),
+  ("device", "Device & Data", ("display", "data")),
+  ("developer", "Developer", ("developer",)),
+)
 
 
 class SettingsUnavailable(Exception):
@@ -360,7 +372,7 @@ def _session_key(token: str) -> bytes:
   return hashlib.sha256(token.encode("ascii")).digest()
 
 
-def _projection(row: FeatureRow, page: str) -> dict:
+def _projection(row: FeatureRow) -> dict:
   return {"label": row.label, "value": row.value, "choices": list(row.choices), "step": row.step,
           "minimum": row.minimum, "maximum": row.maximum, "unit": row.unit,
           "available": row.available, "reason": description(row),
@@ -407,6 +419,8 @@ def _question(row: FeatureRow, request: FeatureSettingsRequest) -> str:
     return f"Save {row.label.lower()} as {value}?"
   if key == SENTRY_RESET:
     return "Replace invalid saved motion settings with Off and the default sensitivity and warning time?"
+  if key == DRIVER_MONITORING_RESET:
+    return "Clear saved driver monitoring wheel-side detection? Automatic detection will run again on the next drive."
   if key.startswith("sentry:"):
     value = f"{request.value} {row.unit}".rstrip()
     return (f"Save {row.label.lower()} as {value}? This is a saved choice; " +
@@ -631,8 +645,41 @@ class SettingsGateway:
     scope = hashlib.sha256(_session_key(token) + generation + (ctx.cp_raw or b"")).digest()
     result = {"page": page, "title": state.title, "subtitle": state.subtitle, "parked": state.parked,
               "vehicleIdentified": bool(ctx.cp is not None and getattr(ctx.cp, "carFingerprint", None)),
-              "rows": [{**_projection(row, page), "revision": hashlib.sha256(scope + repr(row).encode()).hexdigest()}
+              "rows": [{**_projection(row), "revision": hashlib.sha256(scope + repr(row).encode()).hexdigest()}
                        for row in state.rows], "view": view_id}
+    if page == "hub" or any(row.page for row in state.rows):
+      rows_by_page = {page: state}
+      visible: dict[str, bool] = {}
+
+      def page_state(name: str):
+        if name not in rows_by_page:
+          rows_by_page[name] = self._state(name, ctx)
+        return rows_by_page[name]
+
+      def has_car_control(name: str, visited: frozenset[str] = frozenset()) -> bool:
+        if name in visited or name not in PAGES:
+          return False
+        if name in visible:
+          return visible[name]
+        try:
+          rows = page_state(name).rows
+        except SettingsUnavailable:
+          visible[name] = False
+          return False
+        found = any((len(row.choices) == 2 and set(row.choices) == {"On", "Off"}) or
+                    has_car_control(row.page, visited | {name}) for row in rows)
+        visible[name] = found
+        return found
+      if page == "hub":
+        result["sections"] = []
+        for section_id, title, names in CAR_CONTROL_SECTIONS:
+          pages = [{"id": name, "title": page_state(name).title} for name in names if has_car_control(name)]
+          if pages:
+            result["sections"].append({"id": section_id, "title": title, "pages": pages})
+      else:
+        for source, projected in zip(state.rows, result["rows"], strict=False):
+          if source.page:
+            projected["carVisible"] = has_car_control(source.page)
     if page == "vasm":
       result["editor"] = editor
       result["editorRow"] = next((index for index, row in enumerate(state.rows) if row.key == VASM_ANNOTATION), -1)

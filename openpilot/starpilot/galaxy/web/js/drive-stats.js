@@ -6,6 +6,16 @@ const integer = (value) => Number.isSafeInteger(value) && value >= 0
 const text = (value, limit = 128) => typeof value === "string" && value.length <= limit &&
   !/[\x00-\x1f\x7f]/.test(value)
 const optionalText = (value, limit = 128) => value === null || text(value, limit)
+// Optional additions preserve compatibility with older statistics responses.
+const validAol = (value, aggregate = false) => {
+  if (value.aolSeconds === undefined && value.aolPercent === undefined) return true
+  if (![value.aolSeconds, value.aolPercent].every(optionalNumber) ||
+      (value.aolSeconds === null) !== (value.aolPercent === null) ||
+      (value.aolPercent !== null && value.aolPercent > 100)) return false
+  const duration = aggregate ? value.aolDurationSeconds : value.durationSeconds
+  return (value.aolSeconds === null || (number(duration) && value.aolSeconds <= duration)) &&
+    (!aggregate || (number(duration) && integer(value.aolDrives) && value.aolDrives <= value.drives))
+}
 
 const validDrive = (drive) => drive && ROUTE.test(drive.routeId) &&
   [drive.startTime, drive.endTime].every((value) => value === null || number(value)) &&
@@ -14,7 +24,7 @@ const validDrive = (drive) => drive && ROUTE.test(drive.routeId) &&
   optionalText(drive.model) && optionalText(drive.reason, 256) &&
   typeof drive.complete === "boolean" && typeof drive.ignored === "boolean" &&
   integer(drive.segmentCount) && drive.segmentCount <= 10000 &&
-  (drive.engagedPercent === null || drive.engagedPercent <= 100)
+  (drive.engagedPercent === null || drive.engagedPercent <= 100) && validAol(drive)
 
 export function validDriveStats(value) {
   if (value?.schemaVersion !== 1 || typeof value.isMetric !== "boolean" || !value.analysis || !value.totals || !value.week ||
@@ -22,6 +32,7 @@ export function validDriveStats(value) {
       !Array.isArray(value.records) || value.records.length > 24 ||
       !Array.isArray(value.models) || value.models.length > 100) return false
   const { analysis, totals, week, lastDrive, recentDrives, records, models } = value
+  if (!validAol(totals, true) || !validAol(week, true)) return false
   if (week.timezone !== undefined && !text(week.timezone)) return false
   if (typeof analysis.running !== "boolean" || !integer(analysis.pending) || !integer(analysis.failed) ||
       typeof analysis.scanIncomplete !== "boolean") return false

@@ -6,18 +6,18 @@ import math
 from openpilot.starpilot.flm.canonical_surface_adapter import NAMES, canonical_names, coordinate_bounds, full_profile_sha256
 
 VERSION = 'live-tracking-trial-v1'
-MAX_STEP = 0.005
+MAX_STEP = 0.05
 MAX_LEASE_NS = 500_000_000
 SLEW_PER_SECOND = 0.005
 MAX_TRIAL_NS = 120_000_000_000
 
 
 def _text(value, maximum=96):
-  return type(value) is str and 0 < len(value) <= maximum and value.isascii() and all(32 <= ord(c) < 127 for c in value)
+  return type(value) is str and 0 < len(value) <= maximum and value.isascii() and value.isprintable()
 
 
 def _digest(value):
-  return type(value) is str and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
+  return type(value) is str and len(value) == 64 and not value.strip('0123456789abcdef')
 
 
 @dataclass(frozen=True)

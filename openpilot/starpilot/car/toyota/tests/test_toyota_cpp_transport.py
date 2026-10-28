@@ -80,6 +80,7 @@ int main() {
    uint8_t request, permission; if (!read_value(request) || !read_value(permission)) return 4;
    complete_host(request, permission); respond(0U);
   } else if (op == 3U) { respond(0U); return 0; }
+  else if (op == 4U) { uint16_t word; if (!read_value(word)) return 6; respond(toyota_aol_param(word)); }
   else return 5;
  }
  return 0;
@@ -115,6 +116,9 @@ int main() {
 
     def complete_host(self, request, permission):
       assert self.exchange(b'\x02' + struct.pack('<BB', request, permission)) == 0
+
+    def admits(self, word):
+      return bool(self.exchange(b'\x04' + struct.pack('<H', word)))
 
     def close(self):
       try:

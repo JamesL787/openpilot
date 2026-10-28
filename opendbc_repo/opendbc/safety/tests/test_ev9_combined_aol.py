@@ -83,8 +83,8 @@ class TestEV9CombinedDebug(CombinedFixture, unittest.TestCase):
     self.assertFalse(self.safety.safety_tx_hook(self.scc(1.)))
     self.assertTrue(self.safety.safety_tx_hook(self.angle(value=self.NONZERO_ANGLE)))
 
-  def test_pedals_and_temporary_restrictions_withhold_then_resume_lateral_without_a_new_button(self):
-    for restriction in ({'brake': True}, {'gas': True}, {'gear': 6}, {'fault': 2}):
+  def test_temporary_gear_and_eps_restrictions_withhold_then_resume_lateral_without_a_new_button(self):
+    for restriction in ({'gear': 6}, {'fault': 2}):
       with self.subTest(restriction=restriction):
         self.setUp()
         self.warm()
@@ -123,3 +123,16 @@ class TestEV9CombinedReleaseDenied(CombinedFixture, unittest.TestCase):
     self.assertFalse(self.safety.safety_tx_hook(self.angle()))
     self.assertFalse(self.safety.safety_tx_hook(self.scc(1.)))
     self.assertFalse(self.safety.safety_tx_hook(self.packet('CAM_0x362', 0, {})))
+
+  def test_full_engagement_cannot_grant_any_reported_alpha_profile_in_release(self):
+    for word in (0x815, 0x895, 0x5c95, 0x5495):
+      with self.subTest(word=hex(word)):
+        self.safety.init_tests()
+        self.safety.set_alternative_experience(32)
+        self.assertEqual(self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, word), 0)
+        self.safety.set_controls_allowed(True)
+        self.safety.set_aol_test_heartbeat(True)
+        self.safety.aol_set_host_request(3)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+        self.assertFalse(self.safety.safety_tx_hook(self.angle()))
+        self.assertFalse(self.safety.safety_tx_hook(self.scc(1.)))

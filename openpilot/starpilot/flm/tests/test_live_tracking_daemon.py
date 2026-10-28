@@ -1,4 +1,5 @@
 """Actual daemon loop and cereal publication; fake actor does not model permission."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 
 from dataclasses import replace
 from types import SimpleNamespace
@@ -85,7 +86,7 @@ def test_actual_daemon_publishes_separate20_and4_without_legacy_fit(monkeypatch,
 
   monkeypatch.setattr(actor, 'close', actor_close)
   # No control/native is invented: this exercises actual collecting publications.
-  monkeypatch.setattr(steerlearnerd, 'drain', lambda *args: None)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', lambda *args: None)
   with pytest.raises(LoopComplete if shutdown_reaped else RuntimeError):
     steerlearnerd.run(
       SimpleNamespace(),
@@ -169,7 +170,7 @@ def _run_poll_script(monkeypatch, rows, *, expire_during_drain=False):
       now[0] += 600_000_000
       expired = True
 
-  monkeypatch.setattr(steerlearnerd, 'drain', drain)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', separate_drain_fixture(drain))
   with pytest.raises(LoopComplete):
     steerlearnerd.run(SimpleNamespace(), sm, object(), object(), pm, None, None,
       lambda stamp: source(stamp), None, None, None, None, fitter, None,
@@ -250,7 +251,7 @@ def test_actual_nonlive_run_does_not_read_tracking_poll_metadata(monkeypatch):
   # Minimal SM intentionally lacks tracking metadata; the legacy path is intact.
   sent = []
   pm = SimpleNamespace(send=lambda topic, message: sent.append(topic))
-  monkeypatch.setattr(steerlearnerd, 'drain', lambda *args: None)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', lambda *args: None)
   fitter = SimpleNamespace(poll=lambda **kwargs: None, close=lambda reason: True, child=None)
   with pytest.raises(LoopComplete):
     steerlearnerd.run(SimpleNamespace(), SM(), object(), object(), pm, None, None,

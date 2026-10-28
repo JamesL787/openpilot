@@ -199,8 +199,8 @@ class TestAscmIntercept(unittest.TestCase):
       cs = self.authority_frame(ci, packer, tick, status=0 if tick < 65 else 1)
       self.assertFalse(cs.steerFaultTemporary, tick)
     self.assertTrue(ci.CS.steering_authority.seen_active)
-    for cp in (params(CAR.CHEVROLET_VOLT_ASCM), params(CAR.CHEVROLET_VOLT),
-               params(CAR.CHEVROLET_BOLT_EUV)):
+    self.assertTrue(CarState(params(CAR.CHEVROLET_VOLT_ASCM)).steering_authority.enabled)
+    for cp in (params(CAR.CHEVROLET_VOLT), params(CAR.CHEVROLET_BOLT_EUV)):
       self.assertFalse(CarState(cp).steering_authority.enabled)
 
   def test_volt_steering_neutral_reacquisition(self):

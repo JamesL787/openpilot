@@ -17,7 +17,7 @@ import pyray as rl
 
 from openpilot.starpilot.ui import clip
 from openpilot.system.ui.lib.application import gui_app
-from openpilot.starpilot.ui.onroad_customization import (CLOCK_WIDGET, MODE_WIDGET, RAIL_WIDGETS, STOPPED_TIMER_WIDGET, offset, placement, rgba,
+from openpilot.starpilot.ui.onroad_customization import (CLOCK_WIDGET, MODE_WIDGET, RAIL_WIDGETS, STOPPED_TIMER_WIDGET, placement, rgba,
                                                          widget_order, widget_size)
 from openpilot.starpilot.ui.appearance_preferences import CameraViewChoice
 
@@ -31,14 +31,14 @@ from openpilot.starpilot.ui.onroad_large_widgets import CurrentSpeedHud, Unified
 from openpilot.starpilot.ui.onroad_cem_gauge import AetherGauge
 from openpilot.starpilot.ui.live_developer_sidebar import render_sidebar as render_live_sidebar
 from openpilot.starpilot.ui.layout_preview_sidebar import SIDEBAR_WIDTH
-from openpilot.starpilot.ui.onroad_state import AlertSize, OnroadState, slc_controls
+from openpilot.starpilot.ui.onroad_state import AlertSize, OnroadState, manual_slc_confirmation, slc_action_occludes, slc_controls
 from openpilot.starpilot.ui.onroad_stopped_timer import duration_color, duration_text, timer_size
 from openpilot.starpilot.ui.onroad_torque import TorqueBarWidget
 from openpilot.starpilot.ui.onroad_navigation import NavigationCard
 from openpilot.starpilot.ui.onroad_navigation_favorites import NavigationFavorites
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
-from openpilot.starpilot.ui.large_speed_geometry import ACTION_TEXT
-from openpilot.starpilot.ui.speed_limit_widget import MUTED, draw_ink, draw_line, draw_text
+from openpilot.starpilot.ui.large_speed_geometry import ACTION_TEXT_SIZE
+from openpilot.starpilot.ui.speed_limit_widget import INK, MUTED, draw_ink, draw_line, draw_text
 from openpilot.starpilot.conditional_mode.policy import ModeChoice
 
 
@@ -143,6 +143,7 @@ class OnroadView:
       from openpilot.starpilot.ui.onroad_now_playing import NowPlayingWidget
       self.now_playing = NowPlayingWidget(fonts)
     self.torque_bar = TorqueBarWidget()
+    gui_app.add_render_prepare(self.torque_bar.prepare, self.torque_bar.close)
     if fonts.profile == Profile.LARGE:
       self.unified_speed = UnifiedSpeedWidget(fonts)
       self.current_speed = CurrentSpeedHud(fonts)
@@ -169,28 +170,49 @@ class OnroadView:
       self._compact(state)
 
   def _slc_actions(self, state: OnroadState) -> None:
+    from openpilot.starpilot.ui.onroad_state import slc_action_bounds
+    from openpilot.starpilot.ui.unified_speed_presentation import toyota_cruise_notice
+    if manual_slc_confirmation(self.fonts.profile, state):
+      sign = self.unified_speed.sign if self.fonts.profile == Profile.LARGE else self.compact_hud._speed_limit_widget
+      sign.render_confirmation(state, getattr(self, 'pressed_action', lambda: None)())
+      return
+    notice = toyota_cruise_notice(state)
+    bounds = slc_action_bounds(self.fonts.profile, state)
+    if notice is not None and state.alert.size == AlertSize.NONE:
+      large = self.fonts.profile == Profile.LARGE
+      left, top, right = bounds[0][0], bounds[0][1], bounds[-1][2]
+      center = (left + right) / 2
+      primary = ACTION_TEXT_SIZE[self.fonts.profile]
+      secondary = 32 if large else 20
+      for text, size, y in ((notice[0], primary, top + (8 if large else 4)),
+                            (notice[1], secondary, top + (64 if large else 43))):
+        a, b = self.fonts.horizontal_ink(text, FontRole.MEDIUM, size)
+        draw_ink(self.fonts, text, FontRole.MEDIUM, size, center - (a + b) / 2, y, INK)
+      value, unit = notice[2:]
+      value_left, value_right = self.fonts.horizontal_ink(value, FontRole.MEDIUM, primary)
+      unit_left, unit_right = self.fonts.horizontal_ink(unit, FontRole.MEDIUM, secondary)
+      value_width, unit_width = value_right - value_left, unit_right - unit_left
+      x = center - (value_width + 8 + unit_width) / 2
+      y = top + (100 if large else 64)
+      _, value_height = draw_ink(self.fonts, value, FontRole.MEDIUM, primary, x - value_left, y, INK)
+      a, b = self.fonts.vertical_ink(unit, FontRole.MEDIUM, secondary)
+      draw_ink(self.fonts, unit, FontRole.MEDIUM, secondary, x + value_width + 8 - unit_left, y + value_height - (b - a), INK)
+      return
     controls = slc_controls(self.fonts.profile, state)
     feedback = state.speed_limit.action_feedback
     if (self.fonts.profile == Profile.LARGE and feedback and state.alert.size == AlertSize.NONE and
         placement(state.customization, self.fonts.profile, 'speed_limit_actions')['enabled']):
-      saved = placement(state.customization, self.fonts.profile, 'speed_limit_actions')
-      draw_ink(self.fonts, feedback, FontRole.MEDIUM, 30, saved['x'], saved['y'] + (122 if controls else 48), MUTED)
+      draw_ink(self.fonts, feedback, FontRole.MEDIUM, 30, bounds[0][0], bounds[-1][3] + 8 if controls else bounds[0][1] + 24, MUTED)
     if not controls:
       return
     large = self.fonts.profile == Profile.LARGE
-    size, cy = ACTION_TEXT[self.fonts.profile]
-    _, dy = offset(state.customization, self.fonts.profile, 'speed_limit_actions')
-    cy += dy
+    size = ACTION_TEXT_SIZE[self.fonts.profile]
     role = FontRole.MEDIUM
-    a, b = self.fonts.vertical_ink('Accept Decline', role, size)
+    a, b = self.fonts.vertical_ink('Use', role, size)
     color = rl.Color(*rgba(state.customization, 'text', self.fonts.profile, 'speed_limit_actions'))
-    if len(controls) == 2:
-      center_x = (controls[0].bounds[2] + controls[1].bounds[0]) / 2
-      extent = 26 if large else 18
-      draw_line(self.fonts.profile, rl.Vector2(center_x, cy - extent), rl.Vector2(center_x, cy + extent),
-                2 if large else 1, rl.Color(155, 178, 173, 170))
     for control in controls:
-      left, _, right, _ = control.bounds
+      left, top, right, bottom = control.bounds
+      cy = (top + bottom) / 2
       measured = self.fonts.measure(control.label, role, size)
       x = (left + right - measured.width) / 2
       draw_text(self.fonts, control.label, role, size, x, cy - (b - a) / 2 - a, color)
@@ -342,11 +364,16 @@ class OnroadView:
       submit("driver_monitor", lambda: monitor(content, state))
     submit(MODE_WIDGET, lambda: self._driving_mode(state, (width - 1860) / 2 if large else 0))
     submit(CLOCK_WIDGET, lambda: self._clock(state, (width - 1860) / 2 if large else 0))
+    pending = manual_slc_confirmation(self.fonts.profile, state)
     for key in widget_order(state.customization, profile):
       if only_widget is not None and key != only_widget:
         continue
+      if pending and key == 'speed_limit_actions':
+        continue
       if draw := callbacks.get(key):
         draw()
+    if pending and (only_widget is None or only_widget == ('cruise_limits' if large else 'speed_limit')) and not driver_camera:
+      self._slc_actions(state)
 
   def _large(self, state: OnroadState) -> None:
     width, height = self.projection_viewport or (state.viewport_width, 1080)
@@ -380,7 +407,8 @@ class OnroadView:
         if state.alert.size != AlertSize.FULL:
           if placement(state.customization, "large", "cruise_limits")["enabled"]:
             self.unified_speed.render(content, state)
-          self._slc_actions(state)
+          if not manual_slc_confirmation(self.fonts.profile, state):
+            self._slc_actions(state)
           if gauge := getattr(self, "cem_gauge", None):
             gauge.render(state)
         if placement(state.customization, "large", "current_speed")["enabled"]:
@@ -417,6 +445,8 @@ class OnroadView:
         self._clock(state, right_shift / 2)
         if exit_layer := getattr(self, "projection_exit_layer", None):
           exit_layer(state)
+      if not ordered and manual_slc_confirmation(self.fonts.profile, state):
+        self._slc_actions(state)
       self.alert.render(content, state.alert)
     finally:
       clip.end_scissor_mode()
@@ -493,7 +523,8 @@ class OnroadView:
           self.compact_hud.render(state)
           if placement(state.customization, "compact", "torque_bar")["enabled"]:
             self.torque_bar.render(frame, state, 536)
-          self._slc_actions(state)
+          if not manual_slc_confirmation(self.fonts.profile, state):
+            self._slc_actions(state)
           if state.stopped_duration_s is not None:
             self._stopped_timer(state, state.stopped_duration_s)
         if self.extra_overlays is not None:
@@ -504,6 +535,8 @@ class OnroadView:
       if not ordered:
         self._driving_mode(state)
         self._clock(state)
+      if not ordered and not driver_camera and manual_slc_confirmation(self.fonts.profile, state):
+        self._slc_actions(state)
       signals = state.border_signals
       direction = (-1 if signals.left_blinker else 1 if signals.right_blinker else 0) if signals else 0
       self.alert.render(frame, state.alert, signal_direction=direction)
@@ -530,6 +563,8 @@ class OnroadView:
     if position is None or not position["enabled"]:
       return
     width, height = timer_size(profile)
+    if slc_action_occludes(self.fonts.profile, state, (position['x'], position['y'], position['x'] + width, position['y'] + height)):
+      return
     scale = height / 112
     minutes, remainder = duration_text(seconds)
     color = rl.Color(*duration_color(seconds), 255)
@@ -550,6 +585,8 @@ class OnroadView:
   def close(self) -> None:
     gui_app.remove_render_prepare(self._corner_cache.prepare)
     self._corner_cache.close()
+    gui_app.remove_render_prepare(self.torque_bar.prepare)
+    self.torque_bar.close()
     self.navigation.close()
     if self.fonts.profile == Profile.LARGE:
       self.unified_speed.close()

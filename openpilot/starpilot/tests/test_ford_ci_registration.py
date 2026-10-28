@@ -10,6 +10,7 @@ FAMILY_TARGETS = (
   'openpilot/starpilot/tests/test_ford_configuration_admission.py',
   'openpilot/starpilot/tests/test_ford_release_long_preferences.py',
   'openpilot/selfdrive/car/tests/test_registered_ford_discovery.py',
+  'openpilot/selfdrive/car/tests/test_automatic_ford_discovery.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_configuration_parity.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_alpha_aol.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_full_engagement.py',

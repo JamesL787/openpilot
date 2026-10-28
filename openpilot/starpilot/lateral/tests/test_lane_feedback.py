@@ -23,6 +23,20 @@ class TestLaneFeedback(unittest.TestCase):
     sm.update_msgs(now / 1e9, [event.as_reader(), control.as_reader(), model.as_reader()])
     return sm, now
 
+  def test_inactive_reason_is_diagnostic_only_and_result_takes_precedence(self):
+    for result, reason in ((None, 'host_selfdriveState_frequency'),
+                           (LaneCenteringResult(0.001, 0.0003, 1, 'qualified'), 'qualified')):
+      event = feedback_message(result, 0., True, model_mono_time=1_000_000_000,
+                               car_control_mono_time=1_000_000_000, valid=True,
+                               inactive_reason='host_selfdriveState_frequency')
+      state = event.starpilotLateralState.laneCentering
+      self.assertEqual(state.reason, reason)
+      self.assertAlmostEqual(state.requestedCorrection, result.correction if result is not None else 0., places=9)
+      self.assertEqual(state.appliedCorrection, 0.)
+      self.assertFalse(event.starpilotLateralState.active)
+    event = feedback_message(None, 0., False, model_mono_time=0, car_control_mono_time=0, valid=False)
+    self.assertEqual(event.starpilotLateralState.laneCentering.reason, 'inactive')
+
   def test_real_messages_show_applied_sign_and_keep_legacy_fields_inactive(self):
     for correction, expected in ((0.0003, 1), (-0.0003, -1), (0.0, 0), (0.0000005, 0)):
       sm, now = self.reader(applied=correction, requested=0.0005 if correction >= 0 else -0.0005)

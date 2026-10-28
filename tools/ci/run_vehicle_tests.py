@@ -26,6 +26,7 @@ from tools.ci import lifecycle_shards, vehicle_pytest
 AOL_LIFECYCLE_TARGETS = (
   "opendbc_repo/opendbc/car/hyundai/tests/test_torque_ev_deferred_takeover.py",
   'openpilot/starpilot/tests/test_ford_bluepilot_aol.py',
+  'opendbc_repo/opendbc/bluepilot_lateral/tests/test_angle_core.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_bluepilot_aol.py',
   'openpilot/starpilot/aol/tests/test_hkg_early_long_withdrawal.py',
   'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_stock.py',
@@ -70,6 +71,7 @@ AOL_LIFECYCLE_TARGETS = (
   'openpilot/starpilot/tests/test_ford_configuration_admission.py',
   'openpilot/starpilot/tests/test_ford_release_long_preferences.py',
   'openpilot/selfdrive/car/tests/test_registered_ford_discovery.py',
+  'openpilot/selfdrive/car/tests/test_automatic_ford_discovery.py',
   'openpilot/starpilot/tests/test_ford_ci_registration.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_configuration_parity.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_alpha_aol.py',
@@ -94,6 +96,8 @@ AOL_LIFECYCLE_TARGETS = (
   "openpilot/starpilot/aol/tests/test_gm_sdgm_cold_main.py",
   "openpilot/starpilot/aol/tests/test_gm_main_level_contract.py",
   "openpilot/starpilot/aol/tests/test_gm_sdgm_source_wait.py",
+  "openpilot/starpilot/aol/tests/test_gm_stock_ascm_refusal.py",
+  "openpilot/starpilot/aol/tests/test_transition_diagnostic.py",
   "openpilot/starpilot/aol/tests/test_gm_ascm_receive_order.py",
   "openpilot/starpilot/aol/tests/test_gm_main_response.py",
   "openpilot/starpilot/aol/tests/test_gm_held_native.py",
@@ -237,6 +241,7 @@ DEBUG_SAFETY_CLASS_TARGETS = {
 
 RELEASE_TARGETS = (
   'openpilot/starpilot/tests/test_ford_bluepilot_aol.py',
+  'opendbc_repo/opendbc/bluepilot_lateral/tests/test_angle_core.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_bluepilot_aol.py',
   'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_stock.py',
   'openpilot/starpilot/car/toyota/tests/test_prius_retrofit_stock_callers.py',
@@ -270,6 +275,7 @@ RELEASE_TARGETS = (
   'openpilot/starpilot/tests/test_ford_configuration_admission.py',
   'openpilot/starpilot/tests/test_ford_release_long_preferences.py',
   'openpilot/selfdrive/car/tests/test_registered_ford_discovery.py',
+  'openpilot/selfdrive/car/tests/test_automatic_ford_discovery.py',
   'openpilot/starpilot/tests/test_ford_ci_registration.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_configuration_parity.py',
   'opendbc_repo/opendbc/safety/tests/test_ford_alpha_aol.py',
@@ -488,6 +494,7 @@ RELEASE_TARGETS = (
   "opendbc_repo/opendbc/car/gm/tests/test_volt_camera_removed.py",
   "opendbc_repo/opendbc/safety/tests/test_gm_volt_sdgm.py",
   "opendbc_repo/opendbc/car/gm/tests/test_volt_sdgm_control.py",
+  "opendbc_repo/opendbc/car/gm/tests/test_stock_ascm_steering_authority.py",
   "opendbc_repo/opendbc/car/gm/tests/test_sdgm_brake_reacquire.py",
   "opendbc_repo/opendbc/car/gm/tests/test_volt_camera_control.py",
   "opendbc_repo/opendbc/safety/tests/test_hyundai_mrr35_angle_four.py",

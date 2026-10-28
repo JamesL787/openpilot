@@ -1,4 +1,4 @@
-"""Resolve one legacy Volt CAN alias using its observed PT-only source graph."""
+"""Conservative GM query-family and legacy CAN alias discovery."""
 from opendbc.car.gm.values import CAR, CanBus
 
 
@@ -24,3 +24,16 @@ def automatic_volt_candidate(candidate, fingerprint, candidates):
   # camera is not evidence of an ACC actuator owner. Read actual ECM cruise
   # activity and retain button-only control; explicit ACC selections are above.
   return CAR.CHEVROLET_VOLT_CC
+
+
+# Frequent normal-bus frames observed on mirrored pedal installations. This is
+# only diagnostic query-family evidence, never a vehicle/control fingerprint.
+PEDAL_NORMAL_BUS_LAYOUT = {0xD3: 2, 0xBE: 6, 0xC9: 8, 0x1C4: 8,
+                           0xF1: 6, 0x1E1: 7, 0x201: 6}
+
+
+def pedal_normal_bus0_topology(fingerprint):
+  if any(messages for bus, messages in fingerprint.items() if bus not in (0, 2)):
+    return False
+  return all(fingerprint.get(bus, {}).get(address) == size
+             for bus in (0, 2) for address, size in PEDAL_NORMAL_BUS_LAYOUT.items())

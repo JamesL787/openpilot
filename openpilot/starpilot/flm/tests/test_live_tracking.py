@@ -11,7 +11,7 @@ import hashlib
 import pytest
 
 from openpilot.starpilot.flm.canonical_surface_adapter import NAMES
-from openpilot.starpilot.flm.live_trial_contract import LiveTrialBinding
+from openpilot.starpilot.flm.live_trial_contract import LiveTrialBinding, MAX_STEP
 from openpilot.starpilot.flm.live_tracking import LiveTrackingOptimizer, TrackingEpisode, HookSensitivity
 from openpilot.starpilot.flm.live_tracking_response import ResponseCertificate, ResponseWitness, VERSION, _revision, validate_certificate
 
@@ -50,7 +50,11 @@ def refresh(owner, now):
   assert owner.response_current(raw, now_ns=now)
 
 
-def episode(owner, index, name, *, kind='large', profile=None, error=0.2, reversal=0.1, native=4, effect=0.01, start=None):
+# Preserve the fixture derivative (0.01 physical delta per 0.005 coordinate).
+FIXTURE_PHYSICAL_DERIVATIVE = 2.0
+
+
+def episode(owner, index, name, *, kind='large', profile=None, error=0.2, reversal=0.1, native=4, effect=FIXTURE_PHYSICAL_DERIVATIVE * MAX_STEP, start=None):
   end = (index + 1) * 1_000_000_000 if start is None else start + 500_000_000
   begin = end - 500_000_000
   direction = -1 if kind == 'large' and name.endswith('_right') else 1
@@ -75,7 +79,7 @@ def episode(owner, index, name, *, kind='large', profile=None, error=0.2, revers
   )
 
 
-def ready(owner, name='ff_gain_left', *, native=4, effect=0.01):
+def ready(owner, name='ff_gain_left', *, native=4, effect=FIXTURE_PHYSICAL_DERIVATIVE * MAX_STEP):
   kind = 'subtle' if name.startswith('center_') or name == 'highway_center_taper_max' else 'large'
   count = 9 if kind == 'subtle' else 3
   discovery_ids = set()
@@ -120,7 +124,8 @@ def test_all_thirty_torque_hooks_are_available_without_model_specific_tune(name)
   assert offer is not None and offer.phase == 'trial'
   assert len(offer.baseline) == len(offer.target) == 30
   changes = [(key, value - dict(offer.baseline)[key]) for key, value in offer.target if value != dict(offer.baseline)[key]]
-  assert len(changes) == 1 and changes[0][0] == name and 0 < changes[0][1] <= 0.005
+  assert len(changes) == 1 and changes[0][0] == name and 0 < changes[0][1] <= MAX_STEP
+  assert changes[0][1] == pytest.approx(0.005, rel=0, abs=1e-18)
 
 
 @pytest.mark.parametrize(
@@ -241,7 +246,8 @@ def test_independent_closed_loop_loss_changes_next_direction_without_reusing_sco
   next_offer = owner.offer(row.end_ns)
   assert next_offer is not None and next_offer.phase == 'trial'
   delta = dict(next_offer.target)['ff_gain_left']
-  assert (-0.005 <= delta < 0) if expected_worse else (0 < delta <= 0.005)
+  assert (-MAX_STEP <= delta < 0) if expected_worse else (0 < delta <= MAX_STEP)
+  assert abs(delta) == pytest.approx(0.005, rel=0, abs=1e-18)
   assert next_offer.target_sequence == offer.target_sequence + 1
   assert owner.offer_state['alpha'] == 0.05 / (2 * 3)
   assert {row.episode_id for row in owner.before}.isdisjoint(original_before | future_ids)

@@ -12,7 +12,7 @@ from openpilot.starpilot.models.jetlink_status import JetlinkStatus, JetlinkStat
 
 
 def status(**kw):
-  base = {'enabled': True, 'mode': 'usb', 'present': True, 'port_state': 'connected', 'active': False, 'reason': None, 'running': None}
+  base = {'enabled': True, 'mode': 'usb', 'present': True, 'port_state': 'connected', 'active': False, 'reason': None, 'running': None, 'ready': False}
   return NS(**{**base, **kw})
 
 
@@ -34,7 +34,7 @@ def test_off_reads_nothing_of_jetlink():
   ({'running': 'ready'}, JetlinkStatus('Computer', 'ready', port='connected')),
   ({'running': 'joining'}, JetlinkStatus('Computer', 'connecting', port='connected')),
   ({'running': 'retrying'}, JetlinkStatus('Computer', 'connecting', port='connected')),
-  ({'running': None}, JetlinkStatus('Computer', 'connected', port='connected')),
+  ({'running': None, 'ready': False}, JetlinkStatus('Computer', 'connected', port='connected')),
   ({'reason': 'service stopped'}, JetlinkStatus('Computer', 'unavailable', port='connected')),
   ({'present': False, 'port_state': 'device'}, JetlinkStatus('Computer', 'disconnected', port='device')),
   ({'present': False, 'port_state': 'empty'}, JetlinkStatus('Computer', 'disconnected')),

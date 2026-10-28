@@ -415,3 +415,54 @@ def test_consumed_live_map_without_current_publication_proof_is_absent_not_neutr
       state_ns=int(fixture.controls.sm.logMonoTime['carState']), active=bool(command.latActive), limited=False)
     assert evidence is None
     assert fixture.runtime.outcome.applied == actual  # Historical consumption is not relabelled as neutral.
+
+
+def test_interrupted_pending_consumer_reports_rejection_after_actual_current_frame():
+  from openpilot.starpilot.flm.application_wire import write_application
+  from openpilot.starpilot.flm.live_trial_wire import read_application
+
+  with live_controls() as fixture:
+    proposal = fixture.initial_offer()
+    for _ in range(21):
+      fixture.frame(proposal)
+    for _ in range(11):
+      fixture.frame(proposal, publish=False)
+    for _ in range(9):
+      now, _ = fixture.frame(proposal)
+    fixture.assert_neutral()
+    owner = fixture.runtime.live_trial_owner
+    assert owner.interrupted and owner.offer.phase == 'trial'
+    evidence = fixture.runtime.capture_evidence(control_ns=now,
+      state_ns=int(fixture.controls.sm.logMonoTime['carState']), active=bool(fixture.last_command.latActive), limited=False)
+    assert evidence is not None and evidence.valid and evidence.native_allowed
+    refusal = fixture.runtime.outcome
+    assert type(refusal) is LiveTrialApplication and refusal.status == 'rejected'
+    assert refusal.reason == 'pending_trial_interrupted' and refusal.confirmed_target_sha256 == ''
+    assert refusal.trial_id == fixture.latest.trial_id and refusal.target_sequence == fixture.latest.target_sequence
+    assert not any(value for _, value in refusal.applied) and owner.confirmed_full == proposal.baseline
+    message = messaging.new_message('starpilotLateralState', valid=True, logMonoTime=now)
+    write_application(message.starpilotLateralState, refusal)
+    decoded = read_application(messaging.log_from_bytes(message.to_bytes()).starpilotLateralState,
+      now_ns=now, offer=fixture.latest)
+    assert decoded == refusal
+    assert fixture.controls.params.get('AutomaticSteeringLiveTrials') is None
+
+
+@pytest.mark.parametrize('fault', ['driver', 'native', 'source', 'model', 'inactive'])
+def test_pending_rejection_never_bypasses_current_consumer_faults(fault):
+  with live_controls() as fixture:
+    proposal = fixture.initial_offer()
+    for _ in range(20):
+      fixture.frame(proposal)
+    for _ in range(11):
+      fixture.frame(proposal, publish=False)
+    for _ in range(9):
+      fixture.frame(proposal)
+    assert fixture.tick == 99  # Next frame delivers real10Hz Panda and20Hz model/source denials.
+    now, _ = fixture.frame(proposal, driver=fault == 'driver', native_allowed=fault != 'native',
+      source_valid=fault != 'source', model_age=1_000_000_000 if fault == 'model' else 0, active=fault != 'inactive')
+    fixture.runtime.capture_evidence(control_ns=now, state_ns=int(fixture.controls.sm.logMonoTime['carState']),
+      active=bool(fixture.last_command.latActive), limited=False)
+    outcome = fixture.runtime.outcome
+    assert type(outcome) is not LiveTrialApplication
+    assert fixture.controls.params.get('AutomaticSteeringLiveTrials') is None

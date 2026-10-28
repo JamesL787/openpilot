@@ -6,8 +6,14 @@ const document = { version: 1, palette: { text: "#FFFFFFFF" }, layouts: { large:
 
 const signLayout = { speed_limit: { x: 160, y: 80, enabled: true }, speed_limit_actions: { x: 16, y: 20, enabled: true } }
 const signWidgets = { speed_limit: { width: 264, height: 82, visualInsetTop: 12 }, speed_limit_actions: { width: 440, height: 52 } }
-assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', signLayout, signWidgets), true, 'The caption overlaps even when the original rectangle does not')
+assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', signLayout, signWidgets), false, 'The chooser belongs to the sign and must not hide it')
 assert.equal(sceneHidesWidget('engaged', 'compact', 'speed_limit', signLayout, signWidgets), false)
+for (const scene of ['slc_pending', 'slc_max', 'slc_retained']) {
+  for (const profile of ['large', 'compact'])
+    assert.equal(sceneHidesWidget(scene, profile, 'speed_limit_actions'), scene === 'slc_pending')
+  assert.equal(sceneHidesWidget(scene, 'compact', 'speed_limit', signLayout, signWidgets), scene !== 'slc_pending')
+}
+assert.equal(sceneHidesWidget('slc_equal', 'compact', 'speed_limit_actions'), true)
 assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', signLayout,
   { ...signWidgets, speed_limit: { ...signWidgets.speed_limit, visualInsetTop: 0 } }), false)
 const restoredLayout = { speed_limit: {x:330, y:20, enabled:true}, speed_limit_actions: {x:128, y:186, enabled:true} }
@@ -15,7 +21,7 @@ const restoredWidgets = { speed_limit: {width:118, height:132}, speed_limit_acti
 assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', restoredLayout, restoredWidgets), false)
 assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', {
   ...restoredLayout, speed_limit: {...restoredLayout.speed_limit, y:60}
-}, restoredWidgets), true)
+}, restoredWidgets), false)
 
 function fixture() {
   const requests = [], updates = [], timers = new Map(), revoked = []
@@ -33,10 +39,10 @@ function fixture() {
 }
 
 assert.deepEqual(PREVIEW_SCENES.map(({ id }) => id), ["general", "engaged", "aol", "long_only", "experimental", "braking", "stopped",
-  "cem_stop_light", "cem_lead", "cem_curve", "slc_pending", "slc_max", "slc_equal",
+  "cem_stop_light", "cem_lead", "cem_curve", "slc_notice", "slc_pending", "slc_max", "slc_equal",
   "slc_pedal", "slc_retained", "slc_disengaged", "slc_unavailable", "slc_display"])
 assert.equal(PREVIEW_SCENES.find(({ id }) => id === "experimental").label, "Manual experimental")
-for (const scene of ["general", "cem_stop_light", "cem_lead", "cem_curve", "slc_pending", "slc_max", "slc_equal",
+for (const scene of ["general", "cem_stop_light", "cem_lead", "cem_curve", "slc_notice", "slc_pending", "slc_max", "slc_equal",
   "slc_pedal", "slc_retained", "slc_disengaged", "slc_unavailable", "slc_display"]) {
   const cem = fixture()
   cem.feed.start(); cem.feed.update(document, "compact", scene); cem.tick()

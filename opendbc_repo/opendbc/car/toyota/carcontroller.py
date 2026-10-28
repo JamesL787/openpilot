@@ -8,7 +8,8 @@ from opendbc.car.common.pid import PIDController
 from opendbc.car.secoc import add_mac, build_sync_mac
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota import prius_longitudinal, rav4h_filter, pedal, eps8_sdsu, legacy_sdsu, advert_filter, legacy_stop_timer, legacy_advert_filter
+from opendbc.car.toyota import (dom_defaults, prius_longitudinal, rav4h_filter, pedal, eps8_sdsu, legacy_sdsu,
+                                advert_filter, legacy_stop_timer, legacy_advert_filter)
 from opendbc.car.toyota import pedal_composite, camera_2aa_filter, prius_sdsu, prius_advert_filter
 from opendbc.car.toyota.door_locks import DoorLocks
 from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, uses_toyota_auto_hold_aeb
@@ -56,7 +57,7 @@ def supports_toyota_auto_hold(CP):
 
 def get_long_tune(CP, params):
   prius = prius_longitudinal.enabled(CP)
-  if prius or CP.flags & ToyotaFlags.TSS2:
+  if prius or CP.flags & ToyotaFlags.TSS2 or dom_defaults.camry_hybrid(CP) or dom_defaults.rav4h_sdsu(CP):
     kiBP = [2., 5.]
     kiV = [0.5, 0.25]
   else:
@@ -402,43 +403,46 @@ class CarController(CarControllerBase):
         a_ego_future = a_ego_blended + j_ego * future_t
 
         if long_active:
-          # constantly slowly unwind integral to recover from large temporary errors
-          unwind = ACCEL_PID_UNWIND * (8. if self.prius_longitudinal and pcm_accel_cmd * self.long_pid.i < 0. else 1.)
-          self.long_pid.i -= unwind * float(np.sign(self.long_pid.i))
+          if dom_defaults.bypass_pid(self.CP):
+            self.long_pid.reset()
+          else:
+            # constantly slowly unwind integral to recover from large temporary errors
+            unwind = ACCEL_PID_UNWIND * (8. if (self.prius_longitudinal or dom_defaults.camry_hybrid(self.CP)) and pcm_accel_cmd * self.long_pid.i < 0. else 1.)
+            self.long_pid.i -= unwind * float(np.sign(self.long_pid.i))
 
-          error_future = pcm_accel_cmd - a_ego_future
+            error_future = pcm_accel_cmd - a_ego_future
 
-          if not stopping:
-            # Toyota's PCM slowly responds to changes in pitch. On change, we amplify our
-            # acceleration request to compensate for the undershoot and following overshoot
-            pitch_compensation = float(np.clip(math.sin(self.pitch_hp.x) * ACCELERATION_DUE_TO_GRAVITY,
-                                               -MAX_PITCH_COMPENSATION, MAX_PITCH_COMPENSATION))
-            pcm_accel_cmd += pitch_compensation
+            if not stopping:
+              # Toyota's PCM slowly responds to changes in pitch. On change, we amplify our
+              # acceleration request to compensate for the undershoot and following overshoot
+              pitch_compensation = float(np.clip(math.sin(self.pitch_hp.x) * ACCELERATION_DUE_TO_GRAVITY,
+                                                 -MAX_PITCH_COMPENSATION, MAX_PITCH_COMPENSATION))
+              pcm_accel_cmd += pitch_compensation
 
-          pcm_accel_cmd = self.long_pid.update(error_future,
-                                               speed=CS.out.vEgo,
-                                               feedforward=(prius_longitudinal.get_prius_feedforward(pcm_accel_cmd, CS.out.vEgo)
-                                                            if self.prius_longitudinal else pcm_accel_cmd),
-                                               freeze_integrator=actuators.longControlState != LongCtrlState.pid)
+            pcm_accel_cmd = self.long_pid.update(error_future,
+                                                 speed=CS.out.vEgo,
+                                                 feedforward=(prius_longitudinal.get_prius_feedforward(pcm_accel_cmd, CS.out.vEgo)
+                                                              if self.prius_longitudinal else pcm_accel_cmd * .8
+                                                              if dom_defaults.camry_hybrid(self.CP) and pcm_accel_cmd > 0 else pcm_accel_cmd),
+                                                 freeze_integrator=actuators.longControlState != LongCtrlState.pid)
         else:
           self.long_pid.reset()
 
         # Along with rate limiting positive jerk above, this greatly improves gas response time
         # Consider the net acceleration request that the PCM should be applying (pitch included)
         net_acceleration_request_min = min(actuators.accel + accel_due_to_pitch, net_acceleration_request)
-        if self.prius_longitudinal:
-          self.permit_braking = prius_longitudinal.update_permit_braking(
-            self.permit_braking, net_acceleration_request_min, stopping, long_active, CS.out.vEgo, lead)
-        elif net_acceleration_request_min < 0.2 or stopping or not long_active:
-          self.permit_braking = True
-        elif net_acceleration_request_min > 0.3:
-          self.permit_braking = False
-
-        if self.prius_longitudinal:
+        self.permit_braking = prius_longitudinal.update_permit_braking(
+          self.permit_braking, net_acceleration_request_min, stopping, long_active, CS.out.vEgo, lead)
+        if pedal_owner:
+          pcm_accel_cmd = dom_defaults.limit_interceptor_pcm_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo)
+          pcm_accel_cmd = dom_defaults.limit_interceptor_stopping_accel(
+            pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, hud_control.leadVisible)
+        else:
           pcm_accel_cmd = prius_longitudinal.limit_no_lead_cruise_sign_flip(
-            pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, CS.out.cruiseState.speed, lead)
-          pcm_accel_cmd = prius_longitudinal.limit_prius_stopping_accel(
-            pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, lead)
+            pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, CS.out.cruiseState.speed, hud_control.leadVisible)
+          if self.prius_longitudinal:
+            pcm_accel_cmd = prius_longitudinal.limit_prius_stopping_accel(
+              pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, lead)
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
 
         if self.brake_hold_active and not uses_toyota_auto_hold_aeb(self.CP):

@@ -8,7 +8,7 @@ from opendbc.safety.tests.libsafety import libsafety_py
 from opendbc.safety.tests import test_ford_aol
 
 
-@pytest.fixture(params=(18, 19, 274, 275))
+@pytest.fixture(params=(18, 19, 274, 275, 66, 67, 322, 323))
 def owner(request):
   native = test_ford_aol.TestFordAolDriverIntent()
   native.setUp()
@@ -113,7 +113,7 @@ def test_display_drops_on_actual_authority_loss_and_does_not_reacquire_inactive(
   stock_display(owner, relay=loss == 'relay')
 
 
-@pytest.mark.parametrize('word', (8, 66))
+@pytest.mark.parametrize('word', (8,))
 def test_other_ford_owners_keep_original_inactive_forwarding(word):
   native = test_ford_aol.TestFordAolDriverIntent()
   native.setUp()

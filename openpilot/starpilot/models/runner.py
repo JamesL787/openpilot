@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import Any
 import weakref
 
 import numpy as np
@@ -45,7 +46,8 @@ class SharedCameraWarp:
 
 
 def load_verified_model(cam_w: int, cam_h: int, artifact_path: Path, behavior_version: str, chestnut: bool,
-                        model_id: str, expected_sha256: str | None, *, root: Path | None = None) -> tuple["CatalogModelState", PreparedArtifact]:
+                        model_id: str, expected_sha256: str | None, *, root: Path | None = None,
+                        coherent_warp: Callable[[Any], None] | None = None) -> tuple["CatalogModelState", PreparedArtifact]:
   from openpilot.starpilot.models.manager import ROOT, state_lock
 
   if expected_sha256 is None:
@@ -56,6 +58,8 @@ def load_verified_model(cam_w: int, cam_h: int, artifact_path: Path, behavior_ve
     if prepared.sha256 != expected_sha256:
       raise ValueError("selected catalog model changed before loading")
     model = CatalogModelState(cam_w, cam_h, artifact_path, behavior_version, chestnut)
+    if coherent_warp is not None:
+      model.move_warp_output(coherent_warp)
     model.warmup()
     if artifact_identity(artifact_path) != identity:
       raise ValueError("selected catalog model changed while loading")
@@ -192,7 +196,23 @@ class CatalogModelState:
     self.camera_warp_descriptor = (CameraWarpDescriptor((cam_w, cam_h), get_nv12_info(cam_w, cam_h), image_layouts,
                                                        (2, 6, *image_layouts[0]), dtypes.uint8, self.warp_device)
                                    if self.image_history_pipeline == "policy" else None)
+    # why Jetlink's link copies this warp's output out every frame (jetlink_warp); None once it is moved
+    self.warp_copied: str | None = "Jetlink was off when the model loaded"
     self._reset_state()
+
+  def move_warp_output(self, coherent_warp: Callable[[Any], None]) -> None:
+    """On a comma, move this warp's output to memory the CPU reads cached with `coherent_warp` (Jetlink's
+    make_coherent), for the link to send from. Before warmup(), whose first call links the warp to its address."""
+    buffer = self.warp_enqueue.captured.ret.uop.base.buffer
+    if not buffer.device.startswith("QCOM"):
+      self.warp_copied = f"a {buffer.device} buffer"
+      return
+    try:
+      coherent_warp(buffer)
+    except RuntimeError as e:   # the buffer stays where it was
+      self.warp_copied = str(e)
+      return
+    self.warp_copied = None
 
   def _reset_state(self) -> None:
     from openpilot.starpilot.models.compile import make_stateful_input_queues, make_supercombo_input_queues, make_split_input_queues
@@ -260,6 +280,20 @@ class CatalogModelState:
     self.run(frames, dict.fromkeys(self.vision_input_names, np.eye(3, dtype=np.float32)), inputs)
     self._reset_state()
 
+  def warp_frames(self, pointers: tuple[int, int], tfm: np.ndarray, big_tfm: np.ndarray) -> Tensor:
+    """Enqueue the camera warp of the frames at these addresses, on the inputs its JIT was captured with.
+    run() calls it, and so does Jetlink's link (jetlink_warp) on the frames the large model drives."""
+    self.npy["tfm"][:] = tfm
+    self.npy["big_tfm"][:] = big_tfm
+    frames = {}
+    for name, pointer in zip(self.vision_input_names, pointers, strict=True):
+      key = (name, pointer)
+      if key not in self._blob_cache:
+        self._blob_cache[key] = Tensor.from_blob(pointer, (self.frame_buf_size,), dtype="uint8", device=self.warp_device)
+      frames[name] = self._blob_cache[key]
+    return self.warp_enqueue(**{key: self.input_queues[key] for key in self.warp_input_keys},
+                             frame=frames["img"], big_frame=frames["big_img"])
+
   def run(self, bufs: dict, transforms: dict[str, np.ndarray], inputs: dict[str, np.ndarray],
           after_enqueue: Callable[[], None] | None = None, *, shared_warp: SharedCameraWarp | None = None) -> dict[str, np.ndarray]:
     self.last_warp = None
@@ -277,17 +311,8 @@ class CatalogModelState:
     for name, value in self.npy.items():
       if name not in ("desire", "tfm", "big_tfm", "prev_feat") and name in inputs:
         value[:] = inputs[name]
-    self.npy["tfm"][:] = transforms["img"]
-    self.npy["big_tfm"][:] = transforms["big_img"]
     if shared_warp is None:
-      frames = {}
-      for name, pointer in zip(self.vision_input_names, pointers, strict=True):
-        key = (name, pointer)
-        if key not in self._blob_cache:
-          self._blob_cache[key] = Tensor.from_blob(pointer, (self.frame_buf_size,), dtype="uint8", device=self.warp_device)
-        frames[name] = self._blob_cache[key]
-      warped = self.warp_enqueue(**{key: self.input_queues[key] for key in self.warp_input_keys},
-                                 frame=frames["img"], big_frame=frames["big_img"])
+      warped = self.warp_frames(pointers, transforms["img"], transforms["big_img"])
     else:
       warped = shared_warp.tensor
     policy_inputs = {key: self.input_queues[key] for key in self.policy_input_keys}

@@ -228,6 +228,13 @@ class TestRav4CameraPairedPedal(TestPairedPedal):
     paired = self.cp.as_reader().as_builder()
     paired.flags &= ~int(ToyotaFlags.GAS_INTERCEPTOR)
     paired.safetyConfigs[0].safetyParam = ordinary.safetyConfigs[0].safetyParam
+    # Dom pedal defaults are intentional; all other configuration stays identical.
+    self.assertAlmostEqual(paired.longitudinalActuatorDelay, .2)
+    self.assertAlmostEqual(paired.stopAccel, -1.5)
+    self.assertAlmostEqual(ordinary.longitudinalActuatorDelay, .15)
+    self.assertAlmostEqual(ordinary.stopAccel, -2.)
+    paired.longitudinalActuatorDelay = ordinary.longitudinalActuatorDelay
+    paired.stopAccel = ordinary.stopAccel
     self.assertEqual(paired.to_dict(), ordinary.to_dict())
 
   def test_known_firmware_is_candidate_specific(self):

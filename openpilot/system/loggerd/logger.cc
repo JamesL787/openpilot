@@ -1,4 +1,5 @@
 #include "system/loggerd/logger.h"
+#include "system/loggerd/model_metadata.h"
 
 #include <fstream>
 #include <map>
@@ -92,6 +93,32 @@ kj::Array<capnp::word> logger_build_init_data(bool route_log) {
   return capnp::messageToFlatArray(msg);
 }
 
+// Refresh only the descriptive model namespace, preserving route timestamps,
+// all original Params/commands and the upstream InitData schema.
+kj::Array<capnp::word> logger_model_init_data(kj::ArrayPtr<const capnp::word> original,
+                                           const std::map<std::string, std::string> &metadata) {
+  capnp::FlatArrayMessageReader reader(original);
+  MessageBuilder copy;
+  copy.setRoot(reader.getRoot<cereal::Event>());
+  auto init = copy.getRoot<cereal::Event>().getInitData();
+  std::vector<std::pair<std::string, std::string>> commands;
+  for (auto entry : init.getCommands().getEntries()) {
+    const std::string key = entry.getKey().cStr();
+    const auto value = entry.getValue();
+    if (key.rfind(logger_model_metadata::PREFIX, 0) != 0)
+      commands.emplace_back(key, std::string(reinterpret_cast<const char *>(value.begin()), value.size()));
+  }
+  for (const auto &[key, value] : metadata) commands.emplace_back(std::string(logger_model_metadata::PREFIX) + key, value);
+  auto entries = init.initCommands().initEntries(commands.size());
+  size_t index = 0;
+  for (const auto &[key, value] : commands) {
+    auto entry = entries[index++];
+    entry.setKey(key);
+    entry.setValue(capnp::Data::Reader(reinterpret_cast<const kj::byte *>(value.data()), value.size()));
+  }
+  return capnp::messageToFlatArray(copy);
+}
+
 std::string logger_get_identifier(std::string key) {
   // a log identifier is a 32 bit counter, plus a 10 character unique ID.
   // e.g. 000001a3--c20ba54385
@@ -169,6 +196,8 @@ LoggerState::LoggerState(const std::string &log_root) {
 LoggerState::~LoggerState() {
   if (rlog) {
     log_sentinel(this, SentinelType::END_OF_ROUTE, exit_signal);
+    rlog.reset();
+    qlog.reset();
     std::remove(lock_file.c_str());
   }
 }
@@ -176,6 +205,8 @@ LoggerState::~LoggerState() {
 bool LoggerState::next() {
   if (rlog) {
     log_sentinel(this, SentinelType::END_OF_SEGMENT);
+    rlog.reset();
+    qlog.reset();
     std::remove(lock_file.c_str());
   }
 
@@ -196,7 +227,13 @@ bool LoggerState::next() {
   qlog.reset(new ZstdFileWriter(segment_path + "/qlog.zst", LOG_COMPRESSION_LEVEL));
 
   // log init data & sentinel type.
-  write(init_data.asBytes(), true);
+  // time.monotonic_ns() writes the existing load receipt. Its clock is
+  // CLOCK_MONOTONIC, distinct from Event.logMonoTime's Linux CLOCK_BOOTTIME.
+  const auto metadata = logger_model_metadata::collect("../../starpilot/models/catalog-v26.json", "/data/models/v26",
+                                                       Path::shm_path(), util::getenv("OPENPILOT_PREFIX", "d"),
+                                                       "/proc", nanos_monotonic());
+  auto segment_init = logger_model_init_data(init_data.asPtr(), metadata);
+  write(segment_init.asBytes(), true);
   log_sentinel(this, part > 0 ? SentinelType::START_OF_SEGMENT : SentinelType::START_OF_ROUTE);
   return true;
 }

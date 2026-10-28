@@ -64,9 +64,13 @@ std::string Panda::serial_read(int port_number) {
   std::string ret;
   char buffer[USBPACKET_MAX_SIZE] = {};
 
-  while (true) {
-    int bytes_read = handle->control_read(0xe0, port_number, 0, (unsigned char *)buffer, USBPACKET_MAX_SIZE);
-    if (bytes_read <= 0) {
+  // Firmware exposes one debug ring; bound each drain so CAN work keeps its cadence.
+  (void)port_number;
+  constexpr size_t max_debug_bytes = 1024;
+  while (ret.size() < max_debug_bytes) {
+    const uint16_t length = std::min<size_t>(USBPACKET_MAX_SIZE, max_debug_bytes - ret.size());
+    int bytes_read = handle->control_read(0xb6, 0, 0, (unsigned char *)buffer, length);
+    if (bytes_read <= 0 || bytes_read > length) {
       break;
     }
     ret.append(buffer, bytes_read);

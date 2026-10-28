@@ -112,7 +112,9 @@ class LayoutPreviewRendererTests(unittest.TestCase):
   def test_big_preview_fits_widgets_to_the_road_that_is_showing(self):
     from openpilot.starpilot.ui.onroad_customization import widget_size
     document = default_document()
-    card = widget_size(document, 'large', 'cruise_limits')[0]
+    from openpilot.starpilot.ui.large_speed_geometry import confirmation_footprint
+    area = confirmation_footprint('large')
+    card = max(widget_size(document, 'large', 'cruise_limits')[0], area['x'] + area['width'])
     document['layouts']['large']['cruise_limits']['x'] = 2130 - card
     document['layouts']['large']['steering_wheel']['x'] = -270
     with patch('openpilot.starpilot.ui.layout_preview_renderer.rl.is_window_ready', return_value=True), \
@@ -155,7 +157,7 @@ class LayoutPreviewRendererTests(unittest.TestCase):
     pending = sample_state("slc_pending", document)
     for profile in (Profile.LARGE, Profile.COMPACT):
       self.assertEqual([item.label for item in slc_controls(profile, pending)],
-                       ["Accept", "Decline"])
+                       ["Accept", "Reject"])
       # The engaged sample already uses its accepted limit, so there is no redundant adopt action.
       self.assertEqual(slc_controls(profile, sample_state("engaged", document)), ())
     manual = sample_state("experimental", document)

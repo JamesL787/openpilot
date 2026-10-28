@@ -27,9 +27,10 @@ def config_index(cp):
     return owner
   raw = int(cp.safetyConfigs[owner].safetyParam)
   if cp.openpilotLongitudinalControl and not cp.pcmCruise:
-    if raw == 0x15 and cp.alternativeExperience == 0:
+    word = 0x2015 if cp.carFingerprint == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN else 0x15
+    if raw == word and cp.alternativeExperience == 0:
       return 1
-    if cp.carFingerprint in (CAR.KIA_EV6, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN) and raw == 0x815 and cp.alternativeExperience == 32:
+    if cp.carFingerprint in (CAR.KIA_EV6, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN) and raw == (word | 0x800) and cp.alternativeExperience == 32:
       return 1
   elif not cp.openpilotLongitudinalControl and cp.pcmCruise and cp.alternativeExperience == 0 and raw in (0x11, 0x811):
     return 1

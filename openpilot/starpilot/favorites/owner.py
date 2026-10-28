@@ -76,9 +76,14 @@ def read_slots(params):
 
 class FavoritesOwner:
   def __init__(self, params, actions: Callable[[], Mapping[str, FavoriteAction]], configurable: Callable[[], bool],
-               render_actions: Callable[[frozenset[str]], Mapping[str, FavoriteAction]] | None = None):
+               render_actions: Callable[[frozenset[str]], Mapping[str, FavoriteAction]] | None = None, *,
+               current_action: Callable[[str], FavoriteAction | None] | None = None):
     self.params, self.actions, self.configurable = params, actions, configurable
     self.render_actions = render_actions
+    self.current_action = current_action
+
+  def _current_action(self, key):
+    return self.current_action(key) if self.current_action is not None else self.actions().get(key)
 
   def snapshot(self, *, include_options=True):
     saved, raw, readable, valid = read_slots(self.params)
@@ -159,7 +164,7 @@ class FavoritesOwner:
     slot = slots[request.index]
     if not readable or not valid or revision(raw) != request.revision or slot["key"] != request.key or not slot["enabled"]:
       return FavoriteResult(False, "Quick Select changed. Try again.")
-    action = self.actions().get(request.key)
+    action = self._current_action(request.key)
     if action is None:
       return FavoriteResult(False, "This saved control is not available in this build")
     if not action.available or action.invoke is None and action.invoke_value is None:
@@ -177,7 +182,7 @@ class FavoritesOwner:
         applied = action.invoke()
       if not applied:
         return FavoriteResult(False, "Control is unavailable or changed. Try again.")
-      updated = self.actions().get(request.key)
+      updated = self._current_action(request.key)
       return FavoriteResult(True, action.label, updated.state_label if updated else "Done")
     except (OSError, RuntimeError, ValueError, TypeError):
       return FavoriteResult(False, "Control could not be changed")

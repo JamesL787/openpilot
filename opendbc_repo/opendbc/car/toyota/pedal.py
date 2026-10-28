@@ -126,7 +126,12 @@ def amount(cp, cc, cs, accel):
     return 0.
   if cs.out.standstill:
     return .12 if accel > 0 else 0.
-  scale = float(np.interp(cs.out.vEgo, [0., MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [.4, .5, 0.]))
+  if cp.carFingerprint == CAR.TOYOTA_RAV4:
+    scale = float(np.interp(cs.out.vEgo, [0., 5., MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [.11, .23, .3, 0.]))
+  elif cp.carFingerprint in (CAR.TOYOTA_COROLLA, CAR.TOYOTA_MATRIX_RETROFIT):
+    scale = float(np.interp(cs.out.vEgo, [0., MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [.3, .4, 0.]))
+  else:
+    scale = float(np.interp(cs.out.vEgo, [0., MIN_ACC_SPEED, MIN_ACC_SPEED + PEDAL_TRANSITION], [.4, .5, 0.]))
   offset = float(np.interp(cs.out.vEgo, [0., 2.3, MIN_ACC_SPEED + PEDAL_TRANSITION], [-.4, 0., .2]))
   return float(np.clip(scale * (accel + offset), 0., .5))
 

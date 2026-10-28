@@ -1,4 +1,5 @@
 """Installed source closure only; no kernel or model-output equivalence proof."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 import hashlib
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from openpilot.starpilot.flm import producer_clock_equivalence as clock
 
 
 APPROVED = {
-  'selfdrive/modeld/modeld.py': '25a0a0c477bd03dcb2fbf887bd8c881a3b28ce1a15d5a063557d289eb1d07c4c',
+  'selfdrive/modeld/modeld.py': '0387b596ed7499bd180814c73e4e430f1cae6a359b19442d1fe646547110d7c5',
   'visionipc/visionipc_server.cc': 'a4325a5171eacb931eb271d06a992d2f27216040df113d92099f62cdfa67d81a',
   'visionipc/visionipc_client.cc': 'd142cd60eedabfc581e9770fcd6f0ca81b762ba9dbc608b54dd20a27a317a52d',
 }
@@ -139,7 +140,7 @@ def test_actual_daemon_reports_startup_source_refusal_without_issuing_a_trial(mo
       identity='f'*64, generation=1, domain='normalized_torque', stage_revision='stage', response_revision='response',
       controller_mode='starpilot', policy='declared-unit-policy', baseline_revision='baseline', controller_revision='controller', turn_assist=False)
 
-  monkeypatch.setattr(steerlearnerd, 'drain', drain)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', separate_drain_fixture(drain))
   monkeypatch.setattr(steerlearnerd, 'read_control', read_control)
   with pytest.raises(LoopComplete):
     steerlearnerd.run(SimpleNamespace(), SM(), control_socket, output_socket,

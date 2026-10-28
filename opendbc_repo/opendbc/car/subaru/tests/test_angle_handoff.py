@@ -19,7 +19,7 @@ class TestAngleHandoff(unittest.TestCase):
             state.out.steeringTorque = torque * sign
             state.out.steeringRateDeg = rate * sign
             steer, decoded = step(controller, command, state)
-            self.assertEqual(steer[2], 1)
+            self.assertEqual(steer[2], 0)
             self.assertEqual(decoded['LKAS_Request'], expected)
             if not expected:
               self.assertEqual(decoded['LKAS_Output'], 10)
@@ -51,3 +51,43 @@ class TestAngleHandoff(unittest.TestCase):
         command.latActive = True
         _, decoded = step(controller, command, state)
         self.assertEqual(decoded['LKAS_Request'], 1)
+
+
+class TestIndependentAngleEnvelope(unittest.TestCase):
+  def test_dom_aol_envelope_uses_actual_steering_request(self):
+    cars = (CAR.SUBARU_CROSSTREK_2025, CAR.SUBARU_LEGACY_2025, CAR.SUBARU_ASCENT_2023,
+            CAR.SUBARU_FORESTER_2022, CAR.SUBARU_OUTBACK_2023)
+    for car in cars:
+      for speed, angle, expected in ((5., 119.5, True), (5., -119.5, True),
+                                     (5., 120., False), (5., -120., False),
+                                     (5., 200., False), (5., -200., False),
+                                     (.4, 10., False), (.5, 10., True)):
+        with self.subTest(car=car, speed=speed, angle=angle):
+          cp, controller, command, state = setup_controller(car)
+          cp.alternativeExperience = 32
+          command.enabled = False
+          command.actuators.steeringAngleDeg = angle + 5.
+          state.out.cruiseState.enabled = False
+          state.out.steeringTorque = state.out.steeringRateDeg = 0
+          state.out.steeringAngleDeg = angle
+          state.out.vEgoRaw = state.out.vEgo = speed
+          state.out.standstill = False
+          for _ in range(3):
+            _, decoded = step(controller, command, state)
+          self.assertEqual(bool(decoded['LKAS_Request']), expected)
+          if not expected:
+            self.assertAlmostEqual(decoded['LKAS_Output'], angle, places=2)
+
+  def test_ordinary_engagement_keeps_existing_angle_behavior(self):
+    for car in (CAR.SUBARU_CROSSTREK_2025, CAR.SUBARU_LEGACY_2025, CAR.SUBARU_ASCENT_2023,
+                CAR.SUBARU_FORESTER_2022, CAR.SUBARU_OUTBACK_2023):
+      for speed, angle in ((5., 200.), (.4, 10.)):
+        with self.subTest(car=car, speed=speed, angle=angle):
+          _, controller, command, state = setup_controller(car)
+          state.out.vEgoRaw = state.out.vEgo = speed
+          state.out.steeringAngleDeg = angle
+          state.out.steeringRateDeg = state.out.steeringTorque = 0
+          state.out.standstill = False
+          for _ in range(3):
+            _, decoded = step(controller, command, state)
+          self.assertTrue(decoded['LKAS_Request'])

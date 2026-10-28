@@ -4,6 +4,7 @@ from dataclasses import replace
 import pytest
 
 from openpilot.starpilot.flm.live_trial_owner import TrackingTrialOwner
+from openpilot.starpilot.flm.live_trial_contract import MAX_STEP
 from openpilot.starpilot.flm.tests.test_live_tracking import optimizer as _protocol_optimizer
 from openpilot.starpilot.flm.tests.test_live_tracking_rollout import NS, HOOK, _episode, _refresh, _ack, _optimizer
 
@@ -203,15 +204,22 @@ def test_joint_allocation_uses_more_fresh_baseline_to_shorten_active_exposure():
 
 def test_cold_selection_predeclares_more_clean_baseline_for_shorter_target_exposure():
   owner = _optimizer()  # Same .005 whole-episode model floor as the noisy route.
+  # This is the neighboring allocation test's .023 normalized-effect boundary,
+  # not a fixed-derivative plant fixture. Keep the current fitted proposal size.
+  expected_normalized_effect, goal, fitted_estimate = .023, .6, .06
+  planned_delta = min(MAX_STEP, .1 * fitted_estimate)
+  physical_rms_at_cap = expected_normalized_effect * goal * MAX_STEP / planned_delta
   selected = []
   for index in range(1, 4):
     now = index*8*NS
     _refresh(owner, now)
     row = _episode(owner, index, now, owner.accepted, .6, .35, 22.)
-    row = replace(row, sensitivity=(replace(row.sensitivity[0], max_step_physical_rms=.0138),))
+    row = replace(row, sensitivity=(replace(row.sensitivity[0], max_step_physical_rms=physical_rms_at_cap),))
     selected.append(row)
     owner.observe_episode(row, now_ns=now)
   assert owner.offer_state is None and owner.discovery is not None
+  assert owner.discovery['expected'] == pytest.approx(expected_normalized_effect)
+  assert owner.discovery['target'][HOOK] - owner.accepted[HOOK] == pytest.approx(planned_delta)
   quota = owner.discovery['quota']
   assert 3 < quota <= 24 and owner.comparison == []
   assert not owner.discovery['recovery']

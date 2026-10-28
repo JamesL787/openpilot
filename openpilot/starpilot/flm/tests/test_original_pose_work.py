@@ -164,3 +164,63 @@ def test_duplicate_wait_does_not_bypass_current_refusals(refusal):
     result = observe(collector, cp, sm, now)
     assert not isinstance(result, OriginalSourcePose)
     assert not collector._original_source_pose_queue
+
+
+def conflated_source_receiver(*, slow_motion=False):
+  from openpilot.starpilot.flm.steerlearnerd import source_receiver
+
+  sm = source_receiver(list(SERVICES))
+  assert not sm.simulation
+  # A healthy 100Hz publisher can be received once per 20Hz motion window.
+  # update_msgs is the actual SubMaster accounting path, not a flag override.
+  for tick in range(-40, 1):
+    stamp = BASE + tick * 50_000_000
+    events = [packet('carState', stamp), packet('driverMonitoringState', stamp)]
+    if not slow_motion or tick % 4 == 0:
+      events.append(packet('deviceMotion', stamp))
+    if tick % 5 == 0:
+      events.append(packet('extrinsicsCalibration', stamp))
+    sm.update_msgs(stamp / 1e9, [event.as_reader() for event in events])
+  assert not sm.freq_ok['carState']
+  assert sm.alive['carState'] and sm.valid['carState']
+  return sm
+
+
+def test_conflated_car_state_receive_rate_does_not_starve_original_motion():
+  with fixture() as (collector, cp, _):
+    sm = conflated_source_receiver()
+    assert sm.all_checks(list(SERVICES))
+    assert type(observe(collector, cp, sm, BASE)) is PendingPhysical
+    stamp = BASE + 10_000_000
+    sm.update_msgs(stamp / 1e9, [packet('carState', stamp).as_reader()])
+    collector.ready.append(pair(stamp, speed=22., angle=2.))
+    row = observe(collector, cp, sm, BASE + 12_000_000)
+    assert type(row) is OriginalSourcePose
+    validate_pose(row, BASE + 12_000_000)
+    assert (row.mono_ns, row.received_ns, row.observed_ns) == (BASE, BASE, BASE)
+    assert not sm.freq_ok['carState']  # The measured receiver verdict stays truthful.
+
+
+@pytest.mark.parametrize('fault', ['invalid_state', 'stale_state', 'native', 'override', 'can_fault', 'motion_rate'])
+def test_conflated_receiver_retains_source_native_and_motion_refusals(fault):
+  with fixture() as (collector, cp, _):
+    sm = conflated_source_receiver(slow_motion=fault == 'motion_rate')
+    if fault in ('invalid_state', 'stale_state', 'override', 'can_fault'):
+      stamp = BASE - 100_000_001 if fault == 'stale_state' else BASE
+      event = packet('carState', stamp)
+      if fault == 'invalid_state':
+        event.valid = False
+      elif fault == 'override':
+        event.carState.brakePressed = True
+      elif fault == 'can_fault':
+        event.carState.canValid = False
+      sm.update_msgs(BASE / 1e9, [event.as_reader()])
+    elif fault == 'native':
+      collector._learning_current_native_allowed = False
+    before = tuple(tuple(getattr(sm, name)[service] for service in SERVICES)
+                   for name in ('alive', 'valid', 'freq_ok', 'logMonoTime', 'recv_time'))
+    assert observe(collector, cp, sm, BASE) is None
+    after = tuple(tuple(getattr(sm, name)[service] for service in SERVICES)
+                  for name in ('alive', 'valid', 'freq_ok', 'logMonoTime', 'recv_time'))
+    assert after == before
+    assert not collector._original_source_pose_queue

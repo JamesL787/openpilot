@@ -1,5 +1,6 @@
 import threading
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -16,6 +17,19 @@ from opendbc.car.hyundai.ioniq6_handoff import (HandoffOutcome, HandoffResult, O
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR
 from opendbc.car.hyundai.hyundaicanfd import hkg_can_fd_checksum
+
+
+def refresh_host_parser_receipts(card):
+  from collections import deque
+  from opendbc.can.parser import MessageState
+
+  stamp = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+  parsers = {}
+  for bus in (1, 2):
+    source = MessageState(address=bus, name=f"source{bus}", size=8, signals=[],
+                          timeout_threshold=100_000_000, timestamps=deque([stamp]))
+    parsers[bus] = SimpleNamespace(message_states={bus: source})
+  card.CI.can_parsers = parsers
 
 
 class FakeIoniq6Bus:
@@ -561,6 +575,9 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
     card.ioniq6_host_warmed = False
     card.ioniq6_long_lost = False
     card.ioniq6_keepalive = None
+    card.ioniq6_handoff_source_floor_ns = 1
+    card.CI = SimpleNamespace()
+    refresh_host_parser_receipts(card)
     invalid = SimpleNamespace(canValid=False)
     card.observe_ioniq6_long_authority([], invalid)
     self.assertFalse(card.ioniq6_long_lost)
@@ -659,6 +676,7 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
       card.controls_update(cs, cc)
       card.CI.apply.assert_not_called()
       cs.canValid = True
+      refresh_host_parser_receipts(card)
       card.observe_ioniq6_long_authority([], cs)
       card.controls_update(cs, cc)
       card.CI.apply.assert_called_once()
@@ -852,8 +870,8 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
     card_owner.is_metric = True
     card_owner.experimental_mode = False
     card_owner.initial_cruise_speed = 40
-    card_owner.v_cruise_helper = SimpleNamespace(update_v_cruise=lambda *_, slc_enabled=False: None, initialize_v_cruise=lambda *_, **kwargs: None,
-                                                 slc_consumed_button=None,
+    card_owner.v_cruise_helper = SimpleNamespace(update_v_cruise=lambda *_, slc_enabled=False, slc_approved=None: None,
+                                                 initialize_v_cruise=lambda *_, **kwargs: None, slc_consumed_button=None, toyota=None,
                                                  slc_cruise_change=None, v_cruise_kph=60.0, v_cruise_cluster_kph=60.0)
     card_owner.RI = SimpleNamespace(update=lambda _: None)
     control = car.CarControl(enabled=True, longActive=True)
@@ -887,6 +905,12 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
                                     update=Mock(side_effect=lambda packets: car.CarState(canValid=True, canTimeout=False)),
                                     apply=Mock(return_value=(structs.CarControl.Actuators(), [CanData(0x1A0, b'\0' * 8, 1)])),
                                     init=Mock())
+
+    def parsed_update(_packets):
+      refresh_host_parser_receipts(card_owner)
+      return car.CarState(canValid=True, canTimeout=False)
+
+    card_owner.CI.update.side_effect = parsed_update
     card_owner.ioniq6_panda_diagnostic_ready = Mock(return_value=True)
     card_owner.ioniq6_panda_matches = Mock(side_effect=(False, True, True))
     packets = iter((

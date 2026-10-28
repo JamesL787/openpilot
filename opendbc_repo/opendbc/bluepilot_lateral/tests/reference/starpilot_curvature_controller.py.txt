@@ -160,13 +160,17 @@ class CarController(CarControllerBase):
       else:
         self.classic_lateral.set_inputs(None, (), 0.2, self.manual_turn_inputs.enabled if self.manual_turn_inputs is not None else True)
       previous = self.classic_lateral.curvature_last
-      demanded = self.classic_lateral.update(CC, CS, actuators) if self.classic_extended_announced else FordLateralResult()
+      demanded = self.classic_lateral.update(CC, CS, actuators) if self.classic_extended_announced or self.generic_canfd else FordLateralResult()
       bound = generic_canfd_bounded_command if self.generic_canfd else classic_bounded_command
       lateral = bound(self.classic_lateral, demanded, previous, CS.out.vEgoRaw,
                                          -CS.out.yawRate / max(CS.out.vEgoRaw, 0.1))
       self.classic_lateral_demand = demanded
       self.apply_curvature_last = lateral.curvature
       if self.generic_canfd:
+        if self.classic_extended_announced != bool(lateral.active):
+          can_sends.append(mache_can.create_lka_msg(self.packer, self.CAN) if lateral.active else
+                           fordcan.create_lka_msg(self.packer, self.CAN))
+          self.classic_extended_announced = bool(lateral.active)
         counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
         can_sends.append(create_extended_canfd_msg(
           self.packer, self.CAN, lateral.active, lateral.ramp_type, lateral.precision_type,
@@ -221,7 +225,8 @@ class CarController(CarControllerBase):
         can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, lateral_active, 0., 0., -self.apply_curvature_last, 0.))
 
     # send lka msg at 33Hz
-    if (self.frame % CarControllerParams.LKA_STEP) == 0:
+    if (self.frame % CarControllerParams.LKA_STEP) == 0 and not any(
+        address == 0x3CA for address, _, _ in can_sends):
       if self.CP.flags & FordFlags.LKA_STEERING:
         source_age_ns = now_nanos - CS.lkas_available_ts_nanos
         lka_active = (CC.latActive and CS.lkas_available and 0 <= source_age_ns <= 100_000_000 and
@@ -250,8 +255,11 @@ class CarController(CarControllerBase):
         can_sends.append(mache_can.create_lka_msg(self.packer, self.CAN))
         self.mache_extended_announced = True
       elif self.classic_lateral is not None:
-        can_sends.append(mache_can.create_lka_msg(self.packer, self.CAN))
-        self.classic_extended_announced = True
+        if self.generic_canfd and not self.classic_extended_announced:
+          can_sends.append(fordcan.create_lka_msg(self.packer, self.CAN))
+        else:
+          can_sends.append(mache_can.create_lka_msg(self.packer, self.CAN))
+          self.classic_extended_announced = True
       else:
         can_sends.append(fordcan.create_lka_msg(self.packer, self.CAN))
 

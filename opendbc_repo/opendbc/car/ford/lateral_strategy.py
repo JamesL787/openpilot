@@ -162,6 +162,8 @@ class FordLateralController:
 
   def __init__(self, CP):
     self.CP = CP
+    from opendbc.car.ford.pinion import Measurement
+    self.measurement = Measurement(CP)
     self.model = None
     self.time_indices = ()
     self.lookahead = CURVATURE_LOOKAHEAD_MIN
@@ -231,9 +233,8 @@ class FordLateralController:
     return MACH_E_HIGH_SPEED_LOOKAHEAD_EXTRA * float(np.interp(
       v_ego, [MACH_E_HIGH_SPEED_LOOKAHEAD_START_SPEED, MACH_E_HIGH_SPEED_LOOKAHEAD_FULL_SPEED], [0.0, 1.0]))
 
-  @staticmethod
-  def _current_curvature(CS) -> float:
-    return -CS.out.yawRate / max(CS.out.vEgoRaw, 0.1)
+  def _current_curvature(self, CS) -> float:
+    return self.measurement.curvature(CS.out)
 
   def _driver_assisting_curve(self, CS, desired: float) -> bool:
     v_ego = float(CS.out.vEgoRaw)

@@ -356,3 +356,24 @@ def test_saved_origin_failure_backoff_and_destination_change(tmp_path, monkeypat
   executor.jobs[1].set_result(route)
   result = runtime.update(30_000_000_013, None, 0)
   assert result['status'] == 'noDestination' and result['route'] == []
+
+
+def test_unknown_speed_does_not_arrive_or_authorize_control(tmp_path, route):
+  owner = configured(tmp_path)
+  runtime = RouteRuntime(owner, executor=Executor())
+  runtime.update(10_000_000_000, (10_000_000_000, (.01, 0.), None, None), 1)
+  runtime.route = route
+  for second in (11, 20, 40):
+    now = second * 1_000_000_000
+    result = runtime.update(now, (now, (.01, 0.), None, None), 1)
+    assert result['status'] == 'guiding' and not result['controlValid']
+  assert owner.read_routing()['destination'] is not None
+
+
+def test_held_phone_position_cannot_authorize_stale_navigation_control(tmp_path, route):
+  runtime = RouteRuntime(configured(tmp_path), executor=Executor())
+  position = (10_000_000_000, (.005, 0.), 5., 90.)
+  runtime.update(10_000_000_000, position, 1)
+  runtime.route = route
+  result = runtime.update(14_000_000_000, position, 1)
+  assert result['status'] == 'guiding' and not result['controlValid']

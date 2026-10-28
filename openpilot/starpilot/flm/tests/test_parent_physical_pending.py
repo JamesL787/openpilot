@@ -3,6 +3,7 @@
 The SM/native world is declared synthetic. PoseCalibrator, observer, wire readers,
 control/output joins and the actual parent loop/collector are not replaced.
 """
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
@@ -118,7 +119,7 @@ def exercise(*, failure=None, polls=86, pending=True):
   fitter.poll.return_value = None
   persistence = mock.Mock()
   with mock.patch.object(steerlearnerd, 'FullrateCollector', side_effect=collector_factory), \
-       mock.patch.object(steerlearnerd, 'drain', side_effect=drain), \
+       mock.patch.object(steerlearnerd, 'drain_pair', side_effect=separate_drain_fixture(drain)), \
        mock.patch('openpilot.starpilot.flm.native_health.current_native_health', side_effect=lambda *args: native[0]), \
        mock.patch('openpilot.starpilot.flm.runtime_adapter_registry.time.monotonic_ns', side_effect=lambda: clock[0]), \
        mock.patch('openpilot.starpilot.flm.runtime_adapter_registry.time.clock_gettime_ns', side_effect=boot_clock):

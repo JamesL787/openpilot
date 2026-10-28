@@ -1,13 +1,14 @@
 import { GxDialog } from "./dialog.js"
 import { GxState } from "./state.js"
 import { connectionError } from "./polling.js"
-import { reactive } from "../vendor/vue/vue.esm-browser.js"
+import { reactive, nextTick } from "../vendor/vue/vue.esm-browser.js"
 import { GalaxySettingRow, settingControl } from "./galaxy-setting-row.js"
 import { OnroadLayoutPage } from "./onroad-layout.js"
 import { FavoritesPage } from "./favorites.js"
 import { SoundPacks } from "./sound-packs.js"
 import { CloudProviderPage } from "./cloud-provider.js"
 import { GxNotice } from "./notice.js"
+import { route } from "./route-state.js"
 
 const post = (fetcher, path, body, signal) => fetcher(path, {
   method: "POST", credentials: "same-origin", cache: "no-store", signal,
@@ -262,9 +263,13 @@ export const SettingsPage = {
     initialSection: { type: String, default: null }, returnTo: { type: Function, default: null }
   },
   setup(props) {
+    const navigation = route.view
+    const navigationKey = `${props.initialPage}:${props.initialSection || ""}`
+    const saved = navigation.settings?.key === navigationKey ? navigation.settings : null
     const state = reactive({ status: "idle", data: null, pending: null, error: "", query: "", searchOpen: false, section: "lateral", layoutOpen: false, layoutPanel: "widgets", favoritesOpen: false, soundChoicesDirty: false, parents: [], developerOpen: props.initialSection === "developer", panelDirection: 1 })
+    if (saved) Object.assign(state, { section: saved.section, query: saved.query, searchOpen: saved.searchOpen, parents: saved.parents.slice(), developerOpen: saved.developerOpen })
     const feed = new SettingsFeed({ publish: (update) => Object.assign(state, update), unauthorized: props.unauthorized })
-    return { state, feed, sections: SETTINGS_SECTIONS }
+    return { state, feed, sections: SETTINGS_SECTIONS, navigation, navigationKey, restoredPage: saved?.page }
   },
   computed: {
     busy() { return settingsBusy(this.state) },
@@ -304,8 +309,20 @@ export const SettingsPage = {
       else this.flushSoundChoices()
     },
   },
-  mounted() { if (this.mode === "local") this.feed.start(this.state.developerOpen ? "developer" : this.initialPage) },
-  beforeUnmount() { this.feed.stop() },
+  async mounted() {
+    if (this.mode !== "local") return
+    await this.feed.start(this.restoredPage || (this.state.developerOpen ? "developer" : this.initialPage))
+    await nextTick()
+    if (this.feed.active && this.navigation.scroll) window.scrollTo(this.navigation.scroll.x, this.navigation.scroll.y)
+  },
+  beforeUnmount() {
+    const { data, section, query, searchOpen, parents, developerOpen } = this.state
+    this.navigation.settings = {
+      key: this.navigationKey, page: data?.page || this.restoredPage || this.initialPage, section, query, searchOpen, parents: parents.slice(), developerOpen,
+    }
+    this.navigation.searchPage = this.initialPage === "hub" ? "" : this.initialPage
+    this.feed.stop()
+  },
   methods: {
     open(page) {
       if (this.busy) return

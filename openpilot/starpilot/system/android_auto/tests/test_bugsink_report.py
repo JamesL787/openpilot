@@ -312,6 +312,9 @@ def test_supervisor_records_build_at_session_start(monkeypatch):
     def close(self):
       pass
 
+    def capture_system(self):
+      pass
+
     def __call__(self, name, **values):
       records.append({"event": name, **values})
 
@@ -325,3 +328,115 @@ def test_supervisor_records_build_at_session_start(monkeypatch):
   sup._release_phone = lambda: None  # ty: ignore[invalid-assignment]  # test double
   sup._run(1)
   assert records[0]["software"] == {"commit": "session-build", "branch": "session-branch"}
+
+
+HANDSHAKE_FAILED = [
+  (0, 0, "session_start", {"receiver": "Honda HFL", "trigger": "auto"}),
+  (0, 1, "stage", {"state": "rfcomm"}),
+  (0, 2, "bootstrap_tx", {"message": "WifiVersionRequest", "bytes": 4}),
+  (0, 3, "hfp_command", {"command": "AT+CIND"}),
+  (0, 3, "nav_guidance_sent", {}),
+  (0, 4, "bootstrap_rx", {"message": "WifiVersionResponse", "bytes": 6}),
+  (0, 5, "sdp_retry", {"error": "[Errno 112] Host is down to AA:BB:CC:DD:EE:FF", "settle": 1.5}),
+  (0, 25, "attempt_failed", {"stage": "wifi_start", "error": "head unit did not answer in time", "kind": "BootstrapTimeout"}),
+]
+
+
+def test_failed_sessions_carry_a_scrubbed_handshake_trace(tmp_path):
+  event = br.drive_event([br.session_record(write_session(tmp_path, 1, HANDSHAKE_FAILED))])
+  trace = event["contexts"]["android_auto_trace_session_1"]
+  names = [item["event"] for item in trace["events"]]
+  assert names[:3] == ["session_start", "stage", "bootstrap_tx"] and "bootstrap_rx" in names and "sdp_retry" in names
+  assert "hfp_command" not in names and "nav_guidance_sent" not in names
+  assert trace["omitted"] == 0 and trace["events"][2]["at_s"] == 2.0
+  text = json.dumps(event)
+  assert "AA:BB:CC:DD:EE:FF" not in text and "Honda HFL" not in text
+
+
+def test_trace_keeps_the_newest_events_within_its_budget(tmp_path):
+  noisy = [(0, 0, "session_start", {})] + [(i // 60, i % 60, "sdp_retry", {"error": "x" * 250, "n": i}) for i in range(1, 400)]
+  noisy.append((9, 0, "attempt_failed", {"stage": "discovering", "error": "gone", "kind": "RuntimeError"}))
+  event = br.drive_event([br.session_record(write_session(tmp_path, 1, noisy))])
+  trace = event["contexts"]["android_auto_trace_session_1"]
+  assert trace["omitted"] > 0 and [e["event"] for e in trace["events"]][-2:] == ["attempt_failed", "session_stop"]
+  assert len(json.dumps(trace)) <= br.TRACE_SESSION_BYTES + 1024
+  assert len(json.dumps(event)) < 400 << 10
+
+
+CLEAN = [(0, 0, "session_start", {"receiver": "Honda HFL", "trigger": "auto"}),
+         (0, 11, "projection_ready", {"mode": {"width": 1280, "height": 720, "fps": 30, "margin_width": 0, "margin_height": 0}}),
+         (0, 11, "frame_pipeline", {"nv12": True, "target_fps": 30, "encoder": "v4l2"}),
+         (0, 12, "stage", {"state": "streaming"}),
+         (0, 12, "video_acknowledged", {}),
+         (0, 42, "stats", {"fps": 30.0, "wifi_dbm": -50, "focused": True, "frames_sent": 900, "load1": 1.5, "temp_max_c": 61.0}),
+         (1, 12, "stats", {"fps": 29.0, "wifi_dbm": -52, "focused": True, "frames_sent": 1800, "load1": 1.7, "temp_max_c": 63.0})]
+
+
+def test_clean_drives_send_no_trace(tmp_path):
+  event = br.drive_event([br.session_record(write_session(tmp_path, 1, CLEAN))])
+  assert not any(key.startswith("android_auto_trace_session_") for key in event["contexts"])
+  assert "aa.attention" not in event["tags"]
+
+
+def test_session_carries_stats_series_and_routine_event_counts(tmp_path):
+  events = [*CLEAN, (1, 20, "nav_guidance_sent", {}), (1, 21, "nav_guidance_sent", {}), (1, 22, "media_key", {})]
+  record = br.session_record(write_session(tmp_path, 1, events))
+  assert record["series"]["at_s"] == [42.0, 72.0] and record["series"]["load1"] == [1.5, 1.7]
+  assert record["series"]["temp_max_c"] == [61.0, 63.0] and "cpu0_mhz" not in record["series"]
+  assert record["quiet_events"] == {"nav_guidance_sent": 2, "media_key": 1}
+
+
+def test_sessions_that_streamed_poorly_get_a_trace(tmp_path):
+  event = br.drive_event([br.session_record(write_session(tmp_path, 1, STREAMED))])
+  assert "android_auto_trace_session_1" in event["contexts"]
+  assert {"encoder_recoveries", "unfocused"} <= set(event["tags"]["aa.attention"].split(","))
+  assert event["contexts"]["android_auto_trace_session_1"]["routine_events"] == {}
+
+
+def test_sessions_that_never_streamed_get_a_trace(tmp_path):
+  stopped = [(0, 0, "session_start", {"receiver": "Honda HFL"}), (0, 5, "stage", {"state": "negotiating_video"})]
+  event = br.drive_event([br.session_record(write_session(tmp_path, 1, stopped))])
+  assert "android_auto_trace_session_1" in event["contexts"] and event["tags"]["aa.attention"] == "stopped"
+
+
+def sidecar(tmp_path, number, lines):
+  path = tmp_path / f"session-{number:06d}.system.json"
+  path.write_text(json.dumps({"window": {"start": "a", "end": "b"}, "sources": {"network": {"lines": lines}, "kernel": {"error": "timed out"}}}))
+
+
+def test_device_slice_is_attached_scrubbed_for_sessions_that_need_attention(tmp_path):
+  path = write_session(tmp_path, 1, HANDSHAKE_FAILED)
+  sidecar(tmp_path, 1, ["wpa: Trying to associate with SSID 'HomeNet' bssid aa:bb:cc:dd:ee:ff", "wpa: ssid=Secret1 Honda HFL gone"])
+  (tmp_path / "car_ui.log").write_text("ui line Honda HFL\n" * 3)
+  event = br.drive_event([br.session_record(path)])
+  system = event["contexts"]["android_auto_system_session_1"]
+  assert system["kernel"] == {"error": "timed out"} and len(system["network"]["lines"]) == 2
+  text = json.dumps(event)
+  assert "HomeNet" not in text and "Secret1" not in text and "Honda HFL" not in text and "AA:BB:CC" not in text.upper()
+  assert len(event["contexts"]["android_auto_car_ui"]["lines"]) == 3
+
+
+def test_clean_sessions_do_not_attach_a_device_slice(tmp_path):
+  path = write_session(tmp_path, 1, CLEAN)
+  sidecar(tmp_path, 1, ["line"])
+  assert not any(key.startswith("android_auto_system") for key in br.drive_event([br.session_record(path)])["contexts"])
+
+
+def test_oversized_reports_shed_detail_and_still_fit(tmp_path):
+  path = write_session(tmp_path, 1, HANDSHAKE_FAILED)
+  big = br.drive_event([br.session_record(path)])
+  big["contexts"]["android_auto_system_session_1"] = {"network": {"lines": ["y" * 290] * 3000}}
+  fitted = br.fit_event(big)
+  assert br.event_size(fitted) <= br.EVENT_BUDGET
+  assert fitted["tags"]["aa.truncated"] == "yes" and "android_auto_system_session_1" in fitted["contexts"]["android_auto_shed"]["dropped"]
+  assert "android_auto_drive" in fitted["contexts"]
+
+
+def test_pairing_that_failed_carries_a_device_slice_but_success_does_not(tmp_path):
+  record = {"seq": 1, "started": "2026-10-16T12:00:00+00:00", "window_s": 60, "duration_s": 30, "steps": [], "result": "timeout"}
+  calls = []
+  collector = lambda start, end: calls.append((start, end)) or {"window": {}, "sources": {"bluetooth": {"lines": ["bt 'Phone X' up"]}}}  # noqa: E731
+  event = br.pairing_event(record, collector)
+  assert event["contexts"]["android_auto_pairing_system"]["bluetooth"]["lines"] == ["bt '<name>' up"]
+  assert calls[0][1] - calls[0][0] == 30
+  assert "android_auto_pairing_system" not in br.pairing_event({**record, "result": "paired"}, collector)["contexts"]

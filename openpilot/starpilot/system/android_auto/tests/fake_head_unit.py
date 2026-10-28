@@ -63,12 +63,21 @@ def video_config(resolution: int, margin_w: int = 0, margin_h: int = 0) -> bytes
   return field(1, resolution) + field(2, 2) + field(3, margin_w) + field(4, margin_h) + field(5, 160)
 
 
-def discovery_response(video_channel: int = 3, input_channel: int = 1) -> bytes:
+SENSOR_CHANNEL, BLUETOOTH_CHANNEL = 7, 8
+
+
+def discovery_response(video_channel: int = 3, input_channel: int = 1, *, phone_services: bool = False) -> bytes:
+  """``phone_services`` adds the car-data and Bluetooth channels (sensor types one per entry, pairing method packed)."""
   av = field(1, 3) + field(4, video_config(1)) + field(4, video_config(2, 0, 240))
   video = field(1, video_channel) + field(3, av)
   audio = field(1, 4) + field(3, field(1, 1))
   touch = field(1, input_channel) + field(4, field(1, 84) + field(1, 4) + field(2, field(1, 1280) + field(2, 720)))
-  return field(1, video) + field(1, audio) + field(1, touch) + field(2, "Honda") + field(3, "Civic")
+  extra = b""
+  if phone_services:
+    sensors = b"".join(field(1, field(1, kind)) for kind in (1, 3, 7, 8, 10, 13, 21))
+    extra = (field(1, field(1, SENSOR_CHANNEL) + field(2, sensors)) +
+             field(1, field(1, BLUETOOTH_CHANNEL) + field(6, field(1, "F8:36:9B:0A:7D:C8") + field(2, bytes([2])))))
+  return field(1, video) + field(1, audio) + field(1, touch) + extra + field(2, "Honda") + field(3, "Civic")
 
 
 class FakeHeadUnit:
@@ -76,8 +85,13 @@ class FakeHeadUnit:
 
   def __init__(self, identity: dict[str, Path], *, window: int = 4, reject_auth: bool = False, require_client_cert: bool = True,
                unsolicited_focus: bool = False, version: tuple[int, int] = (1, 7), ack_codec_config: bool | int = True,
-               connect_to: tuple[str, int] | None = None, ack_fragments: bool = False):
+               connect_to: tuple[str, int] | None = None, ack_fragments: bool = False,
+               phone_services: bool = False):
+    self.phone_services = phone_services
+    self.sensor_requests: list[int] = []
+    self.pairing_requests: list[tuple[str, int]] = []
     self.unsolicited_focus = unsolicited_focus
+    self.opened: list[int] = []
     self.connect_to = connect_to
     self.ack_fragments = ack_fragments
     self.fragments = 0
@@ -218,7 +232,7 @@ class FakeHeadUnit:
       fields = parse_fields(data) if kind not in (0, 1) else {}
       if channel == 0 and kind == 5:
         self.device_name = one(fields, 4, b"").decode()
-        self._send(0, 6, discovery_response())
+        self._send(0, 6, discovery_response(phone_services=self.phone_services))
       elif channel == 0 and kind == 11:
         self._send(0, 12, data)
       elif channel == 0 and kind == 15:
@@ -226,7 +240,17 @@ class FakeHeadUnit:
         self.shutdown_received.set()
         return
       elif kind == 7:
+        self.opened.append(channel)
         self._send(channel, 8, field(1, 0), control=True)
+      elif self.phone_services and channel == SENSOR_CHANNEL and kind == 0x8001:
+        self.sensor_requests.append(int(one(fields, 1, 0) or 0))
+        self._send(SENSOR_CHANNEL, 0x8002, field(1, 0))
+        if one(fields, 1) == 13:
+          self._send(SENSOR_CHANNEL, 0x8003, field(13, field(1, 0)))  # driving status: unrestricted
+      elif self.phone_services and channel == BLUETOOTH_CHANNEL and kind == 0x8001:
+        address = one(fields, 1, b"")
+        self.pairing_requests.append((address.decode() if isinstance(address, bytes) else "", int(one(fields, 2, 0) or 0)))
+        self._send(BLUETOOTH_CHANNEL, 0x8002, field(1, 1) + field(2, 0))  # not paired
       elif channel == 3 and kind == 0x8000:
         self._send(3, 0x8003, field(1, 2) + field(2, self.window) + field(3, 1))
         if self.unsolicited_focus:  # like the DHU: grant focus before the phone asks

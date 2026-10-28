@@ -84,7 +84,8 @@ class Soundd:
   def __init__(self, params=None, pack_root=PACK_ROOT):
     self.volume_params = params if params is not None else Params()
     migrate_removed_selection(self.volume_params, pack_root)
-    self.pack_loader = SoundPackLoader(self.volume_params, Path(__file__).resolve().parents[1] / "assets/sounds", pack_root)
+    self.pack_loader = SoundPackLoader(self.volume_params, Path(__file__).resolve().parents[1] / "assets/sounds", pack_root,
+                                       device_type=HARDWARE.get_device_type())
     self.load_sounds()
     self.saved_volumes = {key: AUTO for key, _, _ in VOLUMES}
     self.volume_read_at = 0.0

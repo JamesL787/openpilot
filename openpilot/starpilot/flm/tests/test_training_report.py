@@ -1,4 +1,5 @@
 """Actual optional writer/collector and typed application, never control authority."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
@@ -218,7 +219,7 @@ def test_actual_parent_publication_also_writes_training_snapshot(tmp_path):
   def drain(socket, callback, _receive, sink, now):
     callback(serialized_control(control) if socket is control_socket else serialized_output(applied), sink, now)
 
-  with mock.patch.object(steerlearnerd, 'drain', drain), \
+  with mock.patch.object(steerlearnerd, 'drain_pair', separate_drain_fixture(drain)), \
        mock.patch('openpilot.starpilot.flm.native_health.current_native_health', return_value=True):
     with pytest.raises(StopIteration):
       steerlearnerd.run(SimpleNamespace(), sm, control_socket, output_socket, publisher,

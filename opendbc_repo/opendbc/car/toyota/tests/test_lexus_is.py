@@ -31,7 +31,8 @@ class TestLexusIsFactory(unittest.TestCase):
           bad.passive = True
         self.assertFalse(qualified(bad), mutation)
     rc = CarInterface.get_params(CAR.LEXUS_RC, {0: {}, 1: {}, 2: {}}, [], False, False, False)
-    self.assertEqual(rc.safetyConfigs[0].safetyParam, 589)
+    self.assertEqual(rc.safetyConfigs[0].safetyParam, 0x564D)
+    self.assertTrue(qualified(rc))
 
   def test_real_parser_dsu_main_and_pcm_cruise(self):
     cp = CarInterface.get_params(CAR.LEXUS_IS, {0: {}, 1: {}, 2: {}}, [], False, False, False)

@@ -21,6 +21,8 @@ import time
 AF_BLUETOOTH = 31
 BTPROTO_L2CAP = 0
 BTPROTO_RFCOMM = 3
+ENOSYS_RETRIES = 2  # some kernels report ENOSYS on a connect that succeeds moments later
+ENOSYS_RETRY_S = 0.5
 ADDRESS_RE = re.compile(r"^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")
 
 
@@ -88,11 +90,14 @@ def _libc_connect(proto: int, kind: int, address: str, port: int, timeout: float
 def _connect(proto: int, kind: int, address: str, port: int, timeout: float) -> socket.socket:
   address = normalize_address(address)
   if hasattr(socket, "AF_BLUETOOTH") and hasattr(socket, "BTPROTO_RFCOMM"):
-    try:
-      return _native(proto, kind, address, port, timeout)
-    except OSError as exc:
-      if exc.errno != errno.ENOSYS:
-        raise
+    for attempt in range(ENOSYS_RETRIES + 1):
+      try:
+        return _native(proto, kind, address, port, timeout)
+      except OSError as exc:
+        if exc.errno != errno.ENOSYS:
+          raise
+        if attempt < ENOSYS_RETRIES:
+          time.sleep(ENOSYS_RETRY_S)
   return _libc_connect(proto, kind, address, port, timeout)
 
 

@@ -339,8 +339,10 @@ def lateral_request_allowed(control, state, angle_fault, *, independent=False):
 
   The paired exact EV9 AOL profile may request lateral-only control. Its
   native physical latch and current axis/session proof remain final authority.
-  Both modes retain pedal, standstill, gear, fault and CAN-health refusals.
+  Ordinary control retains pedal refusal. Native-qualified independent lateral
+  keeps its request through pedals; both retain standstill, gear, fault and CAN-health refusals.
   """
   return ((control.enabled or (independent and control.latActive)) and state.canValid and not state.canTimeout and not state.standstill and
           state.gearShifter == structs.CarState.GearShifter.drive and
-          not (state.brakePressed or state.gasPressed or state.steerFaultTemporary or state.steerFaultPermanent or angle_fault))
+          not (state.steerFaultTemporary or state.steerFaultPermanent or angle_fault) and
+          ((independent and control.latActive) or not (state.brakePressed or state.gasPressed)))

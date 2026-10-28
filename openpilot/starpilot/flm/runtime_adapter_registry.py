@@ -877,13 +877,8 @@ def original_source_pose_observer(sm, cp, collector, now_ns, *, distinguish_pend
     if queue:
       # No original pose is waiting after a completed publication. Rebuild
       # state brackets only for retained/new rows, after all current guards.
-      for command, _ in ready:
-        if (command.identity, command.generation, command.source_epoch, command.baseline_revision,
-            command.controller_revision, command.native_identity) != current_identity:
-          continue  # State brackets cannot bridge a command/native epoch.
-        values = dict(command.replay_inputs)
-        if 'vEgo' in values and 'steeringAngleDeg' in values:
-          history[command.state_ns] = (float(values['vEgo']), float(values['steeringAngleDeg']))
+      from openpilot.starpilot.flm.original_pose_brackets import state_brackets
+      history = state_brackets(collector, current_identity, now_ns)
     for index, evidence in enumerate(queue):
       before = [stamp for stamp in history if stamp <= (evidence.source_lower_ns or evidence.mono_ns)]
       after = [stamp for stamp in history if stamp >= (evidence.source_upper_ns or evidence.mono_ns)]

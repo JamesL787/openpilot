@@ -1,4 +1,5 @@
 """Parent-boundary source renewal with genuine collector admission and blocks."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from dataclasses import replace
 from unittest.mock import Mock, patch
 
@@ -119,7 +120,7 @@ def test_parent_renews_actual_source_and_retains_real_collector_block(tmp_path, 
 
   persistence = Mock()
   with patch.object(steerlearnerd, 'FullrateCollector', side_effect=factory), \
-       patch.object(steerlearnerd, 'drain', drain), \
+       patch.object(steerlearnerd, 'drain_pair', separate_drain_fixture(drain)), \
        patch('openpilot.starpilot.flm.native_health.current_native_health', native):
     with pytest.raises(StopIteration):
       steerlearnerd.run(cp, sm, control_socket, output_socket, Mock(), Mock(return_value=Adapter()), Mock(),

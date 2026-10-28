@@ -16,6 +16,7 @@ on Stop. Nothing here runs as root or touches vehicle control.
 
 from __future__ import annotations
 
+import errno
 import ipaddress
 import json
 import math
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from openpilot.common.hardware import COMMA_HARDWARE
-from openpilot.starpilot.system.android_auto import identity as identity_store
+from openpilot.starpilot.system.android_auto import car_profiles, device_health, identity as identity_store, system_slice
 from openpilot.starpilot.system.android_auto.auto_connect import AutoConnectPolicy
 from openpilot.starpilot.system.android_auto.bootstrap import NAMES, BootstrapError, WirelessBootstrap
 from openpilot.starpilot.system.android_auto.bugsink_report import PairingAttempt
@@ -59,6 +60,7 @@ ENCODER_RECOVERIES = 3       # hardware encoder reopens allowed per window befor
 ENCODER_RECOVERY_WINDOW = 10.0
 CAR_LINK_HOLD = 10.0         # a hands-free connection from the car counts as "car present" this long
 HFP_FRESH = 3.0              # a hands-free link from the car this recent still means "the car is reaching out now"
+NO_ANDROID_AUTO_WAIT = 8.0    # a paired device must offer Android Auto within this long, or we say it does not
 USB_HANDSHAKE_WAIT = 10.0    # the car connected but sent no AOA START this long -> present as an accessory directly
 USB_CONFIGURE_WAIT = 15.0    # slower receivers need time to enumerate after the AOA switch
 LINK_CHECK_INTERVAL = 1.0    # how often the link watcher asks whether the car's Wi-Fi is still up
@@ -93,11 +95,8 @@ def _is_onroad() -> bool:
     return False
 
 
-def wired_blocker() -> str:
-  """Why wired USB must not take the comma's USB-C port, or "" when it is free.
-
-  Chestnut and Jetlink's computer link both use that port.
-  """
+def jetlink_blocker() -> str:
+  """Why wired USB cannot connect right now: Jetlink's computer link is using the USB-C port. Wired can still be chosen."""
   try:
     from openpilot.common.params import Params
     mode = Params().get("JetlinkMode")
@@ -105,6 +104,11 @@ def wired_blocker() -> str:
       return "Turn off Jetlink to use wired Android Auto"
   except Exception:
     pass
+  return ""
+
+
+def chestnut_blocker() -> str:
+  """Why wired USB cannot be chosen at all: a Chestnut is plugged into the comma's USB-C port."""
   try:
     from openpilot.starpilot.models.jetlink_adapter import adapter
     if adapter().chestnut_present():
@@ -112,6 +116,11 @@ def wired_blocker() -> str:
   except Exception:
     pass
   return ""
+
+
+def wired_blocker() -> str:
+  """Why wired USB must not take the comma's USB-C port, or "" when it is free."""
+  return jetlink_blocker() or chestnut_blocker()
 
 
 class Cancelled(Exception):
@@ -149,6 +158,14 @@ def _wifi_dbm(interface: str = "wlan0") -> int | None:
   except (OSError, ValueError, IndexError):
     pass
   return None
+
+
+LOCAL_SOCKET_ERRORS = (errno.ENOSYS, errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT)
+
+
+def car_never_answered(error: BaseException) -> bool:
+  """False when this device's own Bluetooth stack failed, so the car's cached channel says nothing about the car."""
+  return not (isinstance(error, OSError) and error.errno in LOCAL_SOCKET_ERRORS)
 
 
 def _where(error: BaseException, depth: int = 4) -> list[str]:
@@ -220,6 +237,8 @@ class EventLog:
     self._writer: threading.Thread | None = None
     self._writer_stop: threading.Event | None = None
     self._dropped = 0
+    self.path: Path | None = None
+    self.started = 0.0
 
   def open(self) -> None:
     try:
@@ -227,6 +246,7 @@ class EventLog:
       logs = sorted(self.directory.glob("session-*.jsonl"), key=identity_store.session_log_order)
       for old in logs[:max(0, len(logs) - MAX_LOG_FILES + 1)]:
         old.unlink(missing_ok=True)
+      system_slice.prune_sidecars(self.directory)
       number = max([0, *(identity_store.session_log_order(log)[0] for log in logs)]) + 1
       path = self.directory / f"session-{number:06d}-{identity_store.timestamp()}.jsonl"
       fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -234,6 +254,7 @@ class EventLog:
     except OSError:
       return
     with self.lock:
+      self.path, self.started = path, datetime.now(UTC).timestamp()
       self._queue = queue.Queue(maxsize=LOG_QUEUE_MAX)
       self._dropped = 0
       self._writer_stop = threading.Event()
@@ -267,6 +288,11 @@ class EventLog:
     stopped.set()
     writer.join(timeout=2.0)
 
+  def capture_system(self) -> None:
+    """Save what the device was doing during this session beside its log, off the session's thread."""
+    if self.path is not None:
+      system_slice.write_sidecar_async(self.path, self.started, datetime.now(UTC).timestamp())
+
   def _line(self, record: dict) -> str:
     return json.dumps(record, default=str) + "\n"
 
@@ -286,6 +312,8 @@ class EventLog:
 
 
 class Supervisor:
+  _pairing_note = ""      # why a paired car was not chosen, kept after the pairing window closes
+  _no_aa_since = 0.0
   def __init__(self, bluez_factory=None, lease_factory=None, bluetooth_client=None, frame_path: str | None = None,
                synthetic: bool = False, car_frame_path: str = CAR_FRAME_PATH, touch_path: str = DEFAULT_TOUCH_SOCKET,
                control_path: str = DEFAULT_CONTROL_SOCKET, renderer_command: list[str] | None = None, onroad=_is_onroad,
@@ -347,9 +375,14 @@ class Supervisor:
     status["receiver_name"] = self.config["receiver_name"]
     status["companion_address"] = self.config.get("companion_address", "")
     status["companion_name"] = self.config.get("companion_name", "")
+    status["pairing_note"] = self._pairing_note
+    status["car_type"] = self.car_type()
+    status.update(car_profiles.summary(self.config))
+    status["adapter_choice_needed"] = self._adapter_choice_needed()
     status["configured_view"] = self.config["view"]
     status["connection"] = self.config["connection"]
-    status["wired_blocked"] = wired_blocker()
+    status["wired_blocked"] = chestnut_blocker()
+    status["wired_busy"] = jetlink_blocker()
     status["pairing_ready"] = self._pairing_active()
     status["auto_connect"] = bool(self.config["auto_connect"])
     status["dedicated_wifi_interface"] = bool(self.config["dedicated_wifi_interface"])
@@ -381,10 +414,15 @@ class Supervisor:
       identity_store.save_config(self.config)
     self.log("dedicated_wifi_selected", enabled=bool(enabled))
 
+  def _adapter_choice_needed(self) -> bool:
+    return self.car_type() == "adapter" and not self.config.get("car_profile_override")
+
   def start(self, trigger: str = "manual") -> None:
     with self._lock:
       if not self._projection_enabled():
         raise RuntimeError("Android Auto is disabled")
+      if self._adapter_choice_needed():
+        raise RuntimeError("Choose your adapter model (AAWireless or Other) in Galaxy first")
       if self.config["connection"] == "wired" and (reason := wired_blocker()):
         raise RuntimeError(reason)
       if self._thread is not None and self._thread.is_alive():
@@ -430,7 +468,7 @@ class Supervisor:
       if self._bluez is not None and self.config['receiver_address'] and self.config['receiver_address'] != address:
         self._bluez.release()
       if self.config["receiver_address"] != address:
-        self.config.update(companion_address="", companion_name="")
+        self.config.update(companion_address="", companion_name="", car_fingerprint={})
       self.config.update(receiver_address=address, receiver_name=name or address)
       identity_store.save_config(self.config)
     self._unselect_car_audio(address)
@@ -458,7 +496,7 @@ class Supervisor:
       if chosen:
         if self._bluez is not None:
           self._bluez.release()
-        self.config.update(receiver_address="", receiver_name="", companion_address="", companion_name="")
+        self.config.update(receiver_address="", receiver_name="", companion_address="", companion_name="", car_fingerprint={})
       elif companion:
         self.config.update(companion_address="", companion_name="")
       identity_store.save_config(self.config)
@@ -478,7 +516,7 @@ class Supervisor:
     """Choose wireless (Bluetooth + car Wi-Fi), wired (USB), or HeadunitPad or Open Headunit (on the Galaxy hotspot) projection."""
     if connection not in identity_store.CONNECTIONS:
       raise RuntimeError(f"Unknown connection {connection!r}")
-    if connection == "wired" and (reason := wired_blocker()):
+    if connection == "wired" and (reason := chestnut_blocker()):
       raise RuntimeError(reason)
     with self._lock:
       if self._thread is not None and self._thread.is_alive():
@@ -487,8 +525,55 @@ class Supervisor:
       identity_store.save_config(self.config)
     self.log("connection_selected", connection=connection)
 
+  def car_type(self) -> str:
+    """What is in the car, for the setup page: wired and tablet follow the connection, wireless is built-in or an adapter."""
+    connection = self.config["connection"]
+    if connection == "wired":
+      return "usb"
+    if connection in ("headunitpad", "openheadunit"):
+      return "app"
+    return self.config["car_type"] or ("adapter" if self.config.get("companion_address") else "builtin")
+
+  def set_car_type(self, car_type: str) -> None:
+    if car_type not in ("builtin", "adapter", "usb", "app"):
+      raise RuntimeError(f"Unknown car type {car_type!r}")
+    previous_wireless_type = self.config["car_type"] or ("adapter" if self.config.get("companion_address") else "builtin")
+    connection = {"usb": "wired", "app": "headunitpad" if self.config["connection"] not in ("headunitpad", "openheadunit")
+                  else self.config["connection"]}.get(car_type, "wireless")
+    if connection != self.config["connection"]:
+      self.set_connection(connection)
+    if car_type in ("builtin", "adapter"):
+      with self._lock:
+        self.config["car_type"] = car_type
+        if previous_wireless_type != car_type:
+          if self._bluez is not None and self.config["receiver_address"]:
+            self._bluez.release()
+          self.config.update(receiver_address="", receiver_name="", companion_address="", companion_name="", car_fingerprint={})
+        if car_type != "adapter":
+          self.config["car_profile_override"] = ""  # the adapter model only applies to a wireless adapter
+        identity_store.save_config(self.config)
+    self.log("car_type_selected", car_type=car_type)
+
+  def set_car_profile(self, profile: str) -> None:
+    """Pin a car profile ("default" for standard behavior) or go back to picking it by fingerprint ("")."""
+    if not car_profiles.valid_override(profile):
+      raise RuntimeError(f"Unknown car profile {profile!r}")
+    with self._lock:
+      self.config["car_profile_override"] = profile
+      identity_store.save_config(self.config)
+    self.log("car_profile_selected", profile=profile or "auto")
+
+  def _remember_fingerprint(self, head_unit: dict) -> None:
+    fingerprint = car_profiles.fingerprint_from(head_unit, self.config["receiver_address"])
+    if fingerprint and fingerprint != self.config.get("car_fingerprint"):
+      with self._lock:
+        self.config["car_fingerprint"] = fingerprint
+        identity_store.save_config(self.config)
+
   def prepare_pairing(self, seconds: float = 180.0) -> None:
     """Present as a phone (HFP gateway, smartphone class) while the car pairs."""
+    if self._adapter_choice_needed():
+      raise RuntimeError("Choose your adapter model (AAWireless or Other) in Galaxy first")
     if self._bluez_factory is None and (self._source_session is None or self._shared_bluetooth_owner is None or
                                         not self._shared_bluetooth_owner.session_valid(self._source_session)):
       raise RuntimeError('Current Galaxy pairing authorization required')
@@ -506,6 +591,7 @@ class Supervisor:
       self._pairing_known = known
       self._pairing_until = time.monotonic() + seconds
       self._pairing_attempt, self._pairing_seen = PairingAttempt(seconds), ()
+      self._pairing_note, self._no_aa_since = "", 0.0
     self.log("pairing_window", seconds=seconds)
 
   def pair_device(self, address: str) -> None:
@@ -533,6 +619,8 @@ class Supervisor:
     with self._lock:
       attempt, self._pairing_attempt = getattr(self, '_pairing_attempt', None), None
     if attempt is not None:
+      if result in ("interrupted", "cancelled", "expired") and attempt.reached_connection():
+        values["ended"], result = result, "paired_not_selected"
       attempt.finish(result, **values)
 
   def pairing_response(self, prompt_id: str, accepted: bool, value: str = '') -> None:
@@ -715,6 +803,7 @@ class Supervisor:
               self._shared_bluetooth_owner.phone_lease is not None and
               self._shared_bluetooth_owner.phone_lease.receiver == device["address"])]
       if not new:
+        self._note_missing_android_auto(devices, receiver)
         return
     with self._lock:
       attempt, self._pairing_attempt = getattr(self, '_pairing_attempt', None), None
@@ -728,6 +817,23 @@ class Supervisor:
       self.log("car_select_failed", error=str(error))
       if attempt is not None:
         attempt.finish("select_failed", error=str(error))
+
+  def _note_missing_android_auto(self, devices: list, receiver: dict | None) -> None:
+    """An approved, paired device that still does not offer wireless Android Auto after a short wait is not a car we can use."""
+    device = next((item for item in devices if receiver is not None and item["address"] == receiver["address"] and
+                   item["paired"] and not item.get("android_auto")), None)
+    if device is None:
+      self._no_aa_since = 0.0
+      return
+    now = time.monotonic()
+    if not self._no_aa_since:
+      self._no_aa_since = now
+    elif now - self._no_aa_since >= NO_ANDROID_AUTO_WAIT and not self._pairing_note:
+      name = device["name"] or "This device"
+      hint = "Using a wireless adapter? Choose Wireless adapter, pair the adapter here, then connect your car on the Bluetooth page."
+      self._pairing_note = f"{name} paired, but it doesn't offer wireless Android Auto. {hint}"
+      self._pairing_step("no_android_auto")
+      self.log("pairing_no_android_auto", address=device["address"])
 
   def close(self) -> None:
     self.stop()
@@ -793,6 +899,8 @@ class Supervisor:
     owner = self._shared_bluetooth_owner
     if owner is None:
       return None
+    if operation == 'forget' and self.config['receiver_address'].upper() == address.upper():
+      return self._forget_selected_car(owner, address, session)
     # select_receiver takes the supervisor lock before releasing an owner lease.
     # Keep that same order through connection, save and admission pruning so an
     # old adapter's successful action cannot save its car under a new adapter.
@@ -824,6 +932,22 @@ class Supervisor:
         self.config.update(companion_address='', companion_name='')
         identity_store.save_config(self.config)
       return result
+
+  def _forget_selected_car(self, owner, address: str, session: tuple):
+    """Forget the chosen car even while auto-connect is retrying it: stop the attempt, then delete the pairing."""
+    from openpilot.starpilot.bluetooth.owner import BluetoothRejected
+    lease = owner.phone_lease
+    if not owner.session_valid(session):
+      raise BluetoothRejected('Galaxy session expired', code='session_expired')
+    if lease is not None and not lease.released and lease.session is not None:
+      raise BluetoothRejected('Finish Android Auto pairing first', code='busy')
+    self.auto.manual_stop(self._session_alive())
+    self.stop()
+    if self._session_alive():
+      raise BluetoothRejected('Android Auto is still stopping', code='busy')
+    result = owner.request('forget', address=address)
+    self.forget_receiver(address)
+    return result
 
   def _hfp_connected(self, address: str) -> None:
     if address.upper() in (self.config["receiver_address"].upper(), self.config.get("companion_address", "").upper()):
@@ -1014,6 +1138,7 @@ class Supervisor:
         self.log("bluetooth_release_failed", error=str(error))
       self.log("session_stop")
       self.log.close()
+      self.log.capture_system()
       self._set(state="idle", detail="", running=False, retry_in=0.0, mode=None)
 
   @staticmethod
@@ -1051,6 +1176,9 @@ class Supervisor:
       self.log('companion_car_connected', address=companion)
     elif device.get('android_auto') and '0000111e-0000-1000-8000-00805f9b34fb' not in device.get('uuids', []):
       raise RuntimeError('Connect your paired car in Galaxy Bluetooth first to select it for this Android Auto adapter')
+    if delay := car_profiles.tuning(config)["connect_delay_s"]:
+      self.log("car_profile_connect_delay", seconds=delay)
+      self._wait(delay)
     bluez.connect_device(address)
     self._wait(1.0)
 
@@ -1071,14 +1199,15 @@ class Supervisor:
                                version_status=int(config.get("version_status", 0)))
       self._set(state="wifi_start")
       result = boot.run(lambda credentials: lease.acquire(credentials, cancelled=boot.join_is_cancelled), cancelled=self._stop.is_set)
-    except Exception:
-      if source == "cache" and not self._stop.is_set() and self._status["last_stage"] in ("rfcomm", "wifi_start"):
+    except Exception as error:
+      if source == "cache" and not self._stop.is_set() and self._status["last_stage"] in ("rfcomm", "wifi_start") and car_never_answered(error):
         self._remember_channel(address, None)  # the car never answered there; ask it over SDP next time
         self.log("rfcomm_cache_dropped", channel=channel)
       raise
     if source == "sdp":
       self._remember_channel(address, channel)
     self._set(head_unit=result.head_unit)
+    self._remember_fingerprint(result.head_unit)
     bluez.restore_class()  # the car has accepted the comma; stop looking like a phone to everything else
     keepalive_stop = threading.Event()
     threading.Thread(target=boot.keepalive, args=(keepalive_stop,), name="aa_rfcomm_keepalive", daemon=True).start()
@@ -1284,12 +1413,25 @@ class Supervisor:
         self._wait(1.0 + attempt * 0.5)
     raise RuntimeError(f"Car did not accept the projection connection: {last_error}")
 
+  def _adapter_address(self) -> str:
+    """This comma's Bluetooth address for the head unit's pairing request; empty when BlueZ is not up."""
+    try:
+      return str(self._bluez.adapter()[1].get("Address", "")).upper() if self._bluez is not None else ""
+    except Exception:  # DBus errors vary; the pairing request is optional
+      return ""
+
   def _project(self, result, lease, ident, connect=None, fragment_acks: bool = False) -> None:
     config = self.config
     sock = connect() if connect is not None else self._connect_tcp(result, lease)
     ca = ident.root if config.get("verify_head_unit", False) else None
     session = ProjectionSession(sock, ident.cert, ident.key, self.log, ca)
     session.fragment_acks = fragment_acks
+    tuning = car_profiles.tuning(config)
+    session.max_window = tuning["max_window"]
+    session.phone_frames = tuning["phone_frames"]
+    if tuning["phone_services"]:
+      session.phone_services = True
+      session.phone_address = self._adapter_address()
     self._stage("authenticating")
     session.authenticate()
     self._stage("negotiating")
@@ -1466,7 +1608,7 @@ class Supervisor:
                  "uptime_s": round(now - started), "frames_from_view": source.frames, "wifi_dbm": watch.wifi_dbm}
         self._set(stats=stats)
         if int(now - started) % 30 == 0:
-          self.log("stats", **stats)
+          self.log("stats", **{**device_health.sample(getattr(watch.lease, "interface", "wlan0")), **stats})
           encode_peak = 0.0  # the peak covers each logged 30 s window
       spent = time.monotonic() - pass_started
       if spent > STREAM_STALL_LOG:

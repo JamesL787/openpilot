@@ -20,7 +20,7 @@ from pathlib import Path
 # Free monthly allowances (mapbox.com/pricing, 2026-10).
 FREE = {
   "searchSessions": 500,       # Search Box API sessions (typing and searching)
-  "geocoding": 0,              # Permanent address results have no free tier; counted, not capped
+  "geocoding": 100_000,        # Temporary Geocoding API requests
   "staticTiles": 200_000,      # Static Tiles API (Galaxy's map pictures)
   "directions": 100_000,       # Directions API (routes)
   "vectorTiles": 200_000,      # Vector Tiles API (offline road maps)

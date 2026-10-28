@@ -52,7 +52,23 @@ class TestEV9CombinedProfile(unittest.TestCase):
     cc = structs.CarControl(latActive=True)
     self.assertFalse(lateral_request_allowed(cc, cs, False))
     self.assertTrue(lateral_request_allowed(cc, cs, False, independent=qualified(cp, marked_only=True)))
-    for field in ('gasPressed', 'brakePressed', 'steerFaultTemporary', 'standstill'):
+    ordinary = structs.CarControl(enabled=True, latActive=True)
+    for field in ('gasPressed', 'brakePressed'):
+      setattr(cs, field, True)
+      self.assertTrue(temporary_restriction(cp, cs), field)  # Intent retention is not output authority.
+      self.assertTrue(lateral_request_allowed(cc, cs, False, independent=qualified(cp, marked_only=True)), field)
+      self.assertFalse(lateral_request_allowed(ordinary, cs, False), field)
+      self.assertFalse(lateral_request_allowed(structs.CarControl(), cs, False, independent=True), field)
+      self.assertFalse(lateral_request_allowed(structs.CarControl(enabled=True), cs, False, independent=True), field)
+      for refusal, value in (('canValid', False), ('canTimeout', True), ('steerFaultTemporary', True),
+                             ('steerFaultPermanent', True), ('standstill', True), ('gearShifter', 'reverse')):
+        before = getattr(cs, refusal)
+        setattr(cs, refusal, value)
+        self.assertFalse(lateral_request_allowed(cc, cs, False, independent=True), (field, refusal))
+        setattr(cs, refusal, before)
+      self.assertFalse(lateral_request_allowed(cc, cs, True, independent=True), field)
+      setattr(cs, field, False)
+    for field in ('steerFaultTemporary', 'standstill'):
       setattr(cs, field, True)
       self.assertTrue(temporary_restriction(cp, cs), field)
       self.assertFalse(lateral_request_allowed(cc, cs, False, independent=True), field)

@@ -102,7 +102,7 @@ class NavigationRoute:
       points.append(self.points[-1])
     return [{'longitude': x, 'latitude': y} for x, y in points]
 
-  def progress(self, position, speed: float, bearing: float | None = None) -> Progress:
+  def progress(self, position, speed: float | None, bearing: float | None = None) -> Progress:
     best = (float('inf'), 0., 0)
     for index, (a, b) in enumerate(zip(self.points, self.points[1:], strict=False)):
       fraction, separation = project(a, b, position)
@@ -123,18 +123,20 @@ class NavigationRoute:
     upcoming = self.steps[min(index + 1, len(self.steps) - 1)]
     next_maneuver = {'maneuverType': upcoming.maneuver_type, 'maneuverModifier': upcoming.modifier,
                          'distanceMeters': max(0., upcoming.end - along)}
+    known_speed = speed is not None and math.isfinite(speed)
+    threshold_speed = speed if known_speed else 0.
     speeds, distances = (0., 5., 10., 20., 40.), (40., 50., 60., 80., 100.)
-    bucket = min(3, max(0, bisect_right(speeds, speed) - 1))
-    fraction = min(1., max(0., (speed - speeds[bucket]) / (speeds[bucket + 1] - speeds[bucket])))
+    bucket = min(3, max(0, bisect_right(speeds, threshold_speed) - 1))
+    fraction = min(1., max(0., (threshold_speed - speeds[bucket]) / (speeds[bucket + 1] - speeds[bucket])))
     threshold = distances[bucket] + fraction * (distances[bucket + 1] - distances[bucket])
     misaligned = False
-    if bearing is not None and speed >= 2.5:
+    if bearing is not None and known_speed and speed >= 2.5:
       a, b = self.points[segment], self.points[segment + 1]
       lat1, lat2, delta = math.radians(a[1]), math.radians(b[1]), math.radians(b[0] - a[0])
       direction = math.degrees(math.atan2(math.sin(delta) * math.cos(lat2),
                               math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(delta)))
       misaligned = abs((direction - bearing + 180) % 360 - 180) > 75
-    arrived = speed < 2 and distance(position, self.points[-1]) < 40 and instruction['remainingDistanceMeters'] < 40
+    arrived = known_speed and speed < 2 and distance(position, self.points[-1]) < 40 and instruction['remainingDistanceMeters'] < 40
     return Progress(instruction, next_maneuver, separation > threshold or misaligned, arrived)
 
 

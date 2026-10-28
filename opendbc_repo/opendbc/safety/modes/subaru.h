@@ -325,7 +325,7 @@ static safety_config subaru_init(uint16_t param) {
     SUBARU_COMMON_TX_MSGS(SUBARU_ALT_BUS)
   };
   static const CanMsg SUBARU_GEN2_ANGLE_TX_MSGS_LIST[] = {
-    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_ALT_BUS)
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
   };
 
   static const CanMsg SUBARU_ASCENT_ANGLE_TX_MSGS_LIST[] = {
@@ -338,16 +338,16 @@ static safety_config subaru_init(uint16_t param) {
   };
 
   static const CanMsg SUBARU_STOP_START_TX_MSGS[] = {
-    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_ALT_BUS)
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
     {0x390U, SUBARU_ALT_BUS, 8, .check_relay = false},
   };
 
   static const CanMsg SUBARU_AVH_TX_MSGS[] = {
-    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_ALT_BUS)
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
     {0x6BBU, SUBARU_ALT_BUS, 8, .check_relay = false},
   };
   static const CanMsg SUBARU_AVH_STOP_START_TX_MSGS[] = {
-    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_ALT_BUS)
+    SUBARU_GEN2_ANGLE_TX_MSGS(SUBARU_MAIN_BUS)
     {0x6BBU, SUBARU_ALT_BUS, 8, .check_relay = false},
     {0x390U, SUBARU_ALT_BUS, 8, .check_relay = false},
   };

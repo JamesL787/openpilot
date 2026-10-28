@@ -284,12 +284,12 @@ def test_gauge_box_shrinks_to_its_content_and_saved_positions_keep_the_drawing_i
   # The box stays inside the frame the gauge draws in, so content that fit before still fits.
   assert CEM_GAUGE_INSET[0] + CEM_GAUGE_SIZE[0] <= CEM_GAUGE_FRAME[0]
   assert CEM_GAUGE_INSET[1] + CEM_GAUGE_SIZE[1] == CEM_GAUGE_FRAME[1]
-  # A version 6 layout saved the frame's corner; it moves by the inset once, then stays put.
+  # The legacy default clears the larger controls; custom positions only gain the inset.
   old = default_document()
   old['version'] = 6
   old['layouts']['large'][CEM_GAUGE_WIDGET].update(x=436, y=75, enabled=True)
   migrated = validate_document(old)
-  assert migrated['layouts']['large'][CEM_GAUGE_WIDGET] == {'x': 56, 'y': 452, 'enabled': True}
+  assert migrated['layouts']['large'][CEM_GAUGE_WIDGET] == {'x': 56, 'y': 536, 'enabled': True}
   assert validate_document(migrated) == migrated
   # An old gauge flush with the bottom edge is still valid and lands flush with it again.
   old['layouts']['large'][CEM_GAUGE_WIDGET].update(x=1486, y=750)
@@ -297,7 +297,7 @@ def test_gauge_box_shrinks_to_its_content_and_saved_positions_keep_the_drawing_i
   gauge = AetherGauge(Mock())
   with patch.object(gauge, '_render_unified_road') as draw:
     gauge.render(state('cem_stop', customization=migrated))
-  assert draw.call_args.args[1:3] == (184., 513.)
+  assert draw.call_args.args[1:3] == (184., 597.)
   # Android Auto version 2 layouts move the same way.
   viewport = (2880, 1080)
   aa = default_layout_for_viewport(viewport)

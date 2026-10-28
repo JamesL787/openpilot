@@ -201,8 +201,7 @@ class TestHighlanderAol(unittest.TestCase):
     bad = cp.as_reader().as_builder()
     bad.safetyConfigs[0].safetyParam ^= 0x4000
     self.assertFalse(qualified(bad))
-    for car in (CAR.LEXUS_RC,
-                CAR.TOYOTA_RAV4_PRIME, CAR.TOYOTA_SIENNA_4TH_GEN):
+    for car in (CAR.TOYOTA_RAV4_PRIME, CAR.TOYOTA_SIENNA_4TH_GEN):
       cp = CarInterface.get_params(car, gen_empty_fingerprint(), [], True, False, False)
       self.assertFalse(qualified(cp))
 

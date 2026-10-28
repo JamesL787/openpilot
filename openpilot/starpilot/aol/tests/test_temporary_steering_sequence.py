@@ -314,3 +314,32 @@ def test_initial_eps_off_cannot_reorder_the_preceding_accepted_active_source():
     assert 11_530_000_000 - proof.aolAxisState.sourceCarStateMonoTime < 30_000_000
     assert not receive(11_530_000_000, axis=proof.as_reader(), state=temporary)
     assert not card.aol_card_intent.allowed_latch
+
+
+def test_axis_first_eps_join_uses_last_accepted_active_proof_without_renewing_leases():
+  case = fixture.IoniqAvailabilityTests(methodName='runTest')
+  with OpenpilotPrefix(), ExitStack() as cleanup:
+    cleanup.callback(case.doCleanups)
+    sd, _, drive, card, receive = baseline(case)
+    feedback = card.aol_transport_feedback
+    original = leases(feedback)
+    drive(152, gas=True, native_request_long=False)
+    temporary = fixture.car_state()
+    temporary.gasPressed = temporary.steerFaultTemporary = True
+    assert receive(11_529_500_000, axis=sd.pm.messages['aolAxisState'],
+                   event=sd.pm.messages['onroadEvents'], state=temporary)
+    active = feedback.signature
+    assert leases(feedback) == original
+    withdrawn, _, command = drive(153, gas=True, observed_state=temporary,
+                                  native_request_lat=True, native_request_long=False)
+    assert not withdrawn.lateralActive and not withdrawn.longitudinalActive
+    assert not command.latActive and not command.longActive
+    proof, event = sd.pm.messages['aolAxisState'], sd.pm.messages['onroadEvents']
+    now = 11_541_000_000
+    assert now - original[1] > 30_000_000
+    assert now - active[8] <= 30_000_000 and now <= active[4]
+    assert receive(now, axis=proof, state=temporary)
+    assert card.aol_card_intent.allowed_latch and not feedback.failed
+    assert leases(feedback) == original
+    assert receive(now + 100_000, event=event, state=temporary)
+    assert card.aol_card_intent.allowed_latch and leases(feedback) == original

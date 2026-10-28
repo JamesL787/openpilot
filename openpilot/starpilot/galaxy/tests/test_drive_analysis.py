@@ -53,6 +53,34 @@ class DriveAnalysisTest(unittest.TestCase):
     return [event('carState', stamp, vEgo=speed), event('selfdriveState', stamp, enabled=enabled),
             event('onroadEvents', stamp, onroadEvents=[{'name': name} for name in alerts])]
 
+  def test_aol_counts_control_activity_separately_across_segments(self):
+    samples = []
+    for index, (enabled, active) in enumerate(((False, True), (False, True), (True, True), (False, False), (False, False))):
+      stamp = BASE + index * 500_000_000
+      samples.append([*self.sample(stamp, 10, enabled),
+                      event('carControl', stamp, enabled=enabled, latActive=active),
+                      # An admitted axis is not proof of active control.
+                      event('aolAxisState', stamp, lateralActive=True, desiredLateral=True)])
+    first = [*samples[0], *samples[1], event('sentinel', BASE + 750_000_000, type='endOfSegment')]
+    second = [*samples[2], *samples[3], *samples[4], event('sentinel', BASE + 2_000_000_000, type='endOfRoute')]
+    result = analyze_route(self.root, selection(write(self.root, 0, first, kind='qlog'),
+                                               write(self.root, 1, second, kind='qlog')), permitted=lambda: True)
+    self.assertTrue(result['complete'], result)
+    self.assertEqual((result['aolSeconds'], result['aolPercent']), (1.0, 50.0))
+    self.assertEqual((result['engagedSeconds'], result['engagedPercent']), (.5, 25.0))
+    self.assertEqual(result['distanceMeters'], 20)
+
+  def test_gapped_control_does_not_invalidate_existing_statistics(self):
+    events = [item for index in range(5) for item in self.sample(BASE + index * 500_000_000, 10, True)]
+    events += [event('carControl', BASE, enabled=False, latActive=True),
+               event('carControl', BASE + 2_000_000_000, enabled=False, latActive=True),
+               event('sentinel', BASE + 2_000_000_000, type='endOfRoute')]
+    result = analyze_route(self.root, selection(write(self.root, 0, events)), permitted=lambda: True)
+    self.assertTrue(result['complete'], result)
+    self.assertEqual(result['engagedSeconds'], 2)
+    self.assertIsNone(result['aolSeconds'])
+    self.assertIsNone(result['aolPercent'])
+
   def test_complete_contiguous_route_uses_observed_values_and_event_edges(self):
     first = [event('clocks', BASE, wallTimeNanos=1_790_334_400_000_000_000),
              *self.sample(BASE, 0, True),
@@ -72,6 +100,8 @@ class DriveAnalysisTest(unittest.TestCase):
     self.assertEqual(result['unresponsiveMoments'], 1)
     self.assertEqual(result['startTime'], 1_790_334_400)
     self.assertIsNone(result['model'])
+    self.assertIsNone(result['aolSeconds'])
+    self.assertIsNone(result['aolPercent'])
 
   def test_missing_sentinel_gap_and_noncontiguous_segments_are_incomplete(self):
     events = [*self.sample(BASE, 5, True), *self.sample(BASE + 2_000_000_000, 5, True)]

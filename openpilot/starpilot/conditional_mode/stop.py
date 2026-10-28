@@ -10,11 +10,14 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
+from opendbc.car.ford.values import CAR as FORD_CAR
 
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.conditional_mode.turn_scene import committed_turn_scene
 
+
+FORD_STOP_NAMES = frozenset(str(car) for car in FORD_CAR)
 
 THRESHOLD = 1.0 - 1.0 / math.e
 MAX_SOURCE_AGE_S = 0.25
@@ -58,6 +61,7 @@ class StopFrame:
   model_should_stop: bool | None = None
   stationary_launch_clear: bool = False
   standstill_path_extent_m: float | None = None
+  longitudinal_stop_active: bool = False
 
 
 @dataclass(frozen=True)
@@ -152,6 +156,16 @@ class StopLightDetector:
       else:
         self.commit_clear_since_s = None
 
+  def _commit_ford_standstill(self, frame: StopFrame, extent: float) -> None:
+    # Commit only an already established, geometry-qualified stopped hold.
+    # The model action corroborates that hold; it cannot acquire a light alone.
+    if (frame.car_fingerprint in FORD_STOP_NAMES and frame.standstill is True and
+        frame.pedal_override is False and frame.model_should_stop is True and
+        frame.longitudinal_stop_active is True and
+        self.standstill_reason == 'light' and self.standstill_model_stopped and
+        extent < FROZEN_RAW_STOP_DISTANCE_M):
+      self._commit(frame, extent, True, True, 0.0)
+
   def _standstill(self, frame: StopFrame, model_stopped: bool) -> tuple[bool | None, str | None]:
     if not frame.standstill:
       self.standstill_reason = None
@@ -244,6 +258,7 @@ class StopLightDetector:
         return StopObservation(True, hold, reason, None)
       extent = _finite(frame.standstill_path_extent_m, 0.0, 500.0)
       if horizon is None and frame.standstill is True and frame.pedal_override is False and extent is not None:
+        self._commit_ford_standstill(frame, extent)
         release_distance = FROZEN_RAW_STOP_DISTANCE_M + (STOP_MODEL_RELEASE_MARGIN_M if self.standstill_model_stopped else 0.0)
         self.standstill_model_stopped = extent < release_distance
         hold, reason = self._standstill(frame, self.standstill_model_stopped or forcing_stop)
@@ -262,6 +277,7 @@ class StopLightDetector:
       self.standstill_model_stopped = horizon < release_distance
     else:
       self.standstill_model_stopped = False
+    self._commit_ford_standstill(frame, horizon)
     model_stopped = (self.standstill_model_stopped if frame.standstill else horizon < FROZEN_RAW_STOP_DISTANCE_M) or forcing_stop
     if frame.stop_sign_confirmed:
       self.light_filter.x = 1.0

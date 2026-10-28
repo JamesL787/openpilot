@@ -17,7 +17,7 @@ from opendbc.car.toyota.interface import CarInterface as ToyotaInterface
 from opendbc.car.toyota.values import CAR as ToyotaCar
 from openpilot.common.params import Params
 from openpilot.starpilot.galaxy.settings import (
-  AuthorityContext, LiveContextSource, SettingsChanged, SettingsGateway,
+  AuthorityContext, LiveContextSource, PAGES, SettingsChanged, SettingsGateway,
 )
 from openpilot.starpilot.galaxy.access import GalaxyAccessOwner
 from openpilot.starpilot.galaxy.server import make_server
@@ -247,10 +247,17 @@ class SettingsGatewayTest(unittest.TestCase):
         self.assertFalse(self.params.get_bool("SpeedLimitController"))
 
   def test_all_saved_groups_are_display_only_projection(self):
+    self.context.value = replace(self.context.value,
+                                 cp=ToyotaInterface.get_non_essential_params(ToyotaCar.TOYOTA_COROLLA_TSS2))
     hub = self.page("hub")
+    self.assertTrue(hub["sections"])
+    self.assertTrue(all(section["pages"] and all(page["id"] in PAGES for page in section["pages"])
+                        for section in hub["sections"]))
+    lateral = next(section for section in hub["sections"] if section["id"] == "lateral")
+    self.assertEqual(next(page for page in lateral["pages"] if page["id"] == "aol")["title"], self.page("aol")["title"])
     self.assertEqual([row["page"] for row in hub["rows"]],
                      ["curve", "slc", "lane", "lane_change", "profiles", "conditional", "torque", "aol", "wheel", "night_star",
-                      "aggressive", "standard", "relaxed", "traffic"])
+                      "vehicle", "aggressive", "standard", "relaxed", "traffic"])
     for page in ("slc", "lane", "lane_change", "profiles", "conditional", "conditional/cem", "conditional/ccm",
                  "curve", "torque", "aol", "appearance", "display", "sounds", "pip", "sentry", "aggressive/following"):
       with self.subTest(page=page):
@@ -258,6 +265,8 @@ class SettingsGatewayTest(unittest.TestCase):
         self.assertTrue(result["rows"])
         for row in result["rows"]:
           self.assertFalse({"source", "related_source", "dependencies", "capability", "vehicle_fingerprint"} & row.keys())
+          if row["page"]:
+            self.assertIsInstance(row["carVisible"], bool)
 
   def test_appearance_confirmation_is_source_and_session_bound_without_cp(self):
     from openpilot.starpilot.ui.appearance_preferences import read_visibility
@@ -268,7 +277,7 @@ class SettingsGatewayTest(unittest.TestCase):
     self.assertEqual([rows[label][1]["value"] for label in
                       ("Hide Personality Alerts", "Wheel brake and acceleration colors", "C4 amber signal border", "C4 red blind-spot border")],
                      ["Off", "Off", "Off", "On"])
-    # Widget visibility, the stopped timer and Rainbow Road are edited with the layout instead.
+    # Layout owns widgets, stopped timer and Rainbow Road.
     self.assertFalse({"Stopped Timer", "Show Torque Bar", "Rainbow Road", "Hide Driver Monitoring Icon"} & rows.keys())
     self.assertFalse(rows["C4 amber signal border"][1]["confirm"])
     intent = self.gateway.preview(page["view"], rows["C4 amber signal border"][0], 1, self.session, self.generation)
@@ -453,11 +462,11 @@ class SettingsGatewayTest(unittest.TestCase):
         self.assertNotIn("require your confirmation", primary["reason"])
         confirmation = next(row for row in rows if row["label"] == "Automatic adoption")
         self.assertEqual(confirmation["value"], "On")
-        self.assertIn("3-second flash", confirmation["reason"])
+        self.assertIn("immediately", confirmation["reason"])
         self.assertIn("accepts", confirmation["reason"])
 
     with mock.patch.dict(os.environ, {"SLC_REPLAY_RUNTIME": "0", "SLC_VISION_DEVELOPMENT": "0"}):
-      # A normal finalized car offers Vision without development/replay flags.
+      # Finalized Vision needs no development/replay flags.
       page = self.page("slc")
       index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Primary source")
       intent = self.gateway.preview(page["view"], index, 1, self.session, self.generation)
@@ -483,8 +492,7 @@ class SettingsGatewayTest(unittest.TestCase):
             self.gateway.confirm(intent["intent"], self.session, self.generation)
           self.assertEqual(read_saved(self.params, "SLCPriority1", 128)[0], b"Dashboard")
 
-      # Source choice is display access on a native stock-ACC car, never a
-      # grant of longitudinal control from a remembered controller switch.
+      # Stock-ACC display choice never grants LONG from a saved switch.
       from openpilot.starpilot.feature_runtime import slc_runtime_settings, vision_control_enabled
       stock = HondaInterface.get_params(HondaCAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), [], False, False, False)
       self.assertFalse(stock.openpilotLongitudinalControl)
@@ -1228,7 +1236,7 @@ class SettingsGatewayTest(unittest.TestCase):
     self.assertIsNone(self.params.get("LaneCenteringE2EAuthority"))
 
   def test_uploads_missing_default_off_saved_values_and_vehicle_independence(self):
-    # Owner/projection contract; native key registration is qualified separately.
+    # Native keys are qualified separately.
     root = Path(self.params.get_param_path("IsMetric")).parent
     class Files:
       def get_param_path(self, key):
@@ -1367,7 +1375,7 @@ class LiveContextTest(unittest.TestCase):
     self.messages.updated["deviceState"] = False
     self.boot += 1_600_000_000
     self.assertFalse(self.source.sample().parked)  # Python mono stamp ages against boot after resume.
-    # A queued pre-resume frame must remain blocked even if received again.
+    # Re-received pre-resume frames stay blocked.
     self.messages.updated["deviceState"] = True
     self.assertFalse(self.source.sample().parked)
     self.mono += 30_000_000
@@ -1381,7 +1389,7 @@ class LiveContextTest(unittest.TestCase):
     self.assertFalse(self.source.sample().parked)
 
   def test_startup_queued_frame_and_unbounded_clock_pair(self):
-    # Reconstruct at current time so the already queued frame predates startup.
+    # Queued frames predate reconstruction.
     source = LiveContextSource(self.params, self.messages, mono_clock=lambda: self.mono,
                                boot_clock=lambda: self.boot, evidence_wait_ms=0)
     self.assertFalse(source.sample().parked)

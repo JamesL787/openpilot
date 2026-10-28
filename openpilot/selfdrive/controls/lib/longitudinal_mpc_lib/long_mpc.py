@@ -62,6 +62,16 @@ LEAD_T_IDXS_MODEL = np.asarray(ModelConstants.LEAD_T_IDXS, dtype=np.float64)
 MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE = 0.5
 MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC = 7.0
 
+def should_trigger_planner_fcw(lead, v_ego: float) -> bool:
+  if lead is None or not lead.present or float(lead.modelProb) <= 0.9:
+    return False
+  closing_speed = max(0.0, v_ego - float(lead.vLead))
+  if closing_speed < 0.5:
+    return False
+  ttc = max(0.0, float(lead.dRel)) / closing_speed
+  return ttc < 4.0
+
+
 def build_model_lead_trajectory(model_lead, radar_lead, v_ego, model_v_ego=None):
   if model_lead is None or radar_lead is None or not bool(getattr(radar_lead, "present", False)):
     return None

@@ -71,7 +71,8 @@ def qualified(cp):
           bool(cp.flags & HyundaiFlags.CANFD_LKA_STEER_MSG) and not int(cp.flags) & ~int(allowed) and
           bool(cp.flags & HyundaiFlags.CCNC) == bool(factory.config.flags & HyundaiFlags.CCNC) and
           stock_qualified(stock) and stock.safetyConfigs[0].safetyParam in STOCK_WORDS and
-          cp.safetyConfigs[0].safetyParam == stock.safetyConfigs[0].safetyParam | 4)
+          cp.safetyConfigs[0].safetyParam == (stock.safetyConfigs[0].safetyParam | 4 |
+            (0x2000 if cp.carFingerprint in (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN) else 0)))
 
 
 class GenericHDA2Startup(RadarHDA2Startup):

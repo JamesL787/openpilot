@@ -45,7 +45,9 @@ FUEL_CASES = tuple((identity, hybrid) for identity in sorted(CARS) for hybrid in
 @pytest.mark.parametrize('alt', [False, True])
 def test_existing_generic_hda2_long_requires_prepublication_owner(identity, hybrid, alt):
   cp = params(identity, hybrid, alt=alt)
-  assert cp.openpilotLongitudinalControl and cp.safetyConfigs[0].safetyParam in (0x14, 0x15, 0x16, 0x94, 0x95, 0x96)
+  gas = 1 if identity.config.flags & HyundaiFlags.EV else 2 if hybrid or identity == CAR.KIA_CARNIVAL_HEV_4TH_GEN else 0
+  calibration = 0x2000 if identity in (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN) else 0
+  assert cp.openpilotLongitudinalControl and cp.safetyConfigs[0].safetyParam == (0x14 | gas | (128 if alt else 0) | calibration)
   sent = []
   owner = CarInterface.startup_owner(cp, (list, sent.extend), requested=True)
   assert not sent

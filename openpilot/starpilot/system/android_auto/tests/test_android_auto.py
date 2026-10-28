@@ -12,8 +12,10 @@ import pytest
 from openpilot.starpilot.system.android_auto import bootstrap as bs
 from openpilot.starpilot.system.android_auto import hfp, sdp
 from openpilot.starpilot.system.android_auto.frame_source import FrameConsumer, FrameProducer, FrameRequest, fit_content
-from openpilot.starpilot.system.android_auto.session import (AuthenticationRejected, ProjectionSession, VideoMode, choose_video_mode)
-from openpilot.starpilot.system.android_auto.tests.fake_head_unit import FakeHeadUnit, make_identity, rfcomm_head_unit
+from openpilot.starpilot.system.android_auto.session import (AuthenticationRejected, ProjectionSession, START_CODE, VideoMode, choose_video_mode,
+                                                              wire_frame)
+from openpilot.starpilot.system.android_auto.tests.fake_head_unit import (BLUETOOTH_CHANNEL, SENSOR_CHANNEL, FakeHeadUnit, make_identity,
+                                                                     rfcomm_head_unit)
 from openpilot.starpilot.system.android_auto.wire import field, one, parse_fields, signed
 
 
@@ -567,6 +569,86 @@ def test_session_sends_codec_config_before_each_epoch(identity, ack_codec_config
   assert hu.error is None, hu.error
   sps_pps = b"\x00\x00\x00\x01\x67\x42\x00\x00\x00\x01\x68\xce"
   assert hu.codec_configs == [(1, sps_pps, 0), (2, sps_pps, 4)]  # one per epoch, before its keyframe
+
+
+def test_wire_frame_drops_aud_and_optionally_config():
+  aud, sps, pps, idr = b"\x00\x00\x00\x01\x09\xf0", b"\x00\x00\x00\x01\x67\x42", b"\x00\x00\x00\x01\x68\xce", b"\x00\x00\x00\x01\x65\x88"
+  assert wire_frame(aud + sps + pps + idr, drop_config=True) == idr
+  assert wire_frame(aud + sps + pps + idr, drop_config=False) == sps + pps + idr
+  assert wire_frame(b"junk", drop_config=True) == b"junk"
+
+
+def test_session_sends_picture_units_only_when_asked(identity):
+  hu = FakeHeadUnit(identity)
+  session = connect(hu, identity)
+  session.phone_frames = True
+  session.authenticate()
+  session.start("StarPilot", "comma.ai")
+  pump_until(session, lambda: session.focused)
+  session.send_frame(b"\x00\x00\x00\x01\x09\xf0\x00\x00\x00\x01\x67\x42\x00\x00\x00\x01\x68\xce\x00\x00\x00\x01\x65\x88", 1, keyframe=True)
+  pump_until(session, lambda: session.unacked == 0)
+  session.shutdown()
+  session.peer.close()
+  hu.thread.join(5)
+  assert hu.error is None, hu.error
+  for _, frame in hu.frames:
+    assert frame and all(frame[m.end()] & 31 not in (7, 8, 9) for m in START_CODE.finditer(frame))
+
+
+@pytest.mark.parametrize("max_window, offered, used", [(2, 30, 2), (30, 30, 30), (30, 100, 30), (30, 4, 4)])
+def test_session_streams_at_the_window_the_profile_allows(identity, max_window, offered, used):
+  hu = FakeHeadUnit(identity, window=offered)
+  session = connect(hu, identity)
+  session.max_window = max_window
+  session.authenticate()
+  session.start("StarPilot", "comma.ai")
+  assert session.window == used
+  session.shutdown()
+  session.peer.close()
+  hu.thread.join(5)
+
+
+def test_session_opens_car_data_and_bluetooth_like_a_phone(identity):
+  hu = FakeHeadUnit(identity, phone_services=True)
+  session = connect(hu, identity)
+  session.phone_services = True
+  session.phone_address = "39:90:21:64:07:00"
+  session.authenticate()
+  session.start("StarPilot", "comma.ai")
+  pump_until(session, lambda: session.focused and session.sensor_events)
+  session.shutdown()
+  session.peer.close()
+  hu.thread.join(5)
+  assert hu.error is None
+  assert {SENSOR_CHANNEL, BLUETOOTH_CHANNEL} <= set(hu.opened)
+  assert hu.sensor_requests == [13, 10]  # driving status and night only; never location
+  assert hu.pairing_requests == [("39:90:21:64:07:00", 2)]
+  assert session.stats()["sensor_events"] == 1
+
+
+def test_session_leaves_car_data_alone_by_default(identity):
+  hu = FakeHeadUnit(identity, phone_services=True)
+  session = connect(hu, identity)
+  session.authenticate()
+  session.start("StarPilot", "comma.ai")
+  pump_until(session, lambda: session.focused)
+  session.shutdown()
+  session.peer.close()
+  hu.thread.join(5)
+  assert hu.error is None and SENSOR_CHANNEL not in hu.opened and BLUETOOTH_CHANNEL not in hu.opened and hu.pairing_requests == []
+
+
+def test_session_projects_without_a_bluetooth_address(identity):
+  hu = FakeHeadUnit(identity, phone_services=True)
+  session = connect(hu, identity)
+  session.phone_services = True
+  session.authenticate()
+  session.start("StarPilot", "comma.ai")
+  pump_until(session, lambda: session.focused)
+  session.shutdown()
+  session.peer.close()
+  hu.thread.join(5)
+  assert hu.error is None and BLUETOOTH_CHANNEL in hu.opened and hu.pairing_requests == []
 
 
 def test_session_keeps_unsolicited_focus_grant(identity):
@@ -1156,3 +1238,48 @@ def test_supervisor_retries_wifi_recovery_while_idle(monkeypatch):
   sup._session_alive = lambda: True  # ty: ignore[invalid-assignment]  # test double
   sup.recover_wifi(2000)  # never while a session owns wlan0
   assert len(calls) == 2
+
+
+def test_jetlink_delays_wired_but_does_not_stop_choosing_it(identity, tmp_path, monkeypatch):
+  from openpilot.starpilot.system.android_auto import supervisor as supervisor_module
+  sup, _ = make_supervisor(identity, tmp_path, monkeypatch, lambda *a, **k: None)
+  monkeypatch.setattr(supervisor_module, "jetlink_blocker", lambda: "Turn off Jetlink to use wired Android Auto")
+  monkeypatch.setattr(supervisor_module, "chestnut_blocker", lambda: "")
+  sup.set_connection("wired")
+  status = sup.status()
+  assert sup.config["connection"] == "wired" and status["wired_blocked"] == "" and "Jetlink" in status["wired_busy"]
+  with pytest.raises(RuntimeError, match="Turn off Jetlink"):
+    sup.start()
+
+
+def test_chestnut_still_stops_choosing_wired(identity, tmp_path, monkeypatch):
+  from openpilot.starpilot.system.android_auto import supervisor as supervisor_module
+  sup, _ = make_supervisor(identity, tmp_path, monkeypatch, lambda *a, **k: None)
+  monkeypatch.setattr(supervisor_module, "jetlink_blocker", lambda: "")
+  monkeypatch.setattr(supervisor_module, "chestnut_blocker", lambda: "Wired Android Auto is unavailable while Chestnut is connected")
+  with pytest.raises(RuntimeError, match="Chestnut"):
+    sup.set_connection("wired")
+
+
+def test_discovery_waits_past_the_message_timeout_for_a_slow_adapter():
+  from openpilot.starpilot.system.android_auto.session import Session
+  a, b = socket.socketpair()
+  session = Session.__new__(Session)
+  session.peer = a
+  session.authenticated = False
+  session.handshake_timeout = 0.1
+  session.fragments = {}
+  session.bytes_received = 0
+  def send_slowly():
+    time.sleep(0.2)
+    b.sendall(b"\x00\x03\x00\x02")
+    time.sleep(0.2)
+    b.sendall(b"\x00\x06")
+  sender = threading.Thread(target=send_slowly)
+  sender.start()
+  try:
+    assert session.wait_for(0, 6, timeout=1.0, patient=True) == b""
+  finally:
+    sender.join()
+    a.close()
+    b.close()

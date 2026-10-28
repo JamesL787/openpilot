@@ -46,7 +46,7 @@ def _valid(value: object, event_id: str) -> bool:
   if any(type(key) is not str for key in value):
     return False
   fields = {key: item for key, item in value.items() if type(key) is str}
-  if set(fields) != FIELDS or ID.fullmatch(event_id) is None:
+  if set(fields) not in (FIELDS, FIELDS | {"simulated"}) or ("simulated" in fields and fields["simulated"] is not True) or ID.fullmatch(event_id) is None:
     return False
   version = fields["version"]
   session_id = fields["sessionId"]
@@ -117,10 +117,12 @@ class EventStore:
     finally:
       os.close(fd)
 
-  def record(self, kind: str, mono_time_ns: int, *, permitted: Callable[[], bool], images: dict | None = None) -> RecordReceipt:
+  def record(self, kind: str, mono_time_ns: int, *, permitted: Callable[[], bool], images: dict | None = None, simulated: bool = False) -> RecordReceipt:
     event_id = uuid.uuid4().hex
     value = {"version": 1, "eventId": event_id, "sessionId": self.session_id, "kind": kind,
              "monoTimeNs": mono_time_ns, "wallTimeNs": time.time_ns()}
+    if simulated:
+      value["simulated"] = True
     if not _valid(value, event_id):
       raise ValueError("Invalid Sentry event")
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -262,6 +264,9 @@ class EventStore:
               value = json.loads(raw, object_pairs_hook=_unique)
               if not _valid(value, event_id):
                 raise ValueError("Invalid event metadata")
+              if value.get('simulated') and time.time_ns() - value['wallTimeNs'] > 600_000_000_000:
+                os.unlink(entry.name, dir_fd=directory)
+                continue
               result["events"].append(value)
             except (OSError, ValueError, TypeError, RecursionError):
               result["incomplete"] = True

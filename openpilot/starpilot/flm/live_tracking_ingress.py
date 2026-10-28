@@ -180,6 +180,23 @@ class LiveTrackingIngress:
         self.latest_offer is None or application.version != 1 or not 0 < application.sequence <= self.latest_offer.sequence):
       return False
     state = self.optimizer.offer_state
+    if application.status == 'rejected':
+      if (application.reason != 'pending_trial_interrupted' or application.binding != self.binding
+          or state['phase'] not in ('trial', 'confirmed') or state.get('accepted', False)
+          or application.trial_id != state['trial_id']
+          or application.target_sequence != state.get('target_sequence', self.optimizer.sequence)
+          or application.confirmed_target_sha256
+          or not state['started_ns'] < application.control_ns <= now_ns <= application.control_ns+100_000_000):
+        return False
+      try:
+        if full_profile_sha256(self.binding.baseline_revision, application.applied) != application.applied_sha256:
+          return False
+      except (TypeError, ValueError):
+        return False
+      # Withdraw the wire trial and retain only the existing inert-study rules.
+      # A fresh baseline ACK and new ID are still required; no lease is renewed.
+      self.interrupt('consumer_pending_trial_interrupted')
+      return False
     return self.optimizer.acknowledge_application(trial_id=application.trial_id,
       target_sequence=application.target_sequence, phase=state['phase'],
       target_sha256=application.applied_sha256, applied_full30=application.applied,

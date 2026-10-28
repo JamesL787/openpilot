@@ -730,6 +730,17 @@ class LiveTrackingActor:
       same_source = collector is not None and self._same_bootstrap_source(source, now_ns)
       retain = same_source and self.ingress is None
       retain_probe = same_source and self.ingress is not None and self.certificate is not None and self.probe_token is not None
+      preparation = self.probe_preparation
+      # Inline numerical work owns the same original window as an external
+      # probe. Retain only that matching, uncanceled, unexpired frozen job;
+      # the interruption below still withdraws every live witness and offer.
+      retain_preparation = bool(
+        same_source and self.ingress is not None and self.certificate is not None
+        and self.prepared_probe_context is not None and preparation.pid is not None
+        and not preparation.canceled and 0 < preparation.started <= now_ns <= preparation.started + 30_000_000_000
+        and preparation.token == (self.token, self.certificate.model_revision,
+          full_profile_sha256(self.certificate.binding.baseline_revision, self.ingress.optimizer.accepted))
+      )
       if self.process is not None:
         result = self.process.poll(token=self.token if retain else None, now_ns=now_ns)
         if retain and type(result) is dict:
@@ -750,7 +761,7 @@ class LiveTrackingActor:
       self.probe_queue_key = None
       if self.ingress is not None:
         self.ingress.interrupt('current_evidence_delayed' if evidence_delay_only else 'current_source_or_native_permission_unavailable',
-          preserve_completed=retain_probe)
+          preserve_completed=retain_probe or retain_preparation)
       return None
     try:
       seed = self.binding_for(collector, source)

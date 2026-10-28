@@ -112,10 +112,41 @@ def test_suggestions_cannot_be_saved_but_remain_choosable(owner):
   assert choose(owner, result)[0]['destination']['temporary'] is True
 
 
-def test_address_search_requests_permanent_results(owner):
+def test_address_search_requests_only_temporary_results(owner):
   with patch('openpilot.starpilot.navigation.owner.response_json', return_value={'features': []}) as provider:
     assert owner.search('100 Main Street') == []
-  assert provider.call_args.args[2]['permanent'] == 'true'
+  request = provider.call_args.args[2]
+  assert request['permanent'] == 'false'
+  assert request['autocomplete'] == 'false'
+  assert owner.geocode_budget.used == 1
+
+
+def test_address_search_stops_before_temporary_free_allowance(owner):
+  assert owner.geocode_budget.limit == 99_000
+  owner.geocode_budget.used = owner.geocode_budget.limit
+  with patch('openpilot.starpilot.navigation.owner.response_json') as provider:
+    with pytest.raises(ValidationError, match='free Mapbox address lookups'):
+      owner.search('100 Main Street')
+  provider.assert_not_called()
+
+
+def test_place_fallback_never_requests_permanent_geocoding(owner):
+  with patch('openpilot.starpilot.navigation.owner.response_json', side_effect=[{'suggestions': []}, {'features': []}]) as provider:
+    assert owner.search_places('100 Main Street', 'caller', str(uuid.uuid4()), str(uuid.uuid4())) == []
+  assert len(provider.call_args_list) == 2
+  assert provider.call_args_list[-1].args[2]['permanent'] == 'false'
+
+
+def test_home_work_remain_on_device_after_restart_without_search(owner):
+  revision = owner.read()['revision']
+  for label, place in (('home', ADDRESS), ('work', {'name': 'Work', 'latitude': 40., 'longitude': -90.})):
+    revision = owner.favorite(place, revision, True, label=label)['revision']
+  with patch('openpilot.starpilot.navigation.owner.response_json', side_effect=AssertionError('saved destinations must not search')):
+    restored = NavigationOwner(owner.root, runtime_source=lambda: None, transient_root=owner.transient_root)
+    favorites = restored.read()['favorites']
+    assert {place['label'] for place in favorites} == {'home', 'work'}
+    selected = restored.select(favorites[0], restored.read()['revision'], True)
+    assert selected['destination']['name'] == favorites[0]['name']
 
 
 def test_temporary_destination_supports_full_unicode_address(owner):

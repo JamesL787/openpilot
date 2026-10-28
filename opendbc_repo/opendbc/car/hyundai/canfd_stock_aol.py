@@ -95,7 +95,7 @@ def qualified(cp, *, marked_only=False):
   return cp.safetyConfigs[config_index(cp)].safetyParam in ((word | STOCK_AOL_MARKER,) if marked_only else (word, word | STOCK_AOL_MARKER))
 
 
-LONG_AOL_WORDS = frozenset((0x0815, 0x0895))
+LONG_AOL_WORDS = frozenset((0x0815, 0x0895, 0x2815, 0x2895))
 LONG_EV_CARS = frozenset((CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_KONA_EV_2ND_GEN))
 INDEPENDENT_LONG_BUTTON_CARS = LONG_EV_CARS | {CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN}
 
@@ -114,6 +114,10 @@ def qualified_long(cp, *, marked_only=False):
   if word not in (0x11, 0x91):
     return False
   raw = int(cp.safetyConfigs[config_index(cp)].safetyParam)
+  if cp.carFingerprint == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN:
+    if not raw & 0x2000:
+      return False
+    raw &= ~0x2000
   return (raw == (word | 0x804) and cp.alternativeExperience == 32) or (
     not marked_only and raw == (word | 4) and cp.alternativeExperience == 0
   )

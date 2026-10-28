@@ -98,6 +98,10 @@ class CameraTwoAACANParser(AdvertFilterCANParser):
     for stamp, frames in strings:
       accepted = []
       for address, data, bus in frames:
+        # pandad marks TX confirmations/rejections with bus >= 128; they
+        # are not received hardware (see panda.h CAN_*_BUS_OFFSET).
+        if bus >= 128:
+          continue
         if address in (0x201, 0x2FF):
           self.hardware_ambiguous = True
           continue

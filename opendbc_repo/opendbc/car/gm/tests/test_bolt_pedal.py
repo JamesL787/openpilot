@@ -371,25 +371,43 @@ class TestBoltPedalMessages(unittest.TestCase):
                              cam_lka_steering_cmd_counter=0, loopback_lka_steering_cmd_updated=False,
                              loopback_lka_steering_cmd_ts_nanos=1_000_000_000, pt_lka_steering_cmd_counter=0,
                              buttons_counter=0)
-        _, messages = controller.update(control.as_reader(), cs, 1_000_000_000)
+        state.canValid = int(cp.safetyConfigs[0].safetyParam) == 0x1CD
+        cs.out = state.as_reader()
+        cs.bolt_acc_brake_clock_ns = 995_000_000
+        cs.bolt_acc_brake_clock_counter = 1
+
+        def step(tick, controller=controller, control=control, state=state, cs=cs):
+          # Supply each 25 Hz controller slot with fresh physical receipts and
+          # the corresponding factory brake cycle, rather than reusing time.
+          now = 1_000_000_000 + (tick - 4) * 10_000_000
+          controller.frame = tick
+          cs.loopback_lka_steering_cmd_ts_nanos = now
+          for name in ('pedal_sensor_ts_nanos', 'stock_acc_status_ts_nanos', 'bolt_pedal_gear_ts_nanos', 'bolt_pedal_main_ts_nanos'):
+            setattr(cs, name, now - 50_000_000)
+          cs.bolt_acc_brake_clock_ns = now - 5_000_000
+          cs.bolt_acc_brake_clock_counter = (tick // 4) % 4
+          cs.out = state.as_reader()
+          return controller.update(control.as_reader(), cs, now)[1]
+
+        messages = step(4)
         expected = ([0x3D1] if candidate in NO_ACC_BOLT_CAR else []) + [0x200, 0x1F5, 0xBD]
         if candidate == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
-          expected.append(0x315)
+          expected += [0x370, 0x315]
         self.assertEqual([m[0] for m in messages], expected)
         self.assertGreater(controller.pedal_steady, 0.)
         first_fraction = controller.pedal_steady
 
         controller.frame = 8
         control.actuators.accel = 2.
-        _, messages = controller.update(control.as_reader(), cs, 1_000_000_000)
+        messages = step(8)
         self.assertEqual([m[0] for m in messages], expected)
         self.assertGreater(controller.pedal_steady, first_fraction)
         self.assertLess(controller.pedal_steady - first_fraction, 0.06)
 
         controller.frame = 12
         cs.pedal_sensor_healthy = False
-        _, messages = controller.update(control.as_reader(), cs, 1_000_000_000)
-        self.assertEqual([m[0] for m in messages], expected)
+        messages = step(12)
+        self.assertEqual([m[0] for m in messages], [address for address in expected if address != 0x370])
         payloads = {message[0]: message[1] for message in messages}
         self.assertEqual(payloads[0x200][0:4], b"\x00" * 4)
         self.assertEqual(payloads[0x1F5], b"\x0c\x0c\x00\x06\x00\x00\x01\x00")
@@ -401,7 +419,7 @@ class TestBoltPedalMessages(unittest.TestCase):
           cs.pedal_sensor_healthy = True
           state.cruiseState.enabled = True
           cs.out = state.as_reader()
-          _, messages = controller.update(control.as_reader(), cs, 1_000_000_000)
+          messages = step(16)
           self.assertEqual(messages[0][1][0:4], b"\x00" * 4)
           self.assertIn((0x1E1, 2), [(m[0], m[2]) for m in messages])
 
@@ -474,6 +492,8 @@ class TestBoltPedalStartupParser(unittest.TestCase):
     if 'GAS_SENSOR' not in omit:
       frames.append(TestBoltPedalMessages.sensor(packer, 0, sensor_counter % 16, state=sensor_state))
     frames += [packer.make_can_msg('ASCMLKASteeringCmd', 2, {}), packer.make_can_msg('AEBCmd', 2, {})]
+    if int(ci.CP.safetyConfigs[0].safetyParam) == 0x1CD and now % 40_000_000 < 10_000_000:
+      frames.append(packer.make_can_msg('EBCMFrictionBrakeCmd', 2, {'RollingCounter': (now // 40_000_000) % 4}))
     if camera_stock:
       frames.append(packer.make_can_msg('ASCMActiveCruiseControlStatus', 2, {'ACCCruiseState': 2}))
     if bad_length is not None:
@@ -774,6 +794,8 @@ class TestBoltPedalStartupParser(unittest.TestCase):
     camera = ['ASCMLKASteeringCmd', 'AEBCmd'] if camera_present else []
     if cp.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
       camera.append('ASCMActiveCruiseControlStatus')
+    if int(cp.safetyConfigs[0].safetyParam) == 0x1CD:
+      camera.append('EBCMFrictionBrakeCmd')
     sensor_counter = 0
     for index in range(250):
       frames = []
@@ -781,7 +803,7 @@ class TestBoltPedalStartupParser(unittest.TestCase):
         for name in names:
           if (bus, name) == missing:
             continue
-          rate = pt_messages[name] if bus == 0 else 25 if name == 'ASCMActiveCruiseControlStatus' else 10
+          rate = pt_messages[name] if bus == 0 else 25 if name in ('ASCMActiveCruiseControlStatus', 'EBCMFrictionBrakeCmd') else 10
           if index and index * rate // 100 == (index - 1) * rate // 100:
             continue
           if name == 'ASCMSteeringButton':
@@ -1094,7 +1116,7 @@ class TestBoltPaddleModes(unittest.TestCase):
             control.enabled = control.longActive = False
           frames.append((0x1E1, button_bytes(buttons, tick % 4), 0))
           frames.extend(packer.make_can_msg(name, 2, values.get(name, {})) for name in
-                        ('ASCMLKASteeringCmd', 'AEBCmd', 'ASCMActiveCruiseControlStatus'))
+                        ('ASCMLKASteeringCmd', 'AEBCmd', 'ASCMActiveCruiseControlStatus', 'EBCMFrictionBrakeCmd'))
           frames.append(packer.make_can_msg('ASCMLKASteeringCmd', 128, {}))
           safety.reset_recorded_can()
           regen_observation_index = None

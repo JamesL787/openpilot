@@ -9,6 +9,7 @@ import pyray as rl
 from openpilot.starpilot.ui.onroad_customization import PROFILES, default_document, validate_document, widget_size
 from openpilot.starpilot.ui.onroad_state import OnroadState, SpeedLimitObservation
 from openpilot.starpilot.ui.onroad_torque import TorqueBarWidget
+from openpilot.starpilot.ui.tests.test_onroad_torque_draw import record_gpu
 
 
 def scene(document=None):
@@ -21,55 +22,55 @@ def geometry(profile, state, torque=.3, alpha=1.):
   bounds = data['bounds']
   rect = rl.Rectangle(*(bounds[key] for key in ('x', 'y', 'width', 'height')))
   widget = TorqueBarWidget()
-  calls, dots = [], []
   with patch.object(widget._torque_filter, 'update', return_value=torque), \
        patch.object(widget._alpha_filter, 'update', return_value=alpha), \
-       patch('openpilot.starpilot.ui.onroad_torque.draw_polygon', side_effect=lambda rect, points, **kwargs: calls.append((rect, points.copy(), kwargs))), \
-       patch('openpilot.starpilot.ui.onroad_torque.rl.draw_circle', side_effect=lambda x, y, radius, color: dots.append((x, y, radius))):
+       record_gpu() as gpu:
     widget.render(rect, state, data['width'])
-  return calls, dots
+  return gpu.frames
 
 
 class TestTorqueLayout(unittest.TestCase):
-  def test_moved_polygon_dot_and_gradient_origin_translate_without_resizing(self):
+  def test_moved_arc_dot_and_sampling_quad_translate_without_resizing(self):
     for profile in PROFILES:
       with self.subTest(profile=profile):
         document = default_document()
         base = document['layouts'][profile]['torque_bar']
         base['x'] += 10
-        base['y'] -= 40
+        base['y'] += 10
         document = validate_document(document)
-        original, original_dots = geometry(profile, scene())
-        moved, moved_dots = geometry(profile, scene(document))
-        for (old_rect, old_points, old_style), (new_rect, new_points, new_style) in zip(original, moved, strict=True):
-          np.testing.assert_array_equal(new_points, old_points + np.array([10, -40], dtype=np.float32))
-          self.assertEqual((new_rect.x, new_rect.y, new_rect.width, new_rect.height),
-                           (old_rect.x + 10, old_rect.y - 40, old_rect.width, old_rect.height))
-          if 'gradient' in old_style:
-            for field in ('start', 'end', 'stops'):
-              self.assertEqual(getattr(new_style['gradient'], field), getattr(old_style['gradient'], field))
-            self.assertEqual([tuple(getattr(color, channel) for channel in 'rgba') for color in new_style['gradient'].colors],
-                             [tuple(getattr(color, channel) for channel in 'rgba') for color in old_style['gradient'].colors])
-        self.assertEqual(moved_dots, [(x + 10, y - 40, radius) for x, y, radius in original_dots])
+        original, = geometry(profile, scene())
+        moved, = geometry(profile, scene(document))
+        np.testing.assert_allclose(moved.vertices, np.array(original.vertices) + [10, 10], atol=1e-10)
+        for field in ('geometry', 'dotGeometry'):
+          x, y, *rest = original.uniforms[field]
+          self.assertEqual(moved.uniforms[field], (x + 10, y + 10, *rest))
+        for field in ('backgroundNormals', 'indicatorNormals', 'style'):
+          self.assertEqual(moved.uniforms[field], original.uniforms[field])
 
-  def test_metadata_bounds_enclose_all_legal_polygon_and_dot_states(self):
+  def test_metadata_bounds_enclose_all_legal_arc_and_dot_states(self):
     for profile, data in PROFILES.items():
       widget = data['widgets']['torque_bar']
       x, y = widget['default']['x'], widget['default']['y']
       right, bottom = x + widget['width'], y + widget['height']
       for torque in np.linspace(-1, 1, 41):
         for alpha in (0, .01, .2, .5, 1):
-          polygons, dots = geometry(profile, scene(), float(torque), alpha)
-          for _, points, _ in polygons:
-            self.assertGreaterEqual(float(points[:, 0].min()), x)
-            self.assertGreaterEqual(float(points[:, 1].min()), y)
-            self.assertLessEqual(float(points[:, 0].max()), right)
-            self.assertLessEqual(float(points[:, 1].max()), bottom)
-          for cx, cy, radius in dots:
-            self.assertGreaterEqual(cx - radius, x)
-            self.assertGreaterEqual(cy - radius, y)
-            self.assertLessEqual(cx + radius, right)
-            self.assertLessEqual(cy + radius, bottom)
+          for frame in geometry(profile, scene(), float(torque), alpha):
+            cx, cy, radius, half = frame.uniforms['geometry']
+            cap = frame.uniforms['style'][0]
+            normals = np.array(frame.uniforms['backgroundNormals']).reshape(2, 2)
+            # The arc and its rounded ends must fit the saved layout, independent of the padded sampling quad.
+            ends = np.array([cx, cy]) + radius * normals
+            extents = abs(normals) * (half - cap) + cap
+            self.assertGreaterEqual(float((ends - extents)[:, 0].min()), x)
+            self.assertGreaterEqual(cy - radius - half, y)
+            self.assertLessEqual(float((ends + extents)[:, 0].max()), right)
+            self.assertLessEqual(float((ends + extents)[:, 1].max()), bottom)
+            if frame.uniforms['style'][3] > 0:
+              dx, dy, dot_radius, _ = frame.uniforms['dotGeometry']
+              self.assertGreaterEqual(dx - dot_radius, x)
+              self.assertGreaterEqual(dy - dot_radius, y)
+              self.assertLessEqual(dx + dot_radius, right)
+              self.assertLessEqual(dy + dot_radius, bottom)
 
   def test_only_torque_underlay_can_overlap_reserved_actions(self):
     document = default_document()
@@ -81,9 +82,9 @@ class TestTorqueLayout(unittest.TestCase):
         invalid = default_document()
         actions = invalid['layouts']['compact']['speed_limit_actions']
         _, height = widget_size(invalid, 'compact', key)
-        invalid['layouts']['compact'][key].update(x=actions['x'], y=actions['y'] - height)
+        invalid['layouts']['compact'][key].update(x=actions['x'] - widget_size(invalid, 'compact', key)[0], y=min(actions['y'], 240 - height))
         self.assertEqual(validate_document(invalid), invalid)  # Touching edges do not overlap.
-        invalid['layouts']['compact'][key]['y'] += 1
+        invalid['layouts']['compact'][key]['x'] += 1
         with self.assertRaises(ValueError):
           validate_document(invalid)
 
@@ -124,9 +125,9 @@ class TestTorqueLayout(unittest.TestCase):
     rect = rl.Rectangle(*(data[key] for key in ('x', 'y', 'width', 'height')))
     document = default_document()
     document['layouts']['compact']['torque_bar']['enabled'] = False
-    with patch('openpilot.starpilot.ui.onroad_torque.draw_polygon') as draw:
+    with record_gpu() as gpu:
       widget.render(rect, replace(scene(document), torque_utilization=.8), 536)
-      draw.assert_not_called()
+      self.assertFalse(gpu.frames or gpu.loads)
     self.assertGreater(widget._torque_filter.x, 0)
     self.assertGreater(widget._alpha_filter.x, 0)
 
@@ -135,16 +136,16 @@ class TestTorqueLayout(unittest.TestCase):
     for lateral, source in ((True, False), (False, True)):
       widget._torque_filter.x = widget._alpha_filter.x = .8
       state = replace(scene(), lateral_active=lateral, torque_source_available=source)
-      with patch('openpilot.starpilot.ui.onroad_torque.draw_polygon') as draw:
+      with record_gpu() as gpu:
         widget.render(rl.Rectangle(0, 0, 476, 240), state, 536)
-        draw.assert_not_called()
+        self.assertFalse(gpu.frames or gpu.loads)
       self.assertEqual((widget._torque_filter.x, widget._alpha_filter.x), (0, 0))
 
   def test_new_drive_resets_existing_filters_before_first_fresh_render(self):
     widget = TorqueBarWidget()
     state = replace(scene(), lateral_active=True, torque_source_available=True, torque_drive_frame=10, torque_utilization=.8)
     rect = rl.Rectangle(0, 0, 476, 240)
-    with patch('openpilot.starpilot.ui.onroad_torque.draw_polygon'), patch('openpilot.starpilot.ui.onroad_torque.rl.draw_circle'):
+    with record_gpu():
       for _ in range(30):
         widget.render(rect, state, 536)
       self.assertGreater(widget._torque_filter.x, .7)

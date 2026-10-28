@@ -50,11 +50,11 @@ def test_mache_idle_leaves_stock_display_and_fcw_untouched_then_owns_active_ui()
   assert state.acc_tja_status_stock_values['FcwVisblWarn_B_Rq'] == 1
 
 
-@pytest.mark.parametrize('identity,aol', [(CAR.FORD_MUSTANG_MACH_E_MK1, False), (CAR.FORD_F_150_MK14, True)])
-def test_other_display_ownership_contracts_keep_existing_idle_ui(identity, aol):
+@pytest.mark.parametrize('identity,aol,expected', [(CAR.FORD_MUSTANG_MACH_E_MK1, False, UI), (CAR.FORD_F_150_MK14, True, set())])
+def test_idle_ui_respects_native_display_ownership(identity, aol, expected):
   owner, state = setup(aol=aol, identity=identity)
   seen = set()
   for _ in range(110):
     _, frames = owner.update(structs.CarControl().as_reader(), state, owner.frame * 10_000_000)
     seen.update(address for address, _, _ in frames if address in UI)
-  assert seen == UI
+  assert seen == expected

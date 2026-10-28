@@ -5,6 +5,7 @@ import time
 GPS_SOURCES = {"gpsLocationExternal": "ublox", "gpsLocation": "qcomdiag", "starpilotCarState": "car", "phoneGps": "phone"}
 GPS_PRIORITY = {"gpsLocationExternal": 2, "gpsLocation": 2, "starpilotCarState": 1, "phoneGps": 0}
 WRAPPED_SOURCES = ("starpilotCarState", "phoneGps")
+MAX_HORIZONTAL_ACCURACY = 25.0
 GPS_MAX_AGE_NS = 2_500_000_000
 PHONE_MAX_AGE_NS = 10_000_000_000  # phones in the background send sparsely; keep the last fix this long
 SOURCE_SERVICES = {"phoneGps": "starpilotNavigation"}  # rides inside the navigation message
@@ -43,7 +44,7 @@ def max_age_ns(service):
 def valid_fix(gps, stamp, envelope, now_ns, max_age):
   if (not gps.hasFix or not 0 < stamp <= envelope <= now_ns <= stamp + max_age or
       not all(math.isfinite(v) for v in (gps.latitude, gps.longitude, gps.horizontalAccuracy)) or
-      not (-90 <= gps.latitude <= 90 and -180 <= gps.longitude <= 180 and 0 < gps.horizontalAccuracy <= 25)):
+      not (-90 <= gps.latitude <= 90 and -180 <= gps.longitude <= 180 and 0 < gps.horizontalAccuracy <= MAX_HORIZONTAL_ACCURACY)):
     return None
   return stamp, gps
 

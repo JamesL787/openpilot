@@ -179,7 +179,7 @@ int main() {
   }
 
   for (uint32_t word = 0U; word <= 65535U; ++word) {
-    const bool expected = (word == 0x3049U) || (word == 0x3249U) || (word == 0x3449U) || (word == 0x3649U) || (word == 0xA042U) || (word == 0xA049U) || (word == 0xA242U) || (word == 0xA249U) || (word == 0xA449U) || (word == 0xA649U) || (word == 0xA849U) || (word == 0xA949U) || (word == 0xA958U) || (word == 0xA964U) || (word == 0xAA49U) || (word == 0xAB49U) || (word == 0xAB58U) || (word == 0xAB64U) || (word == 0xB149U) || (word == 0xB158U) || (word == 0xB164U) || (word == 0xB349U) || (word == 0xB358U) || (word == 0xB364U) || (word == 0xB449U) || (word == 0xB549U) || (word == 0xB558U) || (word == 0xB564U) || (word == 0xB649U) || (word == 0xB749U) || (word == 0xB758U) || (word == 0xB764U) || (word == 0xB842U) || (word == 0xB849U) || (word == 0xBA42U) || (word == 0xBA49U) || (word == 0xE042U) || (word == 0xE049U) || (word == 0xE242U) || (word == 0xE249U) || (word == 0xE84DU) || (word == 0xE949U) || (word == 0xEA4DU) || (word == 0xEB49U) || (word == 0xF049U) || (word == 0xF04DU) || (word == 0xF149U) || (word == 0xF249U) || (word == 0xF24DU) || (word == 0xF349U) || (word == 0xF44DU) || (word == 0xF549U) || (word == 0xF64DU) || (word == 0xF749U) || (word == 0x8949U) || (word == 0x8B49U) || (word == 0x8849U) || (word == 0x8A49U) || (word == 0x9849U) || (word == 0x9A49U) || (word == 0x9842U) || (word == 0x9A42U) || (word == 0x8958U) || (word == 0x8B58U) || (word == 0x8964U) || (word == 0x8B64U) || (word == 0xC84DU) || (word == 0xCA4DU) || (word == 0xC949U) || (word == 0xCB49U) || (word == 0xB049U) || (word == 0xB249U) || (word == 0xD049U) || (word == 0xD249U) || (word == 0xC042U) || (word == 0xC242U) || (word == 0x8042U) || (word == 0x8242U) || (word == 0xC049U) || (word == 0xC249U) || (word == 73U) || (word == 585U) || (word == 856U) || (word == 4169U) || (word == 4681U) || (word == 2121U) || (word == 0x9049U) || (word == 0x9249U) || (word == 0x2449U) || (word == 0x2649U) || (word == 0x2049U) || (word == 0x2249U) || (word == 0x424DU) || (word == 0x449U) || (word == 0x649U) || (word == 0x1449U) || (word == 0x1649U) || (word == 0x8049U) || (word == 0x8249U) || (word == 0x8449U) || (word == 0x8649U) || (word == 0x9158U) || (word == 0x9358U) || (word == 0x9149U) || (word == 0x9349U) || (word == 0x9164U) || (word == 0x9364U) || (word == 0xd149U) || (word == 0xd349U) || (word == 0xd04dU) || (word == 0xd24dU) || (word == 0x9449U) || (word == 0x9549U) || (word == 0x9558U) || (word == 0x9564U) || (word == 0x9649U) || (word == 0x9749U) || (word == 0x9758U) || (word == 0x9764U) || (word == 0xD44DU) || (word == 0xD549U) || (word == 0xD64DU) || (word == 0xD749U);
+    const bool expected = (word == 0x0A49U) || (word == 0x1849U) || (word == 0x5249U) || (word == 0x5349U) || (word == 0x5358U) || (word == 0x5364U) || (word == 0x564DU) || (word == 0x5749U) || (word == 0x6242U) || (word == 0x6249U) || (word == 0x3049U) || (word == 0x3249U) || (word == 0x3449U) || (word == 0x3649U) || (word == 0xA042U) || (word == 0xA049U) || (word == 0xA242U) || (word == 0xA249U) || (word == 0xA449U) || (word == 0xA649U) || (word == 0xA849U) || (word == 0xA949U) || (word == 0xA958U) || (word == 0xA964U) || (word == 0xAA49U) || (word == 0xAB49U) || (word == 0xAB58U) || (word == 0xAB64U) || (word == 0xB149U) || (word == 0xB158U) || (word == 0xB164U) || (word == 0xB349U) || (word == 0xB358U) || (word == 0xB364U) || (word == 0xB449U) || (word == 0xB549U) || (word == 0xB558U) || (word == 0xB564U) || (word == 0xB649U) || (word == 0xB749U) || (word == 0xB758U) || (word == 0xB764U) || (word == 0xB842U) || (word == 0xB849U) || (word == 0xBA42U) || (word == 0xBA49U) || (word == 0xE042U) || (word == 0xE049U) || (word == 0xE242U) || (word == 0xE249U) || (word == 0xE84DU) || (word == 0xE949U) || (word == 0xEA4DU) || (word == 0xEB49U) || (word == 0xF049U) || (word == 0xF04DU) || (word == 0xF149U) || (word == 0xF249U) || (word == 0xF24DU) || (word == 0xF349U) || (word == 0xF44DU) || (word == 0xF549U) || (word == 0xF64DU) || (word == 0xF749U) || (word == 0x8949U) || (word == 0x8B49U) || (word == 0x8849U) || (word == 0x8A49U) || (word == 0x9849U) || (word == 0x9A49U) || (word == 0x9842U) || (word == 0x9A42U) || (word == 0x8958U) || (word == 0x8B58U) || (word == 0x8964U) || (word == 0x8B64U) || (word == 0xC84DU) || (word == 0xCA4DU) || (word == 0xC949U) || (word == 0xCB49U) || (word == 0xB049U) || (word == 0xB249U) || (word == 0xD049U) || (word == 0xD249U) || (word == 0xC042U) || (word == 0xC242U) || (word == 0x8042U) || (word == 0x8242U) || (word == 0xC049U) || (word == 0xC249U) || (word == 73U) || (word == 585U) || (word == 856U) || (word == 4169U) || (word == 4681U) || (word == 2121U) || (word == 0x9049U) || (word == 0x9249U) || (word == 0x2449U) || (word == 0x2649U) || (word == 0x2049U) || (word == 0x2249U) || (word == 0x424DU) || (word == 0x449U) || (word == 0x649U) || (word == 0x1449U) || (word == 0x1649U) || (word == 0x8049U) || (word == 0x8249U) || (word == 0x8449U) || (word == 0x8649U) || (word == 0x9158U) || (word == 0x9358U) || (word == 0x9149U) || (word == 0x9349U) || (word == 0x9164U) || (word == 0x9364U) || (word == 0xd149U) || (word == 0xd349U) || (word == 0xd04dU) || (word == 0xd24dU) || (word == 0x9449U) || (word == 0x9549U) || (word == 0x9558U) || (word == 0x9564U) || (word == 0x9649U) || (word == 0x9749U) || (word == 0x9758U) || (word == 0x9764U) || (word == 0xD44DU) || (word == 0xD549U) || (word == 0xD64DU) || (word == 0xD749U);
     auto toyota = status();
     toyota.safety_mode = 2U;
     toyota.safety_param = static_cast<uint16_t>(word);
@@ -200,7 +200,7 @@ int main() {
     for (const uint16_t word : {2120U, 2122U, 2633U, 3145U, 4169U}) {
       auto different = sienna;
       different.safety_param = word;
-      if (word != 4169U) assert(!aol_capable(different, 2U, VEHICLE_REGISTRY));
+      assert(aol_capable(different, 2U, VEHICLE_REGISTRY) == ((word == 2633U) || (word == 4169U)));
     }
     AolAxisNegotiator negotiator(VEHICLE_REGISTRY);
     FakeTransport transport;
@@ -252,6 +252,18 @@ int main() {
   for (uint32_t word = 0U; word <= 65535U; ++word) {
     bool expected = false;
     for (const auto exact : ford_words) expected |= (word == exact) || (word == (exact | 256U));
+    // Exact opt-in geometry families, independently enumerated from the native decoder.
+    for (uint16_t geometry = 1U; geometry <= 12U; geometry++) {
+      const bool classic = (geometry == 1U) || (geometry == 2U) || (geometry == 5U) || (geometry == 6U) || (geometry == 9U);
+      const uint16_t curvature = classic ? 32U : ((geometry == 11U) ? 18U : ((geometry == 10U) ? 10U : 66U));
+      for (uint16_t longitudinal = 0U; longitudinal <= 1U; longitudinal++) {
+        for (uint16_t angle = 0U; angle <= 1U; angle++) {
+          if ((geometry == 10U) && angle) continue;
+          const uint16_t exact = 512U | (geometry << 10U) | curvature | longitudinal | (angle ? 128U : 0U);
+          expected |= (word == exact) || (word == (exact | 256U));
+        }
+      }
+    }
     auto ford = status();
     ford.safety_mode = 6U;
     ford.safety_param = static_cast<uint16_t>(word);
@@ -498,7 +510,7 @@ int main() {
     0x7090U, 0x7092U, 0x7208U, 0x720AU, 0x7228U, 0x722AU, 0x7809U, 0x7829U,
   };
   for (uint32_t word = 0U; word <= 0xFFFFU; ++word) {
-    bool expected = word == 0x0815U || word == 0x0895U || word == 0x8815U || word == 0x8895U || word == 0x5491U || word == 0x5C91U || word == 0x5C95U || word == 0x5495U;
+    bool expected = word == 0x2815U || word == 0x2895U || word == 0x0815U || word == 0x0895U || word == 0x8815U || word == 0x8895U || word == 0x5491U || word == 0x5C91U || word == 0x5C95U || word == 0x5495U;
     for (uint16_t stock_word : stock_canfd_words) {
       expected = expected || word == stock_word;
     }

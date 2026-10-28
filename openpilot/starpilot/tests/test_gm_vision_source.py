@@ -117,8 +117,11 @@ class TestGmVisionSource(unittest.TestCase):
             runtime = Runtime(slc_runtime_settings(params, cp, {}), session_id='drive', vision_enabled=True,
                               vision_control_qualified=vision_control_enabled(params, cp))
             first = runtime.step(sm, cp, now_ns=2_000_000_000, now_boot_ns=6_000_000_000)
-            self.assertTrue(first.message.slcState.hasPending)
-            self.assertEqual(first.message.slcState.automaticAdoptionPending, not confirmation)
+            self.assertEqual(first.message.slcState.hasPending, confirmation)
+            self.assertEqual(first.message.slcState.hasAccepted, not confirmation)
+            self.assertFalse(first.message.slcState.automaticAdoptionPending)
+            if not confirmation:
+              self.assertAlmostEqual(first.message.slcState.acceptedSpeedLimit, 55 * .44704, places=4)
             self.assertFalse(first.message.slcState.hasCeiling)
             evidence = sm.data['slcVisionObservation'].vision
             evidence.observedMonoTime = 4_980_000_000
@@ -147,10 +150,12 @@ class TestGmVisionSource(unittest.TestCase):
             evidence.frameId += 1
             sm.advance(5_060_000_000)
             changed = runtime.step(sm, cp, now_ns=5_060_000_000, now_boot_ns=9_060_000_000)
-            self.assertTrue(changed.message.slcState.hasPending)
+            self.assertEqual(changed.message.slcState.hasPending, confirmation)
+            self.assertFalse(changed.message.slcState.automaticAdoptionPending)
+            self.assertTrue(changed.message.slcState.hasAccepted)
             self.assertFalse(changed.message.slcState.hasCeiling)
             self.assertAlmostEqual(changed.message.slcState.acceptedSpeedLimit,
-                                   55 * .44704, places=4)
+                                   (55 if confirmation else next_mph) * .44704, places=4)
             self.assertEqual(changed.result.acceptance.policy, runtime.settings.acceptance)
             sm.data['carControl'].longActive = False
             sm.advance(5_080_000_000)

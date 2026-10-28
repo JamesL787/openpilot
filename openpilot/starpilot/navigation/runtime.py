@@ -21,9 +21,8 @@ def location(sm, now_ns: int, phone_fix=None):
   if fix is None:
     return None
   stamp, gps = fix
-  if not math.isfinite(gps.speed):
-    return None
-  return stamp, (gps.longitude, gps.latitude), max(0., gps.speed), bearing(gps)
+  speed = max(0., gps.speed) if math.isfinite(gps.speed) else None
+  return stamp, (gps.longitude, gps.latitude), speed, bearing(gps)
 
 
 class RouteRuntime:
@@ -120,8 +119,9 @@ class RouteRuntime:
         self.future = self.executor.submit(self.engine.fetch, settings['token'], coordinates, settings['destination'], bearing, exclusions)
       return result
     progress = self.route.progress(coordinates, speed, bearing)
-    self.off_route_since = (self.off_route_since or now_ns) if progress.off_route else 0
-    self.arrived_since = (self.arrived_since or now_ns) if progress.arrived else 0
+    fresh = now_ns <= stamp + GPS_MAX_AGE_NS
+    self.off_route_since = (self.off_route_since or now_ns) if fresh and progress.off_route else 0
+    self.arrived_since = (self.arrived_since or now_ns) if fresh and progress.arrived else 0
     if self.off_route_since and now_ns - self.off_route_since >= 2_000_000_000:
       self.route = None
       self.routes = []
@@ -132,7 +132,7 @@ class RouteRuntime:
       self._end_route(settings['revision'])
     result.update(status='arrived' if arrived else 'guiding', instruction=progress.instruction,
                   nextManeuver=progress.next_maneuver, route=self.route.preview(),
-                  controlValid=bool(drive_id > 0 and not progress.off_route and not progress.arrived and stamp >= drive_id))
+                  controlValid=bool(speed is not None and fresh and drive_id > 0 and not progress.off_route and not progress.arrived and stamp >= drive_id))
     return result
 
   def _end_route(self, revision: str) -> None:

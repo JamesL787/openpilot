@@ -58,7 +58,7 @@ def resolve_region(gps, *, session=None, allowed=lambda: True):
   import requests
   owned = session is None
   session = session or requests.Session()
-  session.headers.update({'Accept-Language': 'en', 'User-Agent': 'StarPilot-stats/1.0 (https://github.com/firestar5683/StarPilot)'})
+  session.headers.update({'Accept-Language': 'en', 'User-Agent': 'StarPilot-stats/1.0 (https://github.com/StarPilotHQ/StarPilot)'})
 
   def get(path, **params):
     if not allowed():

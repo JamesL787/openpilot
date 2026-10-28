@@ -21,6 +21,7 @@ from openpilot.starpilot.ui.preview_shell import reference_onroad
 from openpilot.starpilot.ui.runtime_snapshot import RuntimeSnapshotAdapter
 from openpilot.starpilot.ui.shell import ShellMode
 from openpilot.starpilot.ui.tests.test_runtime_snapshot import NOW, ui_fake
+from openpilot.starpilot.ui.tests.test_onroad_torque_draw import record_gpu
 
 
 def rgba(color: rl.Color) -> tuple[int, int, int, int]:
@@ -31,7 +32,7 @@ class TestOnroadAxes(unittest.TestCase):
   def setUp(self):
     for name in ('draw_rectangle_rounded', 'draw_rectangle_rounded_lines_ex', 'draw_circle', 'draw_ring'):
       self.enterContext(patch('openpilot.starpilot.ui.speed_limit_widget.rl.' + name, new_callable=Mock))
-    for name in ('circle', 'arrow', 'outline'):
+    for name in ('circle', 'arrow', 'outline', 'confirmation'):
       self.enterContext(patch('openpilot.starpilot.ui.speed_limit_shapes.SpeedLimitShapes.' + name, new_callable=Mock))
     self.ui = ui_fake()
     self.ui.CP = NS(carFingerprint='', openpilotLongitudinalControl=True, pcmCruise=False)
@@ -354,13 +355,12 @@ class TestOnroadAxes(unittest.TestCase):
     self.assertEqual(compact._set_speed_opacity(stale, compact._last_cruise_ns + 150_000_001), 0)
     self.assertEqual(compact._set_speed_alpha.x, 0)
     torque = TorqueBarWidget()
-    with patch("openpilot.starpilot.ui.onroad_torque.draw_polygon") as draw, \
-         patch("openpilot.starpilot.ui.onroad_torque.rl.draw_circle"):
+    with record_gpu() as gpu:
       torque.render(rl.Rectangle(0, 0, 476, 240), active, 536)
       self.assertGreater(torque._alpha_filter.x, 0)
-      draw.reset_mock()
+      gpu.frames.clear()
       torque.render(rl.Rectangle(0, 0, 476, 240), stale, 536)
-      draw.assert_not_called()
+      self.assertFalse(gpu.frames)
     self.assertEqual(torque._alpha_filter.x, 0)
 
   def test_missing_actual_torque_output_stays_hidden_with_active_axes(self):
@@ -369,9 +369,9 @@ class TestOnroadAxes(unittest.TestCase):
     self.assertTrue(state.lateral_active)
     self.assertFalse(state.torque_source_available)
     torque = TorqueBarWidget()
-    with patch("openpilot.starpilot.ui.onroad_torque.draw_polygon") as draw:
+    with record_gpu() as gpu:
       torque.render(rl.Rectangle(0, 0, 476, 240), state, 536)
-    draw.assert_not_called()
+    self.assertFalse(gpu.frames or gpu.loads)
     self.assertEqual(torque._alpha_filter.x, 0)
 
   def test_pressed_control_cancels_on_axis_transition_even_with_fresh_transport(self):

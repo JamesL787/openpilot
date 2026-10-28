@@ -1,4 +1,5 @@
 """Actual daemon scheduling only; synthetic collector is not fit/native proof."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from types import SimpleNamespace as S
 import pytest
 from openpilot.starpilot.flm import steerlearnerd
@@ -46,7 +47,7 @@ def test_pose_observer_consumes_delivery_that_arrived_during_decoding(monkeypatc
     else:
       now[0] += 80_000_000
       sm.pending = True
-  monkeypatch.setattr(steerlearnerd, 'drain', drain)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', separate_drain_fixture(drain))
   actor=S(ingress=None, interrupt=lambda *a,**k: None, close=lambda *a: True)
   fitter=S(cancel=lambda *a: None, close=lambda *a: True)
   with pytest.raises(Stop):

@@ -57,9 +57,12 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque)
     lkas_msg = "LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT else "LKAS"
     if CP.openpilotLongitudinalControl:
       ret.append(packer.make_can_msg("LFA", CAN.ECAN, values))
+    # Dom uses separate damping values for camera LKAS and ADAS LFA torque commands.
+    # Preserve the explicit Carnival/GV70 LKAS calibration in either longitudinal mode.
     lkas_values = values
-    if (CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and CP.openpilotLongitudinalControl and
-        not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING):
+    if (not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and CP.carFingerprint not in (
+        CAR.KIA_CARNIVAL_4TH_GEN, CAR.KIA_CARNIVAL_2025,
+        CAR.KIA_CARNIVAL_HEV_4TH_GEN, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN)):
       lkas_values = {**values, "Damping_Gain": 0}
     ret.append(packer.make_can_msg(lkas_msg, CAN.ACAN, lkas_values))
   else:

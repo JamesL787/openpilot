@@ -10,12 +10,13 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ControllerRuntime:
-  def __init__(self, params, *, actions, favorites, invoke_favorite, authority=None, reader=None, socket_path=None):
+  def __init__(self, params, *, actions, favorites, invoke_favorite, authority=None, reader=None, socket_path=None, input_capture=lambda: None):
     self.authority = authority if authority is not None else LiveContextSource(params)
     self.reader = reader if reader is not None else InputReader()
     self.owner = ControllerOwner(params, parked=self.authority.parked, actions=actions, favorites=favorites,
                                  invoke_favorite=invoke_favorite)
     self.service = ControllerService(self.owner, socket_path)
+    self.input_capture = input_capture
     self._closed = False
     self._next_warm = 0.0
     self._warm_until = time.monotonic() + 2.0
@@ -37,8 +38,12 @@ class ControllerRuntime:
       self.owner.set_devices(self.reader.devices())
       self.owner.tick()
       # Process input before configuration so queued presses cannot activate a new binding.
+      capture = self.input_capture()
       for press in presses:
-        self.owner.feed(press)
+        if capture is None:
+          self.owner.feed(press)
+        else:
+          self.owner.feed(press, capture=capture)
       self.service.poll()
     except Exception:
       LOGGER.exception('Controller input stopped')

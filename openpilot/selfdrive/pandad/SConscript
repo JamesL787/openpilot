@@ -34,3 +34,6 @@ if arch != "Darwin":
 
   if GetOption('extras') or any(target.startswith('openpilot/selfdrive/pandad/tests/test_preap_pedal_startup') for target in COMMAND_LINE_TARGETS):
     env.Program('tests/test_preap_pedal_startup', ['tests/test_preap_pedal_startup.cc', env.Object('tests/preap_panda_safety.o', 'panda_safety.cc')], LIBS=[panda] + libs + ['dl'])
+
+  if GetOption('extras') or any(target.startswith('openpilot/selfdrive/pandad/tests/test_panda_debug') for target in COMMAND_LINE_TARGETS):
+    env.Program('tests/test_panda_debug', ['tests/test_panda_debug.cc'], LIBS=[panda] + libs)

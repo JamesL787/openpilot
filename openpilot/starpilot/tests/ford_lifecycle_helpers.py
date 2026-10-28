@@ -143,7 +143,7 @@ def ford_joined(identity, alpha, hands_free, monkeypatch, record_property):
           preframes.append(frame)
 
         with patch.object(native, 'rx', side_effect=pre_rx):
-          native.pump(1, main=3, mask=0, heartbeat=False, speed=15.0)
+          native.pump(1, main=0 if getattr(monkeypatch, 'ford_first_main', False) else 3, mask=0, heartbeat=False, speed=15.0)
         extras: list[tuple[str, int, dict[str, float]]] = [
           ('SteeringPinion_Data', 0, {'StePinCompAnEst_D_Qf': 3}),
           ('Cluster_Info1_FD1', 0, {'AccEnbl_B_RqDrv': 1}),
@@ -182,6 +182,7 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
   case = availability.IoniqAvailabilityTests(methodName='runTest')
   now = [10_000_000_000]
   queued, published, previous_sd = [], {}, {}
+  delayed_native = {}
   steps = start_tick = native.tick
   warmup_waits = qualified_samples = 0
   active_lat_frames = active_long_frames = 0
@@ -204,6 +205,8 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
       local.setenv('SIMULATION', '0')
       sd, controls, drive = case._authority_callers(False, cp=host.CP.as_reader().as_builder(), genuine_events=True)
       assert sd.CP.to_dict() == controls.CP.to_dict() == host.CP.to_dict()
+      from openpilot.starpilot.aol.intent import read_settings
+      sd.aol_settings = read_settings(host.params)
       local.setattr(card_module, 'REPLAY', False)
       local.setattr(card_module.time, 'monotonic_ns', lambda: now[0])
       local.setattr(card_module.time, 'clock_gettime_ns', lambda clock: now[0])
@@ -258,8 +261,13 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
 
       delayed_pedal_frames = []
       delayed_pedals_seen = set()
+      route45_old = {}
+      route45_mixed = [False]
+      route45_phase = ['warmup']
+      route45_trace = []
 
-      def step(*, engaged=False, brake=False, reverse=False, warmup=False, fault=None, main_off=False, availability_transition=False):
+      def step(*, engaged=False, brake=False, reverse=False, warmup=False, fault=None, main_off=False,
+               availability_transition=False, steering=False, cancel=False, park=False):
         nonlocal steps, warmup_waits, qualified_samples, active_lat_frames, active_long_frames, nonzero_after_brake, brake_seen
         brake_seen |= brake
         steps += 1
@@ -275,9 +283,24 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
 
         def receive(name, values):
           fields = dict(values)
+          refusal = getattr(monkeypatch, 'ford_route45_refusal', None) if route45_mixed[0] else None
+          if scenario == 'route45' and refusal == 'permanent-eps' and name == 'EPAS_INFO':
+            fields['EPAS_Failure'] = 2
+          if scenario == 'route45' and refusal == 'main-off' and name == 'EngBrakeData':
+            fields['CcStat_D_Actl'] = 0
+          if scenario == 'route45' and refusal == 'cancel' and name == 'Steering_Data_FD1':
+            fields['CcAslButtnCnclPress'] = 1
+          if scenario in ('route49', 'cancel-native-cadence') and name == 'Steering_Data_FD1':
+            fields['CcAslButtnCnclResPress'] = int(cancel)
+          if scenario in ('route45', 'route49', 'route22') and name == 'EPAS_INFO':
+            fields['SteeringColumnTorque'] = 2 if steering else 0
+          if scenario == 'route45' and name == 'Lane_Assist_Data3_FD1':
+            fields['LatCtlSte_D_Stat'] = 0 if fault in ('temporary-lkas', 'temporary-lkas-gas') else 1
+          if scenario == 'route45' and fault == 'permanent-eps' and name == 'EPAS_INFO':
+            fields['EPAS_Failure'] = 2
           if name == 'EngBrakeData' and brake:
             fields['BpedDrvAppl_D_Actl'] = 2
-          if name == 'EngVehicleSpThrottle' and fault in ('gas', 'temporary-eps-gas'):
+          if name == 'EngVehicleSpThrottle' and fault in ('gas', 'temporary-eps-gas', 'temporary-lkas-gas'):
             fields['ApedPos_Pc_ActlArb'] = 25
           if name == 'BrakeSysFeatures' and fault == 'rx-quality':
             fields['VehVActlBrk_D_Qf'] = 0
@@ -285,7 +308,7 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
           if not (fault == 'source-loss' and name == 'Yaw_Data_FD1'):
             accepted = safety.safety_rx_hook(joined_packet(frame))
             assert bool(accepted) == (not (fault == 'rx-quality' and name == 'BrakeSysFeatures'))
-          pedal = name == 'EngVehicleSpThrottle' and fault in ('gas', 'temporary-eps-gas') or name == 'EngBrakeData' and brake
+          pedal = name == 'EngVehicleSpThrottle' and fault in ('gas', 'temporary-eps-gas', 'temporary-lkas-gas') or name == 'EngBrakeData' and brake
           if getattr(monkeypatch, 'ford_native_first_pedal', False) and pedal and name not in delayed_pedals_seen:
             # The real native RX already consumed this frame above. Deliver it
             # to the host on the next update, retaining native authority now.
@@ -298,7 +321,7 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
           native.pump(
             1,
             main=0 if main_off else 5 if engaged else 3,
-            gear=1 if reverse else 3,
+            gear=0 if park else 1 if reverse else 3,
             mask=request,
             heartbeat=heartbeat and fault != 'heartbeat',
             speed=(3.1 + .12 * ((steps // 2) % 12) / 11 if getattr(monkeypatch, "ford_speed_window", False) else 15.0),
@@ -372,18 +395,37 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
           panda.pandaStates[0].alternativeExperience = 32
         device = messaging.new_message('deviceState', valid=True, logMonoTime=now[0])
         device.deviceState.started, device.deviceState.startedMonoTime = True, 9_000_000_000
-        events = [wire.as_reader(), panda.as_reader(), device.as_reader()]
+        # Match pandad's 10Hz native publication, including a pedal-first USB read.
+        # Values are actual native results; retained messages keep their stamps.
+        if getattr(monkeypatch, 'ford_native_10hz', False):
+          if not delayed_native or steps % 10 == 0 or (brake or cancel) and not permission & 2 and delayed_native.get('permission', 3) & 2:
+            delayed_native.update(wire=wire.as_reader(), panda=panda.as_reader(), permission=permission)
+          wire_message, panda_message = delayed_native['wire'], delayed_native['panda']
+        else:
+          wire_message, panda_message = wire.as_reader(), panda.as_reader()
+        events = [wire_message, panda_message, device.as_reader()]
         for name in ('selfdriveState', 'aolAxisState', 'onroadEvents'):
           if name in previous_sd:
             events.append(previous_sd[name])  # Original publication/source stamps.
         if 'onroadEvents' not in previous_sd:
           events.append(messaging.new_message('onroadEvents', 0, valid=True, logMonoTime=now[0]).as_reader())
+        if scenario == 'route45' and route45_phase[0] == 'released' and route45_old:
+          current_events = previous_sd.get('onroadEvents')
+          has_released_events = bool(current_events is not None and
+            not any(str(e.name) == 'gasPressedOverride' for e in current_events.onroadEvents))
+          mode = getattr(monkeypatch, 'ford_route45_delivery', 'paired')
+          if has_released_events and (not route45_mixed[0] or mode == 'never-paired') and mode != 'paired':
+            service = 'onroadEvents' if mode in ('axis-first', 'never-paired') else 'aolAxisState'
+            events = [e for e in events if e.which() != service]
+            events.append(route45_old[service])
+            route45_mixed[0] = True
         host.sm.update_msgs(now[0] / 1e9, events)
         state, _ = host.state_update()
         host.state_publish(state, None)
         assert 'aolIntentWire' in published
         parser_ready = bool(
-          state.canValid and not state.canTimeout and state.cruiseState.available and str(state.gearShifter) == 'drive' and safety.safety_config_valid()
+          state.canValid and not state.canTimeout and (state.cruiseState.available or scenario == 'route49') and
+          str(state.gearShifter) == 'drive' and safety.safety_config_valid()
         )
         if warmup and not parser_ready:
           assert steps <= start_tick + 120 and not engaged and not brake and not reverse
@@ -395,8 +437,11 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
           assert state.canValid and not state.canTimeout
         qualified_samples += 1
         parsed_before_producer = state.to_dict()
-        assert (main_off or state.cruiseState.available or availability_transition and not state.cruiseState.enabled) and not state.steeringPressed
-        assert bool(state.gasPressed) == (fault in ('gas', 'temporary-eps-gas') and not any(frame[0] == 0x204 for frame in delayed_pedal_frames))
+        assert (main_off or scenario == 'route49' or state.cruiseState.available or availability_transition and not state.cruiseState.enabled
+                or scenario == 'route45' and getattr(monkeypatch, 'ford_route45_refusal', None) == 'main-off')
+        assert scenario in ('route45', 'route49', 'route22') or not state.steeringPressed
+        assert bool(state.gasPressed) == (fault in ('gas', 'temporary-eps-gas', 'temporary-lkas-gas')
+                                          and not any(frame[0] == 0x204 for frame in delayed_pedal_frames))
         axis, sd_state, command = drive(
           steps,
           car_state_message=published['carState'],
@@ -409,8 +454,8 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
           native_request_long=bool(native_request & 2),
           panda_controls_allowed=bool(safety.get_controls_allowed()),
           panda_fault=slot.safetyRxChecksInvalid,
-          panda_state_message=panda,
-          safety_message=wire,
+          panda_state_message=panda_message.as_builder(),
+          safety_message=wire_message.as_builder(),
         )
         if delayed_pedal_frames:
           assert command.latActive and host.aol_card_intent.allowed_latch, 'Native-first pedal erased granted lateral intent'
@@ -423,11 +468,12 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
         host.sm.update_msgs(now[0] / 1e9, [control])
         host.can_log_mono_time = source_ns
         published.pop('sendcan', None)
+        joined.last_lateral_packets = []
         if getattr(monkeypatch, 'ford_angle', False):
           owner = host.CI.CC.bp_lat.host.inputs
           # Real controller input reader consumes the same original fresh native
           # receipt, Panda inventory and synthetic model boundary as Controls.
-          messages = [wire.as_reader(), panda.as_reader()]
+          messages = [wire_message, panda_message]
           for service in ('modelV2', 'lateralDelay'):
             message = messaging.new_message(service, valid=True, logMonoTime=source_ns)
             setattr(message, service, controls.sm[service])
@@ -444,6 +490,7 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
             assert safety.safety_tx_hook(libsafety_py.make_CANPacket(frame.address, frame.src - joined.offset, frame.dat))
             data, address = frame.dat, frame.address
             if address in (0x3CA, 0x3D3, 0x3D6):
+              joined.last_lateral_packets.append((address, bytes(data)))
               active = ((data[4] >> 2) & 7) != 0 if address == 0x3D3 else ((data[0] >> 4) & 7) != 0 if address == 0x3D6 else (data[0] >> 5) in (2, 4)
               if active:
                 assert command.latActive and permission & 1
@@ -461,7 +508,9 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
             'display', 'route24', 'route24-mixed-eps', 'route2a', 'route2a-main', 'route2a-main-fault'):
           ui = [f for f in published['sendcan'].sendcan if f.address in (0x3D8, 0x18A)]
           owns = all(safety.safety_fwd_hook(2, address) == -1 for address in (0x3D8, 0x18A))
-          assert host.CP.carFingerprint != CAR.FORD_MUSTANG_MACH_E_MK1 or not ui or owns, (
+          assert host.CP.carFingerprint not in (CAR.FORD_MUSTANG_MACH_E_MK1, CAR.FORD_F_150_LIGHTNING_MK1,
+                                                  CAR.FORD_ESCAPE_MK4_5, CAR.FORD_EXPEDITION_MK4,
+                                                  CAR.FORD_F_150_MK14, CAR.FORD_RANGER_MK2) or not ui or owns, (
             'Host injected cluster UI while native still forwarded stock UI',
             steps,
             bool(command.latActive),
@@ -496,10 +545,234 @@ def run_actual_producer(ford_joined, monkeypatch, *, scenario='reverse', reengag
         return libsafety_py.make_CANPacket(frame[0], frame[2], frame[1])
 
       for _ in range(120):
-        step(warmup=True)
+        step(warmup=True, main_off=scenario == 'route49')
       assert 0 <= warmup_waits < 120 and qualified_samples >= 100
       assert host.ci_initialized  # Read-only witness: real controls_update completed init.
       assert not host.aol_card_intent.allowed_latch
+      if scenario == 'startup-warning':
+        if getattr(monkeypatch, 'ford_startup_armed', False):
+          for _ in range(40):
+            state, axis, sd_state, command = step(engaged=True)
+          assert host.aol_card_intent.allowed_latch and command.latActive
+          warning_seen = False
+          warning_types = set()
+          for _ in range(60):
+            state, axis, sd_state, command = step(fault='temporary-eps')
+            warning_types.add(sd_state.alertType)
+            warning_seen |= sd_state.alertType in ('steerTempUnavailableSilent/warning', 'steerTempUnavailable/softDisable')
+          assert state.steerFaultTemporary and host.aol_card_intent.allowed_latch
+          assert 'warning' in sd.state_machine.current_alert_types
+          assert warning_seen and not command.latActive and not command.longActive and joined.last_permission == 0, (
+            warning_types, command.latActive, command.longActive, joined.last_permission)
+        else:
+          for _ in range(30):
+            state, axis, sd_state, command = step(main_off=True, park=True, fault='temporary-eps')
+          assert str(state.gearShifter) == 'park' and not state.cruiseState.available
+          assert state.steerFaultTemporary and not host.aol_card_intent.allowed_latch
+          assert not command.enabled and not command.latActive and not command.longActive
+          assert sd_state.alertType != 'steerTempUnavailableSilent/warning', 'Unarmed parked startup shows steering warning'
+        return
+      if scenario == 'route22':
+        assert host.CP.openpilotLongitudinalControl
+        latch_trace = []
+        for _ in range(40):
+          state, axis, sd_state, command = step(engaged=True, fault='gas')
+          latch_trace.append((steps, host.aol_card_intent.allowed_latch,
+            host.aol_card_intent.latch_clear_reason, str(axis.mode), str(axis.faultReason),
+            joined.last_native_request, joined.last_permission))
+        assert state.gasPressed and state.cruiseState.enabled
+        assert host.aol_card_intent.allowed_latch, ('Gas-held first engagement erased AOL', latch_trace)
+        assert command.latActive and not command.longActive
+        for _ in range(40):
+          state, axis, sd_state, command = step(engaged=True)
+        assert command.latActive and command.longActive and host.aol_card_intent.allowed_latch
+        # Driver releases a small steering override while AOL remains armed.
+        # Every real packed angle command must stay active and pass native TX.
+        for pressed in (True, False):
+          lateral = []
+          for _ in range(70):
+            state, axis, sd_state, command = step(engaged=True, steering=pressed)
+            assert command.latActive and host.aol_card_intent.allowed_latch
+            lateral.extend((address, data) for address, data in joined.last_lateral_packets if address in (0x3D3, 0x3D6))
+          assert lateral
+          for address, data in lateral:
+            mode = ((data[4] >> 2) & 7) if address == 0x3D3 else ((data[0] >> 4) & 7)
+            assert mode == 1, ('Unprompted angle reset after steering override', pressed, address, data.hex())
+        brake_seen = False
+        for _ in range(30):
+          state, axis, sd_state, command = step(brake=True)
+          assert host.aol_card_intent.allowed_latch, ('Brake erased first-engagement AOL', transition_trace[-12:])
+          assert command.latActive, transition_trace[-12:]
+          # The simulated 50 Hz brake source need not transmit on the first 100 Hz tick.
+          # LONG must be off once either native or host has actually observed that pedal.
+          brake_seen |= state.brakePressed
+          if state.brakePressed or not joined.last_permission & 2:
+            assert not command.longActive, transition_trace[-12:]
+          assert str(axis.faultReason) == 'none'
+          assert sd_state.alertType != 'controlsMismatch/immediateDisable'
+        assert brake_seen and not command.longActive
+        for _ in range(30):
+          state, axis, sd_state, command = step()
+        assert command.latActive and not command.longActive and host.aol_card_intent.allowed_latch
+        for _ in range(30):
+          state, axis, sd_state, command = step(fault=getattr(monkeypatch, 'ford_route22_final_fault', 'heartbeat'))
+        assert not command.latActive and not command.longActive
+        if getattr(monkeypatch, 'ford_route22_final_fault', 'heartbeat') == 'source-loss':
+          # This injection withholds native yaw RX while the host parser still receives it.
+          # Host CAN validity must never substitute for missing native permission.
+          assert joined.last_permission == 0 and state.canValid
+        else:
+          assert not host.aol_card_intent.allowed_latch
+        assert active_lat_frames > 0 and active_long_frames > 0
+        return
+      if scenario == 'route49':
+        assert not host.CP.openpilotLongitudinalControl
+        trace = []
+        original_intent_update = host.aol_card_intent.update
+
+        def trace_first_main(cs, **kwargs):
+          before = host.aol_card_intent
+          snapshot = {'tick': steps, 'main': cs.cruiseState.available,
+                      'ordinary': cs.cruiseState.enabled, 'fault': kwargs.get('fault_active'),
+                      'native_rejection': kwargs.get('native_rejection_ns'),
+                      'idle_ready': before.main_idle_transition_qualified,
+                      'pending_before': before.main_pending_ns,
+                      'axis_fault': str(host.sm['aolAxisState'].faultReason)}
+          result = original_intent_update(cs, **kwargs)
+          snapshot.update(armed=before.allowed_latch, reason=before.latch_clear_reason,
+                          pending_after=before.main_pending_ns, inhibit=before._fault_inhibit)
+          trace.append(snapshot)
+          return result
+
+        local.setattr(host.aol_card_intent, 'update', trace_first_main)
+        # Recorded first MAIN edge is raw0->5, not an already-idle MAIN3 fixture.
+        # Existing real Card/SD/native receipts, CAN and clocks remain in charge.
+        for _ in range(40):
+          state, axis, sd_state, command = step(engaged=True, fault='gas', steering=True)
+        assert state.cruiseState.available and state.cruiseState.enabled
+        assert command.enabled
+        assert host.aol_card_intent.allowed_latch, ('First MAIN0->5 did not arm AOL', trace[:12])
+        cancel_seen = False
+        for _ in range(10):
+          state, axis, sd_state, command = step(engaged=True, fault='gas', cancel=True)
+          cancel_seen |= host.CI.CS.cancel_button
+          assert host.aol_card_intent.allowed_latch
+        assert cancel_seen
+        for _ in range(30):
+          state, axis, sd_state, command = step(fault='gas')
+          assert host.aol_card_intent.allowed_latch
+        assert not state.cruiseState.enabled and not command.enabled
+        assert command.latActive and joined.last_permission & 1
+        for _ in range(20):
+          state, axis, sd_state, command = step(brake=True)
+          assert host.aol_card_intent.allowed_latch
+        for _ in range(30):
+          state, axis, sd_state, command = step()
+          assert host.aol_card_intent.allowed_latch
+        assert not command.enabled and command.latActive and joined.last_permission & 1
+        joined.route49_trace = trace
+        return
+      if scenario == 'route45':
+        assert host.CP.carFingerprint == CAR.FORD_MUSTANG_MACH_E_MK1
+        assert not host.CP.openpilotLongitudinalControl
+        for _ in range(40):
+          state, axis, sd_state, command = step(engaged=True)
+        assert command.latActive and host.aol_card_intent.allowed_latch
+        for _ in range(100):
+          state, axis, sd_state, command = step(fault='gas', steering=True)
+        assert state.steeringPressed and state.gasPressed
+        # Release pressure without an optional reset pulse. The real EPS
+        # restriction below must still withdraw output and retain only intent.
+        for _ in range(20):
+          state, axis, sd_state, command = step(fault='gas')
+          assert host.aol_card_intent.allowed_latch and command.latActive
+          for address, data in joined.last_lateral_packets:
+            if address == 0x3D6:
+              assert (data[0] >> 4) & 7 == 1
+        for _ in range(8):
+          state, axis, sd_state, command = step(fault='gas')
+        for _ in range(77):
+          state, axis, sd_state, command = step(fault='temporary-lkas-gas')
+          if state.steerFaultTemporary:
+            assert not command.latActive and not joined.last_permission & 1
+          assert host.aol_card_intent.allowed_latch
+        route45_old.update(previous_sd)
+        route45_phase[0] = 'released'
+        delivery = getattr(monkeypatch, 'ford_route45_delivery', 'paired')
+        lost = False
+        refusal = getattr(monkeypatch, 'ford_route45_refusal', None)
+        for _ in range(34):
+          state, axis, sd_state, command = step(fault='temporary-lkas')
+          lost |= not host.aol_card_intent.allowed_latch
+          assert not command.latActive and not command.longActive and not joined.last_permission & 1
+          feedback = host.aol_transport_feedback
+          route45_trace.append({'tick': steps, 'latch': host.aol_card_intent.allowed_latch,
+            'reason': host.aol_card_intent.latch_clear_reason, 'failed': feedback.failed,
+            'event': int(host.sm.logMonoTime['onroadEvents']),
+            'axisEvent': int(host.sm['aolAxisState'].faultEventMonoTime),
+            'signature': feedback.signature, 'gas': state.gasPressed,
+            'permission': joined.last_permission, 'request': joined.last_native_request})
+          if delivery != 'never-paired' and refusal is None:
+            assert not lost, ('Route45 mixed EPS receipt erased intent', route45_trace[-4:])
+        if refusal == 'cancel':
+          # Stock-long Ford leaves this button with cruise; its physical native
+          # cancellation must still prevent output after the EPS signal recovers.
+          assert route45_mixed[0]
+          for _ in range(60):
+            state, axis, sd_state, command = step()
+            assert not command.latActive and not command.longActive and not joined.last_permission & 1
+          return
+        if refusal is not None:
+          assert route45_mixed[0] and lost, 'Physical refusal must disarm despite a retained EPS join'
+          assert not command.latActive and not command.longActive
+          return
+        if delivery == 'never-paired':
+          assert lost, 'Unmatched EPS proof must not renew its previous source lease'
+        else:
+          recovered = False
+          for _ in range(60):
+            state, axis, sd_state, command = step()
+            recovered |= bool(command.latActive and joined.last_permission & 1)
+            assert host.aol_card_intent.allowed_latch
+          assert recovered, 'Retained selection needs independently earned fresh native recovery'
+        for _ in range(30):
+          state, axis, sd_state, command = step(main_off=True)
+        assert not host.aol_card_intent.allowed_latch and not command.latActive and not command.longActive
+        if delivery != 'paired':
+          assert route45_mixed[0]
+        joined.route45_trace = route45_trace
+        return
+      if scenario == 'cancel-native-cadence':
+        for _ in range(41):
+          state, axis, sd_state, command = step(engaged=True)
+        assert command.latActive and host.aol_card_intent.allowed_latch
+        for _ in range(12):
+          state, axis, sd_state, command = step(engaged=True, cancel=True)
+          assert host.aol_card_intent.allowed_latch, (host.aol_card_intent.latch_clear_reason, transition_trace[-12:])
+          assert command.latActive
+          if not joined.last_permission & 2:
+            assert not command.longActive
+        for _ in range(35):
+          state, axis, sd_state, command = step()
+          assert host.aol_card_intent.allowed_latch and command.latActive and not command.longActive, transition_trace[-12:]
+        for _ in range(30):
+          state, axis, sd_state, command = step(main_off=True)
+        assert not host.aol_card_intent.allowed_latch and not command.latActive and not command.longActive
+        return
+      if scenario == 'brake-native-cadence':
+        for _ in range(41):
+          state, axis, sd_state, command = step(engaged=True)
+        assert command.latActive and command.longActive and host.aol_card_intent.allowed_latch
+        for _ in range(35):
+          state, axis, sd_state, command = step(brake=True)
+          assert host.aol_card_intent.allowed_latch, (host.aol_card_intent.latch_clear_reason, transition_trace[-12:])
+          assert command.latActive, transition_trace[-12:]
+          if state.brakePressed or not joined.last_permission & 2:
+            assert not command.longActive
+        for _ in range(35):
+          state, axis, sd_state, command = step()
+          assert host.aol_card_intent.allowed_latch and command.latActive and not command.longActive
+        return
       if scenario == 'configuration-parity':
         for _ in range(40):
           state, axis, sd_state, command = step(engaged=True)

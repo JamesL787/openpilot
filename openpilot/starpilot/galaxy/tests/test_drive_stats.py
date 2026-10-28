@@ -78,6 +78,55 @@ class DriveStatsTest(unittest.TestCase):
     self.assertIsNone(owner._worker)
     self.assertEqual(self.history.scans, 0)
 
+  def test_aol_persists_and_exclusion_preserves_ordinary_engagement(self):
+    def with_aol(root, selected, permitted):
+      return {**analyzed(root, selected, permitted), 'aolSeconds': 15.0, 'aolPercent': 25.0}
+    owner = self.owner(analyzer=with_aol)
+    owner._start()
+    result = self.completed(owner)
+    self.assertEqual(result['totals']['aolSeconds'], 15)
+    self.assertEqual(result['totals']['engagedSeconds'], 30)
+    self.assertEqual(result['week']['aolPercent'], 25)
+    self.assertEqual(result['lastDrive']['aolSeconds'], 15)
+    loaded = self.owner().snapshot()
+    self.assertEqual(loaded['recentDrives'][0]['aolPercent'], 25)
+    ignored = owner.ignore('abc', True, lambda: True)
+    self.assertIsNone(ignored['totals']['aolSeconds'])
+    self.assertEqual(ignored['totals']['aolDrives'], 0)
+    self.assertEqual(ignored['recentDrives'][0]['aolSeconds'], 15)
+
+  def test_aol_aggregates_only_known_routes_and_weights_by_duration(self):
+    owner = self.owner(permitted=lambda: False)
+    base = {**analyzed(self.root, route('abc'), lambda: True), 'ignored': False}
+    owner._records = {
+      'abc': {**base, 'aolSeconds': 15, 'aolPercent': 25},
+      'long': {**base, 'routeId': 'long', 'durationSeconds': 180, 'aolSeconds': 135, 'aolPercent': 75},
+      'old': {**base, 'routeId': 'old'},
+      'gap': {**base, 'routeId': 'gap', 'aolSeconds': None, 'aolPercent': None},
+      'ignored': {**base, 'routeId': 'ignored', 'ignored': True, 'aolSeconds': 60, 'aolPercent': 100},
+      'incomplete': {**base, 'routeId': 'incomplete', 'complete': False, 'aolSeconds': 60, 'aolPercent': 100},
+    }
+    result = owner.snapshot()
+    for summary in (result['totals'], result['week']):
+      self.assertEqual(summary['aolSeconds'], 150)
+      self.assertEqual(summary['aolPercent'], 62.5)
+      self.assertEqual(summary['aolDurationSeconds'], 240)
+      self.assertEqual(summary['aolDrives'], 2)
+      self.assertEqual(summary['drives'], 4)
+    self.assertEqual(result['totals']['engagedSeconds'], 120)
+
+  def test_cache_rejects_invalid_aol_without_requiring_it_in_old_records(self):
+    owner = self.owner()
+    owner._start()
+    self.completed(owner)
+    record = json.loads(self.store.read_text())['routes']['abc']
+    self.assertTrue(drive_stats._valid_record(record))
+    for fields in ({'aolSeconds': -1, 'aolPercent': 0}, {'aolSeconds': True, 'aolPercent': 0},
+                   {'aolSeconds': float('nan'), 'aolPercent': 0}, {'aolSeconds': 61, 'aolPercent': 100},
+                   {'aolSeconds': 1, 'aolPercent': 101}, {'aolSeconds': 1, 'aolPercent': None}):
+      with self.subTest(fields=fields):
+        self.assertFalse(drive_stats._valid_record({**record, **fields}))
+
   def test_complete_aggregation_week_models_and_exclusion_persist(self):
     owner = self.owner()
     owner._start()
@@ -383,6 +432,58 @@ class DriveStatsTest(unittest.TestCase):
     owner._start()
     owner.snapshot()
     self.assertEqual(self.completed(owner, scans=3)['totals']['drives'], 1)
+
+  def test_exhausted_failure_recovers_once_after_analyzer_upgrade(self):
+    owner = self.owner(analyzer=lambda *args, **kwargs: {**analyzed(*args, **kwargs),
+                                                       'complete': False, 'reason': 'End of route was not recorded'})
+    owner._start()
+    owner.snapshot()
+    self.completed(owner)
+    owner._failures['abc']['attempts'] = drive_stats.MAX_RETRY_ATTEMPTS
+    owner._save()
+    self.now[0] += 61
+    owner = self.owner(analyzer=mock.Mock(wraps=analyzed))
+    owner._start()
+    owner.snapshot()
+    paused = self.completed(owner)
+    owner.analyzer.assert_not_called()
+    self.assertEqual(paused['analysis']['state'], 'failed')
+    self.assertTrue(paused['analysis']['failures'][0]['retryStopped'])
+    self.assertEqual(paused['analysis']['failures'][0]['reason'], 'End of route was not recorded')
+    self.assertEqual(paused['totals']['drives'], 0)
+    self.now[0] += 61
+    with mock.patch.object(drive_stats, 'ANALYSIS_VERSION', drive_stats.ANALYSIS_VERSION + 1):
+      owner._start()
+      owner.snapshot()
+      recovered = self.completed(owner, scans=3)
+    owner.analyzer.assert_called_once()
+    self.assertEqual(recovered['analysis']['failed'], 0)
+    self.assertEqual(recovered['totals']['drives'], 1)
+
+  def test_legacy_failure_gets_fresh_bounded_attempts(self):
+    owner = self.owner(analyzer=lambda *args, **kwargs: {**analyzed(*args, **kwargs),
+                                                       'complete': False, 'reason': 'gap'})
+    owner._start()
+    owner.snapshot()
+    self.completed(owner)
+    failure = owner._failures['abc']
+    failure.pop('analysisVersion')
+    failure['attempts'] = drive_stats.MAX_RETRY_ATTEMPTS
+    failure['firstAt'] = self.now[0] - drive_stats.MAX_RETRY_AGE_SECONDS
+    owner._save()
+    owner = self.owner(analyzer=owner.analyzer)
+    self.now[0] += 61
+    owner._start()
+    owner.snapshot()
+    result = self.completed(owner, scans=2)
+    self.assertEqual(result['analysis']['state'], 'retrying')
+    self.assertEqual(owner._failures['abc']['attempts'], 1)
+    self.assertEqual(owner._failures['abc']['analysisVersion'], drive_stats.ANALYSIS_VERSION)
+    self.now[0] += 61
+    owner._start()
+    owner.snapshot()
+    self.completed(owner, scans=3)
+    self.assertEqual(owner._failures['abc']['attempts'], 1)
 
   def test_failed_analysis_leaves_queue_and_retries_after_cooldown(self):
     owner = self.owner(analyzer=mock.Mock(side_effect=TimeoutError('bounded route timeout')))

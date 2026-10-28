@@ -67,3 +67,16 @@ def test_hidden_max_and_offset_preferences_keep_the_latest_sign():
   current = state()
   shown = resolve_unified_speed(replace(current, customization={**current.customization, 'showMaxSpeed': False}, show_slc_offset=False))
   assert (shown.mode, shown.posted_text, shown.offset_text) == ('limit_only', '108', None)
+
+
+@pytest.mark.parametrize('pending,adjusted,presentation,offset,expected', [
+  (30., 33., 32., 2., '119'),
+  (30., None, 32., 2., '115'),
+  (30., None, None, 2., '115'),
+  (25., None, 32., 2., '97'),
+])
+def test_confirmation_proposal_uses_the_pending_target_and_its_offset(pending, adjusted, presentation, offset, expected):
+  current = state()
+  observation = replace(current.speed_limit, pending_speed_limit_mps=pending, pending_adjusted_limit_mps=adjusted,
+                        presentation_adjusted_limit_mps=presentation, offset_mps=offset)
+  assert resolve_unified_speed(replace(current, speed_limit=observation)).proposal_text == expected

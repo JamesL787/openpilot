@@ -12,7 +12,7 @@ DIRECTION_EPSILON = 1e-6
 BLUE = (0, 176, 220)
 
 
-def feedback_message(result, applied, lateral_active, *, model_mono_time, car_control_mono_time, valid):
+def feedback_message(result, applied, lateral_active, *, model_mono_time, car_control_mono_time, valid, inactive_reason='inactive'):
   event = messaging.new_message(SERVICE, valid=valid)
   state = event.starpilotLateralState.laneCentering
   state.version = 1
@@ -21,7 +21,7 @@ def feedback_message(result, applied, lateral_active, *, model_mono_time, car_co
   state.lateralActive = lateral_active
   state.requestedCorrection = result.correction if result is not None else 0.0
   state.appliedCorrection = applied if lateral_active else 0.0
-  state.reason = result.reason if result is not None else 'inactive'
+  state.reason = result.reason if result is not None else inactive_reason
   return event
 
 

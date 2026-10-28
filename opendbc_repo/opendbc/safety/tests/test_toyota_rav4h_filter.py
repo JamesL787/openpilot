@@ -40,11 +40,26 @@ class TestRav4hFilterNative(unittest.TestCase):
       bad.data[4] ^= 1
       self.safety.safety_rx_hook(bad)
       self.assertEqual(self.safety.aol_get_permission_mask(), 0)
-    for word in (0x5049, 0x5249, 0x9048, 0x904A, 0x914A, 0x9448, 0x944A, 0x9648, 0x964A, 0xB049, 0xD049):
+    for word in (0x5049, 0x9048, 0x904A, 0x914A, 0x9448, 0x944A, 0x9648, 0x964A, 0xB049, 0xD049):
       self.init(word, 32)
       self.physical(cruise=True)
       self.assertEqual(self.safety.aol_get_permission_mask(), 0)
       self.assertFalse(self.safety.safety_tx_hook(self.packer.make_can_msg_safety("ACC_CONTROL", 0, {"ACCEL_CMD": .1})))
+
+  def test_exact_factory_stock_profiles_are_distinct_from_filters(self):
+    # These exact words now select bare stock PCM, never adapter longitudinal.
+    for word in (0x5249, 0x564D, 0x5749):
+      self.init(word, 32)
+      self.assertFalse(self.safety.safety_config_valid())
+      self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+      self.assertFalse(self.safety.safety_tx_hook(self.packer.make_can_msg_safety("ACC_CONTROL", 0, {"ACCEL_CMD": .1})))
+      config = self.safety.current_safety_config
+      addresses = {config.rx_checks[i].msg[0].addr for i in range(config.rx_checks_len)}
+      self.assertIn(0x365 if word in (0x564D, 0x5749) else 0x1D3, addresses)
+      if word == 0x5249:
+        self.physical(cruise=True)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+        self.assertFalse(self.safety.safety_tx_hook(self.packer.make_can_msg_safety("ACC_CONTROL", 0, {"ACCEL_CMD": .1})))
 
   def test_explicit_legacy_advert_words_require_physical_sources(self):
     # The four-byte advertisement owner is distinct from the eight-byte SDSU owner.

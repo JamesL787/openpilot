@@ -116,6 +116,8 @@ createApp({
   },
   watch: { 'route.path'(path, previous) {
     state.pageError = ""
+    if (path !== "/settings") state.searchPage = ""
+    else if (route.view.searchPage !== undefined) state.searchPage = route.view.searchPage
     this.routeDirection = route.direction < 0 || primaryTab(path) < primaryTab(previous) ? -1 : 1
   } },
   methods: {

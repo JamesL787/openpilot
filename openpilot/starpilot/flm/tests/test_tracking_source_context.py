@@ -14,7 +14,8 @@ from openpilot.starpilot.flm.live_tracking_response import (
   certificate_from_dict,
   source_context,
 )
-from openpilot.starpilot.flm.canonical_surface_adapter import NAMES
+from openpilot.starpilot.flm.canonical_surface_adapter import NAMES, coordinate_bounds
+from openpilot.starpilot.flm.live_trial_contract import MAX_STEP
 from openpilot.starpilot.flm.tests.test_live_tracking import fixture_certificate, episode
 from openpilot.starpilot.flm.live_tracking import LiveTrackingOptimizer
 
@@ -75,7 +76,10 @@ def test_global_thirty_coordinates_require_new_unselected_baseline(name):
   assert o.offer_state['alpha'] == 0.0 and o.offer_state['critical'] == 0.0
   assert 'noise_prior' not in o.offer_state and len(selected.target) == 30 and not any(o.accepted.values())
   changes = [n for n, v in selected.target if v != dict(selected.baseline)[n]]
-  assert changes == [name] and abs(dict(selected.target)[name]) <= 0.005
+  assert changes == [name] and abs(dict(selected.target)[name]) <= MAX_STEP
+  for knob, value in selected.target:
+    low, high = coordinate_bounds(knob)
+    assert low <= value <= high
 
 
 def test_source_wire_roundtrip_and_model_field_smuggling_rejection():
@@ -231,7 +235,7 @@ def test_source_proposal_does_not_claim_instantaneous_gradient_is_plant_directio
       break
   assert o.offer_state is not None and o.offer_state['phase'] == 'trial'
   assert not any(o.accepted.values()) and len(o.before) == 3
-  assert o.offer_state['alpha'] == 0.0 and abs(o.offer_state['target']['ff_gain_left']) <= 0.005
+  assert o.offer_state['alpha'] == 0.0 and abs(o.offer_state['target']['ff_gain_left']) <= MAX_STEP
   assert not o.offer_state.get('accepted', False)
 
 
@@ -387,3 +391,122 @@ def test_small_step_can_improve_mean_and_median_with_normal_baseline_variation()
   assert _feedback_result([1.0] * 9, [0.1] + [1.01] * 8) == 0
   # Repeated new errors outside the original envelope are not kept.
   assert _feedback_result([1.0] * 9, [0.9] * 7 + [1.1] * 2) == 0
+
+
+@pytest.mark.parametrize('upper', [False, True])
+def test_source_boundary_tries_feasible_direction_without_claiming_plant_sign(upper):
+  from openpilot.starpilot.flm.canonical_surface_adapter import coordinate_bounds
+
+  o = owner()
+  name = 'center_deadband_highway_deg'
+  low, high = coordinate_bounds(name)
+  o.accepted[name] = high if upper else low
+  discovery_ids = set()
+  for i in range(5):
+    e = episode(o, i, name, kind='large', error=0.079)
+    # Magnitudes retained from c0's original native probe: one of four
+    # endpoints separates. This fixture tests selection, not native admission.
+    f = replace(e.sensitivity[0], error_feature_sum=0.015966462570723775 if upper else -0.015966462570723775,
+                feature_energy=0.2391186088079348, native_separated=1, native_endpoints=4, max_step_physical_rms=0.0012224938875305645)
+    e = replace(e, goal_rms=0.77, normalization_accel=0.77, sensitivity=(f,))
+    refresh(o, e.end_ns)
+    o.observe_episode(e, now_ns=e.end_ns)
+    if i == 1:
+      assert o.discovery is not None and o.offer_state is None
+      discovery_ids.update(o.selector_hint['source_episode_ids'])
+  selected = o.offer(e.end_ns)
+  assert selected is not None and selected.names == (name,)
+  assert dict(selected.target)[name] == pytest.approx(o.accepted[name] + (-MAX_STEP if upper else MAX_STEP))
+  assert len(o.before) == 3 and discovery_ids.isdisjoint(row.episode_id for row in o.before)
+  assert not o.offer_state['accepted'] and o.offer_state['alpha'] == 0.0
+
+
+@pytest.mark.parametrize('outcome', ['worse', 'inconclusive'])
+def test_source_boundary_fallback_does_not_repeat_rejected_feasible_direction(outcome):
+  from openpilot.starpilot.flm.live_tracking import _demand
+
+  o = owner()
+  name = 'center_deadband_highway_deg'
+  for i in range(4):
+    e = replace(episode(o, i, name, kind='large'), normalization_accel=0.5)
+    e = replace(e, sensitivity=tuple(replace(f, error_feature_sum=-f.error_feature_sum) for f in e.sensitivity))
+    if i == 0:
+      history = o.closed_loop_worse if outcome == 'worse' else o.inconclusive_trials
+      history.append((name, 1, e.profile_sha256, _demand(e), e.start_ns))
+    refresh(o, e.end_ns)
+    o.observe_episode(e, now_ns=e.end_ns)
+  assert o.discovery is None and o.offer_state is None
+
+
+def test_fitted_plant_does_not_reverse_identified_direction_at_boundary():
+  from openpilot.starpilot.flm.tests.test_live_tracking import optimizer, refresh as fitted_refresh
+
+  o = optimizer()
+  for i in range(20):
+    e = episode(o, i, 'center_deadband_highway_deg', kind='subtle')
+    e = replace(e, sensitivity=tuple(replace(f, error_feature_sum=-f.error_feature_sum) for f in e.sensitivity))
+    fitted_refresh(o, e.end_ns)
+    o.observe_episode(e, now_ns=e.end_ns)
+  assert o.discovery is None and o.offer_state is None
+
+
+@pytest.mark.parametrize('source_only', [False, True])
+def test_new_input_regime_retires_only_source_discovery_before_launch(source_only):
+  from openpilot.starpilot.flm.tests.test_live_tracking import optimizer, refresh as fitted_refresh
+
+  o = owner() if source_only else optimizer()
+  update = refresh if source_only else fitted_refresh
+  for i in range(40):
+    e = episode(o, i, 'center_taper_max', kind='subtle')
+    if source_only:
+      e = replace(e, normalization_accel=max(0.1, e.goal_rms))
+    update(o, e.end_ns)
+    o.observe_episode(e, now_ns=e.end_ns)
+    if o.discovery is not None:
+      break
+  previous = o.discovery
+  assert previous is not None and o.offer_state is None
+  changed = episode(o, i + 1, 'center_taper_max', kind='large')
+  if source_only:
+    changed = replace(changed, normalization_accel=max(0.1, changed.goal_rms))
+  update(o, changed.end_ns)
+  o.observe_episode(changed, now_ns=changed.end_ns)
+  assert (o.discovery is None) is source_only
+  if source_only:
+    assert o.selector_hint is None and not o.comparison
+    assert o.baseline[-1].episode_id == changed.episode_id
+  else:
+    assert o.discovery == previous
+  assert o.offer_state is None and not any(o.accepted.values())
+
+
+@pytest.mark.parametrize('estimate', [.0002, -.0002])
+def test_source_experiment_uses_measured_full_bound_not_tiny_confidence_fraction(estimate):
+  # Numerical proposal only; native visibility still needs actual controller/CAN evidence.
+  o = owner()
+  for index in range(6):
+    row = episode(o, index, 'ff_gain_left', error=.2)
+    feature = replace(row.sensitivity[0], error_feature_sum=estimate, feature_energy=1.)
+    row = replace(row, sensitivity=(feature,), normalization_accel=max(.1, row.goal_rms))
+    refresh(o, row.end_ns)
+    o.observe_episode(row, now_ns=row.end_ns)
+  selected = o.offer(row.end_ns)
+  assert selected is not None and selected.names == ('ff_gain_left',)
+  delta = dict(selected.target)['ff_gain_left'] - dict(selected.baseline)['ff_gain_left']
+  assert delta == pytest.approx(MAX_STEP if estimate > 0 else -MAX_STEP)
+  assert abs(delta) > .1 * abs(estimate)
+  assert len(selected.target) == 30 and len(o.before) == 3
+  assert not any(o.accepted.values()) and not o.future
+
+
+def test_fitted_model_retains_confidence_sized_proposal():
+  from openpilot.starpilot.flm.tests.test_live_tracking import optimizer, ready
+
+  o = optimizer()
+  # Preserve the fixture's original derivative: .01 physical delta per .005 coordinate.
+  state, now = ready(o, effect=.01 * MAX_STEP / .005)
+  assert state is not None
+  selected = o.offer(now)
+  assert selected is not None
+  # Existing fixture estimate=.05; original confidence fraction gives .005.
+  assert dict(selected.target)['ff_gain_left'] == pytest.approx(.005)

@@ -7,7 +7,7 @@ from typing import cast
 import tempfile
 import unittest
 
-from openpilot.starpilot.galaxy.developer_settings import AA_WIFI_KEY, DeveloperSettingsOwner
+from openpilot.starpilot.galaxy.developer_settings import DRIVER_MONITORING_RESET, AA_WIFI_KEY, DeveloperSettingsOwner
 from openpilot.starpilot.galaxy.settings import AuthorityContext, ContextSource, SettingsChanged, SettingsGateway
 from openpilot.starpilot.longitudinal.voacc import KEY, selected
 from openpilot.starpilot.ui.feature_settings_state import FeatureSettingsRequest
@@ -20,6 +20,21 @@ class FileParams:
 
   def get_param_path(self, key):
     return str(self.root / key)
+
+  def get_bool(self, key):
+    try:
+      return Path(self.get_param_path(key)).read_bytes() == b"1"
+    except FileNotFoundError:
+      return False
+
+  def remove(self, key):
+    try:
+      Path(self.get_param_path(key)).unlink()
+    except FileNotFoundError:
+      pass
+
+  def put_bool(self, key, value, block=False):
+    Path(self.get_param_path(key)).write_bytes(b"1" if value else b"0")
 
 
 class FakeAndroidAuto:
@@ -140,3 +155,18 @@ class DeveloperSettingsTest(unittest.TestCase):
     service.running = False
     self.assertNotIn(AA_WIFI_KEY, [row.key for row in owner.snapshot().rows])
     self.assertFalse(owner.apply(FeatureSettingsRequest(AA_WIFI_KEY, b"0", "On")))
+
+  def test_driver_monitoring_reset_matches_native_semantics_and_guards_preview(self):
+    self.params.put_bool("IsRhdDetected", True, block=True)
+    row = next(row for row in self.owner.snapshot().rows if row.key == DRIVER_MONITORING_RESET)
+    self.assertTrue(row.available)
+    self.assertTrue(self.owner.apply(FeatureSettingsRequest(DRIVER_MONITORING_RESET, b"1", "confirm", confirmation=True)))
+    self.assertFalse(Path(self.params.get_param_path("IsRhdDetected")).exists())
+    self.assertEqual(Path(self.params.get_param_path("OnroadCycleRequested")).read_bytes(), b"1")
+
+    self.params.put_bool("IsRhdDetected", True, block=True)
+    self.params.put_bool("IsDriverViewEnabled", True, block=True)
+    row = next(row for row in self.owner.snapshot().rows if row.key == DRIVER_MONITORING_RESET)
+    self.assertFalse(row.available)
+    self.assertFalse(self.owner.apply(FeatureSettingsRequest(DRIVER_MONITORING_RESET, b"1", "confirm", confirmation=True)))
+    self.assertTrue(Path(self.params.get_param_path("IsRhdDetected")).exists())

@@ -3,6 +3,7 @@
 NOT a route-fit/registered-native/model qualification. BoundaryAdapter is the
 existing synthetic lifecycle adapter; scientific validation is not invented.
 """
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from dataclasses import asdict, replace
 from types import SimpleNamespace
 from unittest import mock
@@ -132,7 +133,7 @@ def exercise(*, no_new_pose=False):
     sent.append((phase[0], admission))
   publisher = mock.Mock()
   publisher.send.side_effect = send
-  with mock.patch.object(steerlearnerd, 'drain', drain), \
+  with mock.patch.object(steerlearnerd, 'drain_pair', separate_drain_fixture(drain)), \
        mock.patch('openpilot.starpilot.flm.event_collector.EventFullrateCollector', Collector), \
        mock.patch('openpilot.starpilot.flm.native_health.current_native_health', return_value=True):
     with pytest.raises(StopIteration):

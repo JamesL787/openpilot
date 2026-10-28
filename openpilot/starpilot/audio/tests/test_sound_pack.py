@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+import shutil
 import unittest
 from unittest.mock import patch
 import wave
@@ -9,7 +10,8 @@ import numpy as np
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.selfdrive.ui.soundd import AudibleAlert, Soundd, sound_list
-from openpilot.starpilot.audio.sound_pack import MAX_WAV_BYTES, SoundPackLoader, installed_packs, read_wav
+from openpilot.starpilot.audio.sound_pack import BUILTIN_FILES, MAX_WAV_BYTES, SoundPackLoader, installed_packs, read_wav, tici_speaker_samples
+from openpilot.starpilot.audio.sound_pack import tici_disengage_samples
 from openpilot.starpilot.ui.feature_settings_state import FeatureSettingsRequest
 from openpilot.starpilot.ui.sounds_owner import SoundsOwner
 
@@ -170,3 +172,192 @@ class SoundPackTests(unittest.TestCase):
          patch("pathlib.Path.is_dir", side_effect=AssertionError("cached directory")):
       for frame in range(1, 20):
         self.assertIsNone(self.loader.refresh(("engage.wav",), frame / 20))
+
+
+class TiciSpeakerTests(unittest.TestCase):
+  def test_bass_reduction_preserves_presence_and_never_boosts(self):
+    t = np.arange(48000) / 48000
+    for frequency, bounds in ((100, (.23, .27)), (400, (.03, .05)), (1500, (.98, 1.01)), (4000, (.98, 1.01))):
+      with self.subTest(frequency=frequency):
+        samples = (.25 * np.sin(2 * np.pi * frequency * t)).astype(np.float32)
+        original = samples.copy()
+        output = tici_speaker_samples(samples)
+        ratio = np.sqrt(np.mean(output[1024:-1024] ** 2) / np.mean(samples[1024:-1024] ** 2))
+        self.assertGreaterEqual(ratio, bounds[0])
+        self.assertLessEqual(ratio, bounds[1])
+        self.assertLessEqual(np.max(np.abs(output)), np.max(np.abs(samples)))
+        self.assertEqual(output.shape, samples.shape)
+        self.assertEqual(output.dtype, np.float32)
+        self.assertFalse(output.flags.writeable)
+        np.testing.assert_array_equal(samples, original)
+
+  def test_short_and_silent_clips_keep_length_and_finite_output(self):
+    for samples in (np.zeros(1, np.float32), np.zeros(512, np.float32), np.array([.1, -.2, .3], np.float32)):
+      output = tici_speaker_samples(samples)
+      self.assertEqual(output.shape, samples.shape)
+      self.assertTrue(np.isfinite(output).all())
+      self.assertLessEqual(np.max(np.abs(output)), np.max(np.abs(samples)))
+
+  def test_only_tici_builtin_changes_and_retains_cached_identity(self):
+    with tempfile.TemporaryDirectory() as temporary:
+      params = Params(str(Path(temporary) / 'params'))
+      params.put('SoundPack', 'starpilot', block=True)
+      stock = Path(BASEDIR) / 'openpilot/selfdrive/assets/sounds'
+      names = tuple(BUILTIN_FILES)
+      for device in ('tici', 'tizi', 'mici', 'pc'):
+        with self.subTest(device=device):
+          loader = SoundPackLoader(params, stock, Path(temporary) / 'packs', device_type=device)
+          loaded = loader.refresh(names, 0)
+          assert loaded is not None
+          for name, samples in loaded.items():
+            original = read_wav(stock.parent / 'sounds_starpilot' / BUILTIN_FILES[name])
+            self.assertEqual(len(samples), len(original))
+            self.assertTrue(loader.is_builtin(samples))
+            self.assertFalse(samples.flags.writeable)
+            if device == 'tici':
+              self.assertEqual(samples[0], 0.)
+              self.assertEqual(samples[-1], 0.)
+              self.assertLess(np.sqrt(np.mean(samples ** 2)), .8 * np.sqrt(np.mean(original ** 2)))
+              self.assertLessEqual(np.max(np.abs(samples)), np.max(np.abs(original)))
+            else:
+              np.testing.assert_array_equal(samples, original)
+          self.assertIs(loaded['warning.wav'], loaded['pre_alert.wav'])
+          with patch('openpilot.starpilot.audio.sound_pack.tici_speaker_samples', side_effect=AssertionError('cached EQ')):
+            self.assertIsNone(loader.refresh(names, 1))
+
+  def test_tici_stock_and_custom_packs_are_bit_exact(self):
+    with tempfile.TemporaryDirectory() as temporary:
+      root = Path(temporary)
+      params = Params(str(root / 'params'))
+      stock = Path(BASEDIR) / 'openpilot/selfdrive/assets/sounds'
+      custom = root / 'packs/custom/sounds/engage.wav'
+      write_wav(custom)
+      for name in ('stock', 'custom'):
+        params.put('SoundPack', name, block=True)
+        with patch('openpilot.starpilot.audio.sound_pack.tici_speaker_samples', side_effect=AssertionError('unexpected EQ')):
+          loaded = SoundPackLoader(params, stock, root / 'packs', device_type='tici').refresh(('engage.wav',), 0)
+        assert loaded is not None
+        np.testing.assert_array_equal(loaded['engage.wav'], read_wav(stock / 'engage.wav' if name == 'stock' else custom))
+
+  def test_actual_tici_callback_uses_prepared_samples_without_filtering(self):
+    with tempfile.TemporaryDirectory() as temporary:
+      with patch('openpilot.selfdrive.ui.soundd.HARDWARE.get_device_type', return_value='tici'):
+        daemon = Soundd(Params(str(Path(temporary) / 'params')), pack_root=Path(temporary) / 'packs')
+      for alert in (AudibleAlert.engage, AudibleAlert.promptRepeat, AudibleAlert.warningSoft, AudibleAlert.warningImmediate):
+        samples = daemon.loaded_sounds[alert]
+        daemon.current_alert, daemon.current_sound = alert, alert
+        daemon.current_sound_frame, daemon.current_volume = 0, 1.
+        output = np.zeros((len(samples), 1), np.float32)
+        with patch('openpilot.starpilot.audio.sound_pack.tici_speaker_samples', side_effect=AssertionError('callback EQ')):
+          daemon.callback(output, len(output), None, None)
+        np.testing.assert_array_equal(output[:, 0], samples)
+        self.assertEqual(daemon.current_sound_frame, len(samples))
+
+
+def test_tici_speaker_targets_reported_resonance_without_cutting_chimes():
+  from openpilot.starpilot.audio.sound_pack import tici_speaker_samples
+  time = np.arange(48000) / 48000
+  amplitudes = {}
+  for frequency in (370, 420, 470, 880, 1200, 1570):
+    samples = (0.5 * np.sin(2 * np.pi * frequency * time)).astype(np.float32)
+    output = tici_speaker_samples(samples)
+    amplitudes[frequency] = np.sqrt(np.mean(output[4096:-4096] ** 2) / np.mean(samples[4096:-4096] ** 2))
+    assert len(output) == len(samples) and output.dtype == np.float32
+    assert not output.flags.writeable and np.isfinite(output).all()
+    assert np.max(np.abs(output)) <= np.max(np.abs(samples)) + 1e-7
+  for frequency in (370, 420, 470):
+    assert amplitudes[frequency] < 0.05
+  for frequency in (880, 1200, 1570):
+    assert 0.95 < amplitudes[frequency] <= 1.001
+
+
+ASSETS = Path(__file__).resolve().parents[3] / 'selfdrive/assets'
+
+
+class FileSelection:
+  def __init__(self, root):
+    self.root = root
+
+  def get_param_path(self, name):
+    return str(self.root / name)
+
+
+class TiciDisengageTests(unittest.TestCase):
+  def setUp(self):
+    temporary = tempfile.TemporaryDirectory()
+    self.addCleanup(temporary.cleanup)
+    self.root = Path(temporary.name)
+    self.params = FileSelection(self.root)
+    self.stock = ASSETS / 'sounds'
+    self.packs = self.root / 'packs'
+
+  def test_only_tici_builtin_disengage_gets_additional_refinement(self):
+    names = ('engage.wav', 'disengage.wav', 'warning.wav', 'critical.wav', 'dm_critical.wav')
+    for device in ('tici', 'tizi', 'mici', 'pc', ''):
+      with self.subTest(device=device):
+        loaded = SoundPackLoader(self.params, self.stock, self.packs, device_type=device).refresh(names, 0)
+        assert loaded is not None
+        for name in names:
+          expected = read_wav(ASSETS / 'sounds_starpilot' / BUILTIN_FILES[name])
+          if device == 'tici':
+            expected = tici_speaker_samples(expected)
+            if name == 'disengage.wav':
+              expected = tici_disengage_samples(expected)
+          np.testing.assert_array_equal(loaded[name], expected)
+          self.assertFalse(loaded[name].flags.writeable)
+
+  def test_stock_selection_bypasses_refinement(self):
+    (self.root / 'SoundPack').write_bytes(b'stock')
+    with patch('openpilot.starpilot.audio.sound_pack.tici_disengage_samples', side_effect=AssertionError('stock EQ')):
+      loaded = SoundPackLoader(self.params, self.stock, self.packs, device_type='tici').refresh(('disengage.wav',), 0)
+    assert loaded is not None
+    np.testing.assert_array_equal(loaded['disengage.wav'], read_wav(self.stock / 'disengage.wav'))
+
+  def test_custom_selection_bypasses_refinement(self):
+    (self.root / 'SoundPack').write_bytes(b'custom')
+    directory = self.packs / 'custom/sounds'
+    directory.mkdir(parents=True)
+    shutil.copyfile(ASSETS / 'sounds_starpilot/disengage.wav', directory / 'disengage.wav')
+    with patch('openpilot.starpilot.audio.sound_pack.tici_disengage_samples', side_effect=AssertionError('custom EQ')):
+      loaded = SoundPackLoader(self.params, self.stock, self.packs, device_type='tici').refresh(('disengage.wav',), 0)
+    assert loaded is not None
+    np.testing.assert_array_equal(loaded['disengage.wav'], read_wav(directory / 'disengage.wav'))
+
+  def test_refinement_keeps_shape_peak_and_input_and_reduces_low_body_and_tail(self):
+    samples = tici_speaker_samples(read_wav(ASSETS / 'sounds_starpilot/disengage.wav'))
+    original = samples.copy()
+    output = tici_disengage_samples(samples)
+    self.assertEqual(output.shape, samples.shape)
+    self.assertEqual(output.dtype, np.float32)
+    self.assertFalse(output.flags.writeable)
+    self.assertEqual(output[0], 0.)
+    self.assertEqual(output[-1], 0.)
+    self.assertTrue(np.isfinite(output).all())
+    self.assertLessEqual(np.max(np.abs(output)), np.max(np.abs(samples)))
+    np.testing.assert_array_equal(samples, original)
+    frequencies = np.fft.rfftfreq(len(samples), 1 / 48000)
+    low = frequencies < 600
+    before, after = (np.abs(np.fft.rfft(x)) ** 2 for x in (samples, output))
+    self.assertLess(after[low].sum(), before[low].sum() * .3)
+    self.assertLess(np.mean(output[-9600:] ** 2), np.mean(samples[-9600:] ** 2) * .7)
+    upper = frequencies > 750
+    self.assertGreater(np.corrcoef(np.log1p(before[upper]), np.log1p(after[upper]))[0, 1], .98)
+
+  def test_silent_and_short_clips_remain_finite_and_same_length(self):
+    for samples in (np.zeros(1, np.float32), np.zeros(512, np.float32), np.array([.1, -.2, .3], np.float32)):
+      output = tici_disengage_samples(samples)
+      self.assertEqual(output.shape, samples.shape)
+      self.assertTrue(np.isfinite(output).all())
+      self.assertLessEqual(np.max(np.abs(output)), np.max(np.abs(samples)))
+
+  def test_refinement_is_cached_at_load_time(self):
+    loader = SoundPackLoader(self.params, self.stock, self.packs, device_type='tici')
+    with patch('openpilot.starpilot.audio.sound_pack.tici_disengage_samples', wraps=tici_disengage_samples) as refine:
+      loaded = loader.refresh(('disengage.wav',), 0)
+      assert loaded is not None
+      prepared = loaded['disengage.wav']
+      self.assertEqual(refine.call_count, 1)
+      for timestamp in (.1, .5, 1.1, 2.2):
+        self.assertIsNone(loader.refresh(('disengage.wav',), timestamp))
+      self.assertEqual(refine.call_count, 1)
+      self.assertIs(loader.builtin_sounds['disengage.wav'], prepared)

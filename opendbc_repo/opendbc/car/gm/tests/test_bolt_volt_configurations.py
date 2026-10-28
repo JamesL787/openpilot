@@ -65,6 +65,62 @@ def controller_messages(cp, frame, controller=None, *, stock_acc_enabled=False, 
 
 
 class TestBoltVoltConfigurations(unittest.TestCase):
+  def test_bolt_steering_counter_tracks_real_loopback_values(self):
+    for identity in PEDAL_BOLT_CAR:
+      for alpha in (False, True):
+        for removed in (False, True):
+          with self.subTest(identity=identity, alpha=alpha, removed=removed):
+            cp = pedal_params(identity, setting=True, pedal=True, alpha_long=alpha, removed=removed)
+            if identity == CAR.CHEVROLET_BOLT_CC_2018_2021 and not removed:
+              self.assertEqual(cp.safetyConfigs[0].safetyParam, 0x9D)
+            cs = CarState(cp)
+            parsers = cs.get_can_parsers(cp)
+            packer = CANPacker(DBC[identity][Bus.pt])
+            controller = CarController(DBC[identity], cp)
+            control = structs.CarControl()
+            for step, (received, expected) in enumerate((([3], 0), ([0, 1], 2), ([0, 0], 1),
+                                                        ([1], 2), ([], 2), ([2, 3], 0), ([0], 1))):
+              now = 1_000_000_000 + step * 100_000_000
+              packets = [packer.make_can_msg("ASCMLKASteeringCmd", 128, {"RollingCounter": value}) for value in received]
+              for parser in parsers.values():
+                parser.update([(now - 20_000_000, packets)])
+              cs.out = cs.update(parsers).as_reader()
+              self.assertEqual(cs.loopback_lka_steering_cmd_updated, bool(received))
+              controller.frame = 20 + step * 10
+              _, commands = controller.update(control.as_reader(), cs, now)
+              steering = [message for message in commands if message[0] == 0x180 and message[2] == 0]
+              self.assertEqual(len(steering), 1)
+              data = steering[0][1]
+              self.assertEqual((data[0] >> 4) & 3, expected)
+              self.assertFalse(data[0] & 8)
+
+  def test_nonpedal_gm_preserves_legacy_loopback_counter_progression(self):
+    for identity in (CAR.CHEVROLET_VOLT, CAR.CHEVROLET_VOLT_CAMERA, CAR.CHEVROLET_VOLT_2019,
+                     CAR.CHEVROLET_BOLT_EUV):
+      for alpha in (False, True):
+        with self.subTest(identity=identity, alpha=alpha):
+          cp = ordinary_params(identity, alpha=alpha, radar=True)
+          cs = CarState(cp)
+          parsers = cs.get_can_parsers(cp)
+          packer = CANPacker(DBC[identity][Bus.pt])
+          controller = CarController(DBC[identity], cp)
+          self.assertFalse(controller.bolt_steering_ack_counter)
+          control = structs.CarControl()
+          expected = 0
+          for step, received in enumerate(([3], [0, 1], [0, 0], [1], [], [2, 3], [0])):
+            now = 1_000_000_000 + step * 100_000_000
+            packets = [packer.make_can_msg("ASCMLKASteeringCmd", 128, {"RollingCounter": value}) for value in received]
+            for parser in parsers.values():
+              parser.update([(now - 20_000_000, packets)])
+            cs.out = cs.update(parsers).as_reader()
+            expected += bool(received)
+            controller.frame = 20 + step * 10
+            _, commands = controller.update(control.as_reader(), cs, now)
+            steering = [message for message in commands if message[0] == 0x180 and message[2] == 0]
+            self.assertEqual(len(steering), 1)
+            self.assertEqual((steering[0][1][0] >> 4) & 3, expected % 4)
+            self.assertFalse(steering[0][1][0] & 8)
+
   def test_all_bolt_pedal_generations_withdraw_on_missing_stale_or_future_gear(self):
     for candidate in PEDAL_BOLT_CAR:
       for alpha in (False, True):

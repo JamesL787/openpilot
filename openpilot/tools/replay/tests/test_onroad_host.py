@@ -369,8 +369,8 @@ class TestOnroadHost(unittest.TestCase):
       replay_stopped = root / "replay-stopped"
       ui_stopped = root / "ui-stopped"
       worker = "; ".join(("import signal,time,sys", "from pathlib import Path",
-                          "Path(sys.argv[1]).write_text('ready')",
                           "signal.signal(signal.SIGTERM, lambda *_: (Path(sys.argv[2]).write_text('stopped'), sys.exit(0)))",
+                          "Path(sys.argv[1]).write_text('ready')",
                           "time.sleep(20)"))
       call = "raise SystemExit(supervise([sys.executable,'-c',worker,paths[0],paths[1]]," + \
              "[[sys.executable,'-c',worker,paths[2],paths[3]]],dict(os.environ)))"

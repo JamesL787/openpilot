@@ -22,6 +22,7 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.common.hardware import HARDWARE, PC
 from openpilot.common.hardware.usb import cable_connected, get_usb_state, is_chestnut_usb_id
 from openpilot.starpilot.models.manager import ModelManager
+from openpilot.starpilot.models.jetlink_status import JetlinkStatusFeed
 from openpilot.tools.replay.display_clock import BOOT_TIME_SERVICES, DisplayClockReader
 
 BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
@@ -114,6 +115,7 @@ class UIState:
         "carParams",
         "driverMonitoringState",
         "carState",
+        "starpilotCarState",
         "driverStateV2",
         "narrowRoadCameraState",
         "wideRoadCameraState",
@@ -137,9 +139,9 @@ class UIState:
         *(["customReserved6", "cabinCameraState", "narrowRoadEncodeIdx", "wideRoadEncodeIdx", "cabinEncodeIdx"]
           if self.replay_clock is not None else []),
       ],
-      ignore_alive=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState"],
-      ignore_valid=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState"],
-      ignore_avg_freq=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState"],
+      ignore_alive=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState", "starpilotCarState"],
+      ignore_valid=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState", "starpilotCarState"],
+      ignore_avg_freq=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState", "starpilotCarState"],
     )
 
     self.prime_state = ProjectionPrimeState(self.params) if self.replay_clock is not None or isinstance(self.params, ProjectionParams) else PrimeState()
@@ -159,6 +161,9 @@ class UIState:
     self.experimental_mode: bool = self.params.get_bool("ExperimentalMode")
     self.navigation_enabled = self.params.get_bool("NavigationEnabled")
     self.nav_destination_set = self.params.get("NavDestination") is not None
+    self.jetlink_status_feed = None if self.replay_clock is not None else JetlinkStatusFeed()
+    if self.jetlink_status_feed is not None:
+      self.jetlink_status_feed.set_enabled(True)
     self.chestnut_present: bool = False
     self._gpu_artifacts = None if self.replay_clock is not None else ModelManager()
     self._gpu_artifacts_at: float | None = None
@@ -399,6 +404,14 @@ class UIState:
 
   def _update_chestnut_state(self) -> None:
     detected = self.sm["deviceState"].chestnutPresent
+    feed = getattr(self, "jetlink_status_feed", None)
+    jetlink = feed.snapshot() if feed is not None and getattr(self, "replay_clock", None) is None and not detected else None
+    if jetlink is not None and jetlink.state != "off" and not self.started:
+      self.chestnut_present = jetlink.state not in ("disconnected", "unavailable")
+      self.chestnut_state = (ChestnutState.DISCONNECTED if jetlink.state == "disconnected" else
+                            ChestnutState.FAILED if jetlink.state == "unavailable" else
+                            ChestnutState.READY if jetlink.state in ("ready", "active") else ChestnutState.LOADING)
+      return
     if not self.started:
       self.chestnut_present = detected
       self.chestnut_state = (ChestnutState.FAILED if self.chestnut_alert else
@@ -411,6 +424,18 @@ class UIState:
     model_stamp = self.sm.logMonoTime["modelV2"]
     model_fresh = (model_seen and self.sm.valid["modelV2"] and self.sm.alive["modelV2"] and
                    0 < model_stamp <= UIState.display_time_ns(self) <= model_stamp + 250_000_000)
+    if jetlink is not None and jetlink.state != "off":
+      self.chestnut_present = jetlink.state not in ("disconnected", "unavailable")
+      if jetlink.state == "active" and model_fresh and self.sm["modelV2"].big:
+        self.chestnut_output_seen = True
+        self.chestnut_state = ChestnutState.ACTIVE
+      elif jetlink.state == "disconnected":
+        self.chestnut_state = ChestnutState.DISCONNECTED
+      elif jetlink.state == "unavailable" or self.chestnut_output_seen:
+        self.chestnut_state = ChestnutState.FAILED
+      else:
+        self.chestnut_state = ChestnutState.LOADING
+      return
     if getattr(self, "replay_clock", None) is not None:
       self.chestnut_present = detected
     if model_fresh and self.sm["modelV2"].big:

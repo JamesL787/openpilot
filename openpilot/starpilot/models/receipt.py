@@ -344,9 +344,9 @@ class ModelReceiptOwner:
 
   def loaded(self, prepared: PreparedArtifact | None, variant: ModelVariant,
              fallback_reason: str | None = None, *, model_id: str = BUNDLED_CURRENT) -> bool:
-    self.load = None
-    self._identity_since_ns = time.monotonic_ns()
-    self._last_publication_ns = 0
+    # An unknown/failed replacement (including Jetlink handover) must retire
+    # the previous volatile identity as well as the in-memory heartbeat.
+    self.start()
     if prepared is None:
       self.report("prepared-artifact-unavailable")
       return False

@@ -82,6 +82,7 @@ class GlobalRuntime:
     self.stage_effect = False
     self.reason = 'initializing'
     self.outcome = None
+    self._pending_trial_interrupted = False
     self.snapshot = ()
     self.snapshot_sequence = 0
     self.frame_sequence = 0
@@ -140,6 +141,7 @@ class GlobalRuntime:
     """Bounded current source/admission checks; invoked immediately before LaC."""
     self.used, self.stage, self.frame, self.eligible = False, None, None, False
     self.outcome = None
+    self._pending_trial_interrupted = False
     self.controller.automatic_flm_effects = None
     self.source = None
     # Capture a fresh V2 generation and calibration interruption before ANY
@@ -210,6 +212,7 @@ class GlobalRuntime:
         self._calibration_pending = None
       tracker.reject(now_ns=now_ns)
     self.outcome = None
+    self._pending_trial_interrupted = False
     self.centre_frame = None
     self.centre_raw = ()
     self.centre_result = (0.0, 0.0)
@@ -275,7 +278,8 @@ class GlobalRuntime:
           raise ValueError('stale_original_source')
       if self.controller.sat_time > 0:
         raise ValueError('controller_saturation')
-      if not (sm.seen[receipt_service] and sm.alive[receipt_service] and sm.valid[receipt_service] and sm.freq_ok[receipt_service]):
+      if not (sm.seen[receipt_service] and sm.alive[receipt_service] and sm.valid[receipt_service] and
+              (live_delivery or sm.freq_ok[receipt_service])):
         raise ValueError('source_unavailable')
       received = int(round(sm.recv_time[receipt_service] * 1e9))
       if not 0 <= now_ns - received <= SOURCE_LEASE_NS:
@@ -319,6 +323,11 @@ class GlobalRuntime:
       self.eligible = bool(source.enabled and not source.manual and not self.live_manual and active and healthy)
       if not source.enabled or source.manual or self.live_manual or not active:
         raise ValueError('manual_or_off_or_inactive')
+      # Current configuration is enough to record the unchanged controller.
+      # A slow optional publisher must not stop the tape needed to learn.
+      # Frequency still gates EVERY trial, restore and legacy application below.
+      if live_delivery and not sm.freq_ok[receipt_service]:
+        raise ValueError('source_frequency_unavailable')
       live_offer, live_restore = self._current_live_trial(sm,envelope) if live_delivery else (None,None)
       if live_offer is not None and live_restore is not None:
         raise ValueError('simultaneous trial and history restore')
@@ -403,8 +412,9 @@ class GlobalRuntime:
           profile, now_ns=now_ns, active=active, enabled=source.enabled, manual=source.manual, healthy=healthy, replay_validation=validation
         )[0]
       self.reason = 'qualified'
-    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as error:
       self._neutral('unavailable')
+      self._pending_trial_interrupted = str(error) == 'interrupted pending trial cannot resume'
 
   def _current_live_trial(self, sm, envelope):
     from capnp.lib.capnp import _DynamicStructReader
@@ -901,8 +911,18 @@ class GlobalRuntime:
     # preparation stamp and publication stamp are distinct but same-frame.
     from openpilot.starpilot.flm.live_trial_owner import LiveTrialApplication
     live_values = ()
-    application = self.outcome
     live_owner = self.live_trial_owner
+    if (self._pending_trial_interrupted and live_owner is not None
+        and self.controller.automatic_flm_effects is None
+        and active and self.healthy and self.eligible and self.source.enabled
+        and not (self.source.manual or self.live_manual)
+        and 0 <= control_ns-self.now_ns <= 30_000_000
+        and self.source.observed_ns <= control_ns <= self.source.expires_ns
+        and (not self.native_required or native_allowed)):
+      # The real controller refused this pending generation. Report rejection
+      # after current same-frame evidence, never fabricate an application ACK.
+      self.outcome = live_owner.rejected_pending(control_ns=control_ns)
+    application = self.outcome
     current_offer = None if live_owner is None else (live_owner.restore_offer or live_owner.offer)
     if (
       type(application) is LiveTrialApplication

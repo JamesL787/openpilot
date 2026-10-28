@@ -281,7 +281,8 @@ class StarShellSession:
     self._wheel_personality = None
     self.conditional_actions: ConditionalUiActionOwner | None = None
     self.cruise_actions = CruiseActionPublisher()
-    self.favorites_owner = FavoritesOwner(ui_state.params, self._favorite_actions, self._favorite_authority, self._favorite_render_actions)
+    self.favorites_owner = FavoritesOwner(ui_state.params, self._favorite_actions, self._favorite_authority, self._favorite_render_actions,
+                                         current_action=lambda key: self._resolve_favorite_actions(frozenset((key,))).get(key))
     self.favorites = OnroadFavorites(self.fonts, self._favorite_request)
     self._favorite_snapshot = None
     self._favorite_data = None
@@ -617,9 +618,10 @@ class StarShellSession:
     else:
       return False
     if success:
-      self._favorite_snapshot = self.favorites_owner.snapshot()
+      include_options = request.kind != "activate"
+      self._favorite_snapshot = self.favorites_owner.snapshot(include_options=include_options)
       self._favorite_data = asdict(self._favorite_snapshot)
-      self._favorite_include_options = True
+      self._favorite_include_options = include_options
       self.favorites.data = self._favorite_data
       self._favorite_read_at = time.monotonic()
     else:
@@ -1311,7 +1313,8 @@ class StarShellSession:
         except (OSError, RuntimeError, ValueError):
           label = "Driving model unavailable"
         self._home_model = (now, label)
-      snapshot = replace(snapshot, home=replace(snapshot.home, model_label=label if previous is None or not 0 <= now - previous[0] < 1.0 else previous[1]))
+      local_label = label if previous is None or not 0 <= now - previous[0] < 1.0 else previous[1]
+      snapshot = replace(snapshot, home=replace(snapshot.home, model_label=snapshot.home.model_label or local_label))
     preview_flags = getattr(self, "_visual_preview_flags", frozenset())
     if mode == ShellMode.ONROAD and preview_flags:
       visual = preview_at(preview_flags,
@@ -1828,9 +1831,14 @@ class StarMainLayout(MainLayout):
     toggle_items = self._large_panels[Destination.TOGGLES]._scroller._items
     toggle_items.insert(2, text_item("Safe Mode", "N/A"))
     toggle_items.insert(7, text_item("Right Hand Driving", "N/A"))
+    from openpilot.common.hardware import HARDWARE
     from openpilot.starpilot.ui.starpilot_settings_adapter_large import StarPilotSettingsAdapterLarge
     for destination, owner in self._large_panels.items():
-      self._large_panels[destination] = StarPilotSettingsAdapterLarge(owner, self.star.fonts, destination.value.title(), self._settings_back)
+      if destination == Destination.DEVELOPER and HARDWARE.get_device_type() in ('mici', 'tici', 'tizi'):
+        from openpilot.starpilot.ui.spacepilot.large import SpacePilotDeveloperAdapter
+        self._large_panels[destination] = SpacePilotDeveloperAdapter(owner, self.star.fonts, self._settings_back, self._exit_spacepilot)
+      else:
+        self._large_panels[destination] = StarPilotSettingsAdapterLarge(owner, self.star.fonts, destination.value.title(), self._settings_back)
     self._network_bridge.presentation = StarPilotSettingsAdapterLarge(native_network, self.star.fonts, "Network", self._settings_back)
     self.star.set_navigation(on_settings=lambda: self._set_current_layout(MainState.SETTINGS),
                              on_home=self._set_mode_for_state,
@@ -1839,6 +1847,10 @@ class StarMainLayout(MainLayout):
     self.star.set_request_owner(self._deliver_settings_request)
     self.star._native_favorite_actions = self._native_favorites
     self.star._publish_bookmark = self._on_bookmark_clicked
+
+  def _exit_spacepilot(self) -> None:
+    gui_app.pop_widgets_to(self, instant=True)
+    self._set_mode_for_state()
 
   def _native_favorites(self):
     from openpilot.selfdrive.ui.layouts.settings.settings import PanelType
@@ -2077,18 +2089,23 @@ class StarMiciMainLayout(MiciMainLayout):
                                              lambda index: panel().request_personality(index),
                                              lambda: panel().request_experimental())
 
+  def _handle_transitions(self):
+    from openpilot.starpilot.ui.spacepilot.native import SpacePilotPage, Stage, live_witness
+    page = gui_app.get_active_widget()
+    if (isinstance(page, SpacePilotPage) and not page.closed and page.session.stage != Stage.CLOSED and
+        live_witness() is not None):
+      # Cancel only the cosmetic delayed startup redirect for a freshly parked
+      # game. The base movement transition and the game's own gates still run.
+      self._onroad_time_delay = None
+    super()._handle_transitions()
+
+  def _exit_spacepilot(self) -> None:
+    # An unsafe game exit must reveal the existing road/alert presentation now,
+    # including when engagement/alerts change while the car still reports Park.
+    gui_app.pop_widgets_to(self, instant=True)
+    self._scroller.scroll_to(self._onroad_layout.rect.x if ui_state.started else self._home_layout.rect.x, smooth=False)
+
   def _open_compact_destination(self, destination: Destination) -> None:
-    if destination == Destination.NETWORK and not self.star.connectivity_allowed():
-      from openpilot.selfdrive.ui.mici.widgets.button import GreyBigButton
-      from openpilot.system.ui.widgets.scroller import NavScroller
-      page = NavScroller()
-      current = self.star.snapshot(ShellMode.SETTINGS).home.network
-      label = {"wifi": "Wi-Fi", "ethernet": "Ethernet", "cell2G": "Cellular 2G", "cell3G": "Cellular 3G",
-               "cell4G": "Cellular 4G", "cell5G": "Cellular 5G"}.get(current, "No connection shown")
-      page._scroller.add_widgets([GreyBigButton("network", label),
-                                  GreyBigButton("network changes", "Use Offroad mode to change network settings")])
-      gui_app.push_widget(page)
-      return
     if destination == Destination.BLUETOOTH:
       from openpilot.starpilot.ui.bluetooth_compact import BluetoothCompact
       panel = self._compact_panels.get(destination)
@@ -2134,7 +2151,7 @@ class StarMiciMainLayout(MiciMainLayout):
       return
     panel = self._compact_panels.get(destination)
     if panel is None:
-      panel = panel_type()
+      panel = DeveloperLayoutMici(on_spacepilot_exit=self._exit_spacepilot) if destination == Destination.DEVELOPER else panel_type()
       if destination == Destination.DEVICE:
         from openpilot.starpilot.ui.display_compact import DisplayCompact
         from openpilot.starpilot.ui.replay_settings import replay_entry

@@ -13,7 +13,7 @@ import socket
 from pathlib import Path
 import threading
 import time
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from openpilot.common.swaglog import cloudlog
 from openpilot.starpilot.galaxy.batch_routes import change_drive_state, delete_records, non_default_settings, preview_layout, preview_settings_recovery
@@ -158,6 +158,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
   summary_lock = threading.Lock()
   motion_events = sentry_events if sentry_events is not None else SentryEvents()
   sentry_events_lock = threading.Lock()
+  last_simulation = [float("-inf")]
   notification_owner = notifications
   snapshots = camera_snapshot if camera_snapshot is not None else CameraSnapshot()
   access = owner if owner is not None else default_owner()
@@ -766,6 +767,31 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         else:
           if self.require_session():
             self.json(200, result)
+      elif path in ('/api/galaxy/session', '/api/galaxy/session/qr.svg'):
+        record = pairing.read()
+        remote = getattr(self.server, 'remote_transport', False)
+        if not self.direct_local() and not (remote and record and gateway_cookie_valid(self.session_token(), record)):
+          self.json(403, {'error': 'A direct connection or matching gateway cookie is required'})
+          return
+        if not self.require_session():
+          return
+        if record is None:
+          self.json(200, {'paired': False})
+          return
+        token = quote(f"{record['slug']}:{record['session']}", safe='')
+        if path.endswith('/qr.svg'):
+          from openpilot.common.qrcode import _Qr, _capacity
+          raw = ('starpilot-remote://add?key=' + token).encode()
+          version = next(version for version in range(1, 21) if 4 + 8 + len(raw) * 8 <= _capacity(version) * 8)
+          matrix = _Qr(version, raw).modules
+          size = len(matrix) + 8
+          cells = ''.join(f'<path d="M{x + 4} {y + 4}h1v1h-1z"/>' for y, row in enumerate(matrix) for x, active in enumerate(row) if active)
+          svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}">' +
+                 f'<rect width="100%" height="100%" fill="white"/><g fill="black">{cells}</g></svg>')
+          self.respond(200, svg.encode(), 'image/svg+xml', cache_control='no-store')
+        else:
+          self.json(200, {'paired': True, 'slug': record['slug'], 'url': pairing.url(record['slug']),
+                          'cookieName': 'galaxy_session', 'sessionToken': token})
       elif path == '/api/galaxy/status':
         if not self.require_session():
           return
@@ -778,16 +804,15 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                         'tunnelClientAvailable': frpc_binary() is not None,
                         'legacyPassword': access.status().status == AccessStatus.LEGACY_IMPORT_AVAILABLE,
                         'legacyPairingAvailable': legacy_available is True})
-      elif path in ('/api/galaxy/qr.svg', '/api/companion/qr.svg'):
+      elif path == '/api/galaxy/qr.svg':
         if not self.require_session():
           return
         record = pairing.read()
-        if record is None and path == '/api/galaxy/qr.svg':
+        if record is None:
           self.json(404, {'error': 'Galaxy is not paired'})
           return
         from openpilot.common.qrcode import _Qr, _capacity
-        from openpilot.starpilot.galaxy.hotspot import ADDRESS
-        raw = (f"http://{ADDRESS}:8082/app.apk" if path == '/api/companion/qr.svg' or record is None else pairing.url(record['slug'])).encode()
+        raw = pairing.url(record['slug']).encode()
         version = next(version for version in range(1, 21)
                        if 4 + 8 + len(raw) * 8 <= _capacity(version) * 8)
         matrix = _Qr(version, raw).modules
@@ -1688,7 +1713,24 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           self.json(401, {'error': 'Sign in to Galaxy'})
           return
         try:
-          result = notification_owner.action(payload, permitted=lambda: self.settings_session() == identity)
+          if payload.get('action') == 'simulate':
+            with sentry_events_lock:
+              if set(payload) != {'action'}:
+                raise ValueError('Invalid simulation request')
+              if not parked():
+                self.json(403, {'error': 'Park the car before simulating an event'})
+                return
+              if clock() - last_simulation[0] < 10:
+                self.json(429, {'error': 'Wait ten seconds before simulating another event'})
+                return
+              notification_owner.store.record('warning', time.monotonic_ns(), simulated=True,
+                                               permitted=lambda: self.settings_session() == identity and parked())
+              last_simulation[0] = clock()
+              result = notification_owner.snapshot()
+          else:
+            result = notification_owner.action(payload, permitted=lambda: self.settings_session() == identity)
+        except LookupError:
+          self.json(404, {'error': 'Phone subscription not found'})
         except ValueError as error:
           self.json(400, {'error': str(error)})
         except PermissionError:
@@ -2273,6 +2315,21 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             self.json(403, {'error': 'Park before changing the connection type'})
             return
           command, arguments = 'set_connection', {'connection': payload['connection']}
+        elif (action == 'car_type' and set(payload) == {'action', 'carType'} and
+              payload['carType'] in ('builtin', 'adapter', 'usb', 'app')):
+          if not configuration_allowed():
+            self.json(403, {'error': 'Park before changing the setup type'})
+            return
+          command, arguments = 'set_car_type', {'car_type': payload['carType']}
+        elif action == 'car_profile' and set(payload) == {'action', 'profile'} and isinstance(payload['profile'], str):
+          from openpilot.starpilot.system.android_auto.car_profiles import valid_override
+          if not valid_override(payload['profile']):
+            self.json(400, {'error': 'Invalid car profile'})
+            return
+          if not configuration_allowed():
+            self.json(403, {'error': 'Park before changing car settings'})
+            return
+          command, arguments = 'set_car_profile', {'profile': payload['profile']}
         elif action == 'select_receiver' and set(payload) == {'action', 'address'} and isinstance(payload['address'], str):
           if not configuration_allowed():
             self.json(403, {'error': 'Park before changing the car'})

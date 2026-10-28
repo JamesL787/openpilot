@@ -58,6 +58,31 @@ class RemotePairingTest(unittest.TestCase):
     connection.close()
     return result
 
+  def test_app_key_export_requires_direct_session_or_matching_gateway_cookie(self):
+    for path in ('/api/galaxy/session', '/api/galaxy/session/qr.svg'):
+      self.assertEqual(self.request(self.local, path)[0], 401)
+    cookie = self.request(self.local, '/api/auth/session')[2]['Set-Cookie'].split(';', 1)[0]
+    code, body, headers = self.request(self.local, '/api/galaxy/session', cookie=cookie)
+    self.assertEqual((code, json.loads(body)), (200, {'paired': False}))
+    self.assertEqual(headers['Cache-Control'], 'no-store')
+    slug = self.pairing.pair(hashlib.sha256(b'password123').hexdigest())
+    record = self.pairing.read()
+    assert record is not None
+    token = f"{slug}%3A{record['session']}"
+    for path in ('/api/galaxy/session', '/api/galaxy/session/qr.svg'):
+      self.assertEqual(self.request(self.local, path, cookie=cookie)[0], 200)
+      with mock.patch('openpilot.starpilot.galaxy.server.direct_local_connection', return_value=False):
+        self.assertEqual(self.request(self.local, path, cookie=cookie)[0], 403)
+      self.assertEqual(self.request(self.remote, path, host='galaxy.firestar.link', cookie=cookie)[0], 403)
+      self.assertEqual(self.request(self.remote, path, host='galaxy.firestar.link', cookie='galaxy_session=wrong')[0], 403)
+      code, body, headers = self.request(self.remote, f'/{slug}' + path, host='galaxy.firestar.link', cookie='galaxy_session=' + token)
+      self.assertEqual(code, 200)
+      self.assertEqual(headers['Cache-Control'], 'no-store')
+      if not path.endswith('.svg'):
+        self.assertEqual(json.loads(body)['sessionToken'], token)
+      else:
+        self.assertIn(b'<svg', body)
+
   def test_gateway_session_cannot_access_routes(self):
     self.assertTrue(self.owner.configure('password123', lambda: True))
     slug = self.pairing.pair(hashlib.sha256(b'password123').hexdigest())

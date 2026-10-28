@@ -173,7 +173,11 @@ def test_physical_probe_aggregates_have_signed_derivative_and_independent_native
   b = completed_builder(count=4, error=0.2)
   name = NAMES[0]
   for index, point in enumerate(b.endpoints):
-    row = SimpleNamespace(name=name, physical_derivative=-2.0, native_separated=index % 2 == 0, max_step_physical_delta=0.01, status='separated')
+    row = SimpleNamespace(
+      name=name, physical_derivative=-2.0, native_separated=index % 2 == 0, max_step_physical_delta=0.01, status='separated',
+      baseline_coordinate=0.0, minus_coordinate=-0.05, plus_coordinate=0.05,
+      baseline_delivered=0.0, minus_delivered=0.01 if index % 2 == 0 else 0.0, plus_delivered=-0.01 if index % 2 == 0 else 0.0,
+    )
     b.probes[point.control_ns] = SimpleNamespace(
       rows=(row,), control_ns=point.control_ns, apply_ns=point.apply_ns, profile_sha256=b.pending[0][4], model_revision=b.certificate.model_revision
     )
@@ -505,7 +509,11 @@ def numerical_probe(b, point, group, name):
     profile_sha256=next(iter(b.completed.values()))['episode'].profile_sha256,
     model_revision=b.certificate.model_revision,
     group=group,
-    rows=(SimpleNamespace(name=name, physical_derivative=-2.0, native_separated=True, max_step_physical_delta=0.01, status='separated'),),
+    rows=(SimpleNamespace(
+      name=name, physical_derivative=-2.0, native_separated=True, max_step_physical_delta=0.01, status='separated',
+      baseline_coordinate=0.0, minus_coordinate=-0.05, plus_coordinate=0.05,
+      baseline_delivered=0.0, minus_delivered=0.01, plus_delivered=-0.01,
+    ),),
   )
 
 
@@ -535,7 +543,11 @@ def numerical_probe_from_saved(b, saved, point, group, name):
     profile_sha256=saved['episode'].profile_sha256,
     model_revision=b.certificate.model_revision,
     group=group,
-    rows=(SimpleNamespace(name=name, physical_derivative=-2.0, native_separated=True, max_step_physical_delta=0.01, status='separated'),),
+    rows=(SimpleNamespace(
+      name=name, physical_derivative=-2.0, native_separated=True, max_step_physical_delta=0.01, status='separated',
+      baseline_coordinate=0.0, minus_coordinate=-0.05, plus_coordinate=0.05,
+      baseline_delivered=0.0, minus_delivered=0.01, plus_delivered=-0.01,
+    ),),
   )
 
 

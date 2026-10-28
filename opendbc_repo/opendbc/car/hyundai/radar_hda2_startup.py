@@ -10,7 +10,7 @@ from opendbc.car.hyundai.ecu_continuity import ContinuousECUStartup, StartupKeep
 from opendbc.car.hyundai.ecu_startup import stock_copy
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.radar_hda1_startup import CARS, RadarHDA1Startup
-from opendbc.car.hyundai.values import HyundaiFlags
+from opendbc.car.hyundai.values import CAR, HyundaiFlags
 
 
 def required(cp):
@@ -27,7 +27,8 @@ def qualified(cp):
   return (required(cp) and cp.alphaLongitudinalAvailable and cp.alternativeExperience == 0 and not cp.pcmCruise and
           not int(cp.flags) & ~int(allowed) and owner is not None and
           stock.safetyConfigs[owner].safetyParam in (0x10, 0x12, 0x90, 0x92) and stock_qualified(stock) and
-          cp.safetyConfigs[owner].safetyParam == stock.safetyConfigs[owner].safetyParam | 4)
+          cp.safetyConfigs[owner].safetyParam == (stock.safetyConfigs[owner].safetyParam | 4 |
+            (0x2000 if cp.carFingerprint == CAR.KIA_CARNIVAL_4TH_GEN else 0)))
 
 
 class RadarHDA2Startup(RadarHDA1Startup):

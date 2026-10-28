@@ -218,3 +218,86 @@ if __name__ == "__main__":
     probe(parser.parse_args().probe)
   else:
     unittest.main()
+
+
+def run_tracking_plant(side, road_curvature, enabled):
+  import numpy as np
+  from openpilot.starpilot.lateral import lane_centering as lane
+  from openpilot.starpilot.lateral.lane_clearance import BodyDimensions
+  from openpilot.starpilot.lateral.tests import test_lane_centering as fixtures
+  from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature as clip
+
+  controller = lane.LaneCenteringController(body=BodyDimensions(1.88, 4.855))
+  speed, dt = 20.0, 0.01
+  y = heading = previous = 0.0
+  measured = road_curvature
+  delayed = [road_curvature] * 10
+  samples = []
+  for tick in range(1200):
+    if tick % 5 == 0:
+      nominal = road_curvature - 0.001 * (y - (-0.6 if side == 0 else 0.6)) - 0.08 * heading
+      m = fixtures.model(path_std=0.02)
+      for index, intercept in enumerate((-5.0, -1.8, 1.8, 5.0)):
+        m.laneLines[index].y = [intercept - y - heading * x + 0.5 * road_curvature * x * x for x in fixtures.XS]
+      m.position.y = [0.5 * nominal * x * x for x in fixtures.XS]
+      m.laneLineProbs = [0.0, 0.95 if tick < 100 or side == 0 else 0.05, 0.95 if tick < 100 or side == 1 else 0.05, 0.0]
+      m.init('roadEdges', 2)
+      for edge, intercept in zip(m.roadEdges, (-5.0, 5.0), strict=True):
+        edge.x = fixtures.XS
+        edge.y = [intercept - y - heading * x + 0.5 * road_curvature * x * x for x in fixtures.XS]
+      m.roadEdgeStds = [0.1, 0.1]
+      m.action.desiredCurvature = nominal
+      model = m.as_reader()
+      stamp = 1_000_000_000 + tick * 10_000_000
+    nominal = model.action.desiredCurvature
+    desired = nominal
+    if enabled:
+      result = controller.update(
+        lane.LaneCenteringInput(
+          model,
+          stamp,
+          True,
+          nominal,
+          speed,
+          lane.ControlMode.LATERAL_ONLY,
+          True,
+          lane.LaneCenteringSettings(True, 0.0, 0.0, True),
+          dt,
+          measured_curvature=measured,
+          lateral_delay_s=0.1,
+        )
+      )
+      assert result.candidate_curvature is not None
+      desired = result.candidate_curvature
+    command, _ = clip(speed, previous, desired, 0.0)
+    baseline, _ = clip(speed, previous, nominal, 0.0)
+    if enabled:
+      command = controller.guard_applied(model, baseline, command, measured, speed, 0.1)
+    assert abs(command) <= 3.0 / speed**2 + 1e-12
+    assert abs(command - previous) <= 5.0 / speed**2 * dt + 1e-12
+    previous = command
+    delayed.append(command)
+    measured += (delayed.pop(0) - measured) * dt / 0.1
+    road_speed = speed * math.cos(heading) / (1 - road_curvature * y)
+    y += speed * math.sin(heading) * dt
+    heading += (speed * measured - road_curvature * road_speed) * dt
+    samples.append((y, heading, command))
+  return {
+    'meanFinalAbsOffset': float(np.mean([abs(r[0]) for r in samples[-200:]])),
+    'minimumLineClearance': min(1.8 - abs(r[0]) for r in samples),
+    'maxAbsHeading': max(abs(r[1]) for r in samples),
+    'finalOffset': y,
+  }
+
+
+
+class TestLaneTrackingPlant(unittest.TestCase):
+  def test_single_line_tracking_reduces_bias_with_kinematic_feedback(self):
+    for side in (0, 1):
+      for curvature in (0., .004, -.004):
+        with self.subTest(side=side, curvature=curvature):
+          original = run_tracking_plant(side, curvature, False)
+          candidate = run_tracking_plant(side, curvature, True)
+          self.assertLess(candidate['meanFinalAbsOffset'], original['meanFinalAbsOffset'] * .8)
+          self.assertGreater(candidate['minimumLineClearance'], original['minimumLineClearance'])
+          self.assertLessEqual(candidate['maxAbsHeading'], original['maxAbsHeading'] + .001)

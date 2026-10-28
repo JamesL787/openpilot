@@ -1,3 +1,4 @@
+import gzip
 
 from dataclasses import replace
 import json
@@ -389,3 +390,106 @@ class TestStopCommitTransport(unittest.TestCase):
     self.assertTrue(result.accepted and result.experimental)
     self.sample(traffic_verdict=verdict, traffic_owner_present=True, cp=cp, unavailable='carControl')
     self.assertTrue(self.host.projector.stop_detector.committed)
+
+
+def test_recorded_ford_stopped_geometry_does_not_release_native_stop(request):
+  from pathlib import Path
+  from opendbc.car import gen_empty_fingerprint, structs
+  from opendbc.car.ford.interface import CarInterface
+  from opendbc.car.ford.values import CAR
+  from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+  from openpilot.selfdrive.controls.lib.longcontrol import LongControl
+  from openpilot.starpilot.conditional_mode.policy import ConditionalModePolicy
+  from openpilot.starpilot.conditional_mode.projection import SceneProjector
+  from openpilot.starpilot.conditional_mode.tests.test_projection import owner_context
+  from openpilot.starpilot.longitudinal.tests.test_lead_approach_planner import Frame, DRIVE_NS
+
+  recorded = json.loads(gzip.decompress((Path(__file__).parent / 'testdata/ford_stationary_stop.json.gz').read_bytes()))['frames']
+  fingerprint = gen_empty_fingerprint()
+  fingerprint[0][0x5A] = 8
+  cp = CarInterface.get_params(CAR.FORD_MUSTANG_MACH_E_MK1, fingerprint, [], True, False, False)
+  assert cp.openpilotLongitudinalControl
+  from opendbc.car.ford import fordcan
+  from opendbc.safety.tests.test_ford_aol import TestFordAolDriverIntent
+  from opendbc.safety.tests.libsafety import libsafety_py
+  endpoint = TestFordAolDriverIntent(methodName='runTest')
+  endpoint.setUp()
+  request.addfinalizer(endpoint.tearDown)
+  endpoint.reset(19)
+  endpoint.pump(40, main=0)
+  endpoint.pump(10, main=3)
+  endpoint.pump(10, main=5, mask=3)
+  assert endpoint.safety.aol_get_permission_mask() == 3
+  from opendbc.can import CANParser
+  packet_parser = CANParser('ford_lincoln_base_pt', [('ACCDATA', 50)], 0)
+  bus = fordcan.CanBus(fingerprint=fingerprint)
+  projector, policy = SceneProjector(), ConditionalModePolicy()
+  planner, controller = LongitudinalPlanner(cp), LongControl(cp)
+  checked = 0
+  for index, sample in enumerate(recorded):
+    stamp = MONO + index * 50_000_000
+    boot = BOOT + index * 50_000_000
+    payloads = serialized_scene(stamp=boot, speed=sample['vEgo'], standstill=sample['standstill'],
+                                lead_present=False, experimental_mode=True)
+    car = messaging.new_message('carState')
+    car.carState = payloads['carState']
+    car.carState.vEgoRaw = sample['vEgoRaw']
+    car.carState.cruiseState.available = car.carState.cruiseState.enabled = True
+    payloads['carState'] = messaging.log_from_bytes(car.to_bytes()).carState
+    command = messaging.new_message('carControl')
+    command.carControl = payloads['carControl']
+    command.carControl.longActive = sample['longActive']
+    command.carControl.enabled = sample['enabled']
+    payloads['carControl'] = messaging.log_from_bytes(command.to_bytes()).carControl
+    controls = messaging.new_message('controlsState')
+    controls.controlsState = payloads['controlsState']
+    controls.controlsState.longControlState = sample['longControlState']
+    payloads['controlsState'] = messaging.log_from_bytes(controls.to_bytes()).controlsState
+    model = messaging.new_message('modelV2')
+    model.modelV2 = payloads['modelV2']
+    model.modelV2.position.x = sample['x']
+    model.modelV2.action.shouldStop = sample['shouldStop']
+    model.modelV2.action.desiredAcceleration = sample['aTarget']
+    payloads['modelV2'] = messaging.log_from_bytes(model.to_bytes()).modelV2
+    sm = FakeSubMaster(payloads, stamp)
+    projected = projector.project(sm, cp, now_mono_ns=stamp+1_000_000, now_boot_ns=boot+1_000_000,
+      sample_skew_ns=1000, safe_mode=False, owner_context=owner_context(stamp))
+    if projected.authority is None:
+      continue
+    decision = policy.step((stamp+1_000_000)/1e9, ModeChoice.CEM, ManualIntent.NONE,
+                           projected.authority, projected.scene)
+    native = Frame(index, approach=False)
+    native['carState'].vEgo = max(sample['vEgo'], 0.)
+    native['carState'].standstill = sample['standstill']
+    native['carState'].cruiseState.available = native['carState'].cruiseState.enabled = True
+    native['carControl'].longActive = True
+    native['selfdriveState'].enabled = True
+    native['selfdriveState'].experimentalMode = decision.requested_experimental
+    native['modelV2'].action.shouldStop = sample['shouldStop']
+    native['modelV2'].action.desiredAcceleration = sample['aTarget']
+    for lead in (native['radarState'].leadOne, native['radarState'].leadTwo):
+      lead.present = False
+    if index == 1:
+      for _ in range(100):
+        controller.update(True, native['carState'], -.1, True, (-3.5, 2.))
+    native['controlsState'].longControlState = controller.long_control_state
+    planner.update(native, now_ns=native.now_ns, drive_id=DRIVE_NS)
+    assert planner.mpc.solution_status == 0
+    for _ in range(5):
+      output = controller.update(True, native['carState'], float(planner.output_a_target),
+                                 planner.output_should_stop, (-3.5, 2.))
+      assert -3.5 <= output <= 2.
+      endpoint.pump(1, main=5, mask=3, speed=max(sample['vEgoRaw'], 0.))
+      stopping = controller.long_control_state == structs.CarControl.Actuators.LongControlState.stopping
+      # Pack the actual LongControl result and keep the original native TX guard.
+      address, data, source = fordcan.create_acc_msg(endpoint.packer, bus, True, -5. if output < 0. else output,
+        float(output), stopping, output < 0., v_ego_kph=80.)
+      assert endpoint.safety.safety_tx_hook(libsafety_py.make_CANPacket(address, source, data))
+      packet_parser.update([(native.now_ns, [(address, data, source)])])
+      if sample['routeSeconds'] >= 596.:
+        assert decision.requested_experimental, ('Lost accepted Ford stop', sample['routeSeconds'])
+        assert planner.output_should_stop
+        assert packet_parser.vl['ACCDATA']['AccStopStat_B_Rq'] == 1
+        assert output <= 0., ('Released brake during model stop', sample['routeSeconds'])
+        checked += 1
+  assert checked > 200

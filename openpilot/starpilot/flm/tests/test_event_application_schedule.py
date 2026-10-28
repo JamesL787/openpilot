@@ -4,6 +4,7 @@ The child output is an opaque proposal deliberately rejected by adapter install.
 Real typed control/output/physical collector/source guards still run. Synthetic
 native health is explicit; this is not controller/native/physical qualification.
 """
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
@@ -107,7 +108,7 @@ def exercise(*, failure=None):
   publisher=mock.Mock()
   publisher.send.side_effect=send
   proposal=(SimpleNamespace(profile=object()), object())
-  with mock.patch.object(steerlearnerd,'drain',drain), \
+  with mock.patch.object(steerlearnerd,'drain_pair',separate_drain_fixture(drain)), \
        mock.patch('openpilot.starpilot.flm.event_collector.EventFullrateCollector',Collector), \
        mock.patch('openpilot.starpilot.flm.native_health.current_native_health',
          side_effect=lambda *args: not (failure == 'native' and phase[0] >= 5)):

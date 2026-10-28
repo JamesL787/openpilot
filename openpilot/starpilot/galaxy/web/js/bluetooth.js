@@ -218,6 +218,7 @@ export const BluetoothPage = {
         <GxNotice tone="danger" v-if="error">{{ error }}</GxNotice>
         <GxState v-if="!status && !error" loading>Checking Bluetooth…</GxState>
         <template v-else-if="status">
+          <GxNotice tone="info">Using a wireless Android Auto adapter? Pair the adapter on the <a class="gx-link" href="#/android-auto">Android Auto page</a>, then pair and connect your car here.</GxNotice>
           <section class="gx-card"><div class="gx-section__header"><i class="bi bi-bluetooth" aria-hidden="true"></i><span class="gx-section__title">Adapter</span></div>
             <div class="gx-panel gx-stack">
               <GxNotice v-if="status.errorCode" tone="danger">{{ bluetoothError(status.errorCode) }}</GxNotice>

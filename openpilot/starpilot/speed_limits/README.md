@@ -15,8 +15,20 @@ numeric limit does not start another decision. A decline remains effective acros
 a source gap or same-value provider change; a later different limit starts a new
 window, including when an earlier numeric limit returns.
 
-With Automatic adoption on, the widget slowly flashes for three seconds before
-adoption. With it off, the stationary widget pulses purple twice slowly (700 ms
+While StarPilot owns speed control, a proposed limit whose adjusted, rounded target
+already matches both current SET values is recorded without another confirmation
+or cruise command. The comparison uses the same mph/km/h rounding as Card, not
+actual traveling speed. A presented Accept or Decline takes priority, and a decline
+remains effective for that proposal. If SET reaches the target during a prompt,
+the prompt closes without changing speed. An earlier command must first settle,
+and SET must be observed after its receipt or expiry, before alignment is trusted.
+Received-limit memory still manages proposal changes and declined choices.
+An expired confirmation stays declined even if SET now matches. Changing only
+display units renews pending actions while preserving accepted limits, declines, manual
+overrides and the already applied SET.
+
+With Automatic adoption on, qualified new limits are adopted immediately.
+With it off, the stationary widget pulses purple twice slowly (700 ms
 each), rests for one second, pulses twice quickly (300 ms each), and rests for one
 second before repeating. Each pair has a 200 ms gap. The arrow remains relative
 to vehicle speed; Vienna numerals stay black while their ring pulses.
@@ -26,7 +38,10 @@ the offset fits inside the fixed sign height on both screens.
 Both sign styles identify the displayed source: DASH for Dashboard, OSM for offline
 Maps, and VISION for the vision model. Explicit Mapbox readings in historical
 replay use NAV; unidentified sources keep SPEED. Retained readings use LAST.
-Vienna signs place this label above the number, beside any pending arrow.
+Both styles place only this source above the number, beside any pending arrow.
+The source and arrow share a centered row; all sign contents use the same geometry
+on both screens. Small arrows are baked at double resolution and text is aligned
+to final pixels for clear native rendering.
 Steering-wheel + accepts and − declines. Tapping the sign opens the same
 Accept / Decline choices on either native screen. A pending manual choice expires
 after ten monotonic seconds, including time without active longitudinal control.
@@ -89,8 +104,8 @@ decision or manual override. Applied commands are not repeated.
 Declining or timing out a returned limit never revives an earlier adoption command;
 the historical adoption remains recorded independently of the new rejection.
 
-Transport changes append to reserved custom messages. `SlcState` appends automatic
-countdown metadata at ordinals 51–52 and latest-received display metadata at 53–55.
+Transport changes append to reserved custom messages. `SlcState` retains automatic
+pending metadata at ordinals 51–52 and latest-received display metadata at 53–55.
 `SlcCruiseCommand` appends its source at 14 and
 a bidirectional adoption kind; historical fields and enum ordinals remain reserved.
 Official vehicle schemas are unchanged. Historical SLC ceiling fields stay empty.

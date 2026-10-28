@@ -213,8 +213,8 @@ static bool ford_bp_lateral(const CANPacket_t *msg) {
              (SAFETY_ABS(path) >= (relation_low - 2.0F)) && (SAFETY_ABS(path) <= (relation_high + 2.0F)) &&
              (SAFETY_ABS(shadow) <= (physical_cap + FORD_BP_SHADOW_ROUNDING_MARGIN)) && (path_curvature_high <= (physical_cap + FORD_BP_SHADOW_ROUNDING_MARGIN));
     if (speed_max > 10.0F) {
-      const int measured_min = curvature_state.meas.min - 100;
-      const int measured_max = curvature_state.meas.max + 100;
+      const int measured_min = curvature_state.meas.min - (ford_pinion_enabled ? 150 : 100);
+      const int measured_max = curvature_state.meas.max + (ford_pinion_enabled ? 150 : 100);
       const float measured_min_float = (float)measured_min;
       const float measured_max_float = (float)measured_max;
       valid &= (shadow_can >= measured_min_float) && (shadow_can <= measured_max_float);

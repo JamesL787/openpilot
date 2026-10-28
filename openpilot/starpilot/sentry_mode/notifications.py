@@ -23,7 +23,9 @@ from openpilot.starpilot.storage import starpilot_storage_root
 from openpilot.starpilot.sentry_mode.storage import EventStore
 from openpilot.starpilot.sentry_mode import web_push
 
-CHANNELS = ('webPush', 'discord', 'webhook', 'ntfy')
+CHANNELS = ('webPush', 'discord', 'webhook', 'ntfy', 'appPush')
+APP_PUSH_RELAY_URL = ''
+APP_IDS = ('com.starpilot.galaxy', 'link.firestar.companion', 'link.galaxy.bluetooth.natehuby76')
 MAX_STATE_BYTES = 1024 * 1024
 MAX_JOBS = 512
 MAX_AGE = 86400
@@ -52,7 +54,7 @@ def endpoint(value: object, *, allow_http: bool = False) -> str:
 def fresh_state() -> dict:
   return {'version': 1, 'channels': {channel: {'enabled': False, 'url': '', 'token': '', 'generation': uuid.uuid4().hex,
                                               'since': 0} for channel in CHANNELS},
-          'subscriptions': [], 'vapid': '', 'jobs': {}, 'queueFull': False}
+          'appSubscriptions': [], 'subscriptions': [], 'vapid': '', 'jobs': {}, 'queueFull': False}
 
 
 def wall_seconds() -> float:
@@ -136,6 +138,10 @@ class NotificationOwner:
           result[key] = value
         return result
       state = json.loads(raw, object_pairs_hook=unique)
+      if type(state) is dict and 'appSubscriptions' not in state:
+        state['appSubscriptions'] = []
+        if type(state.get('channels')) is dict:
+          state['channels']['appPush'] = fresh_state()['channels']['appPush']
       self._validate_state(state)
       self.state = state
       self.saved_bytes = json.dumps(state, separators=(',', ':'), allow_nan=False).encode()
@@ -161,8 +167,18 @@ class NotificationOwner:
         raise ValueError('Invalid notification channel')
       if channel['url']:
         endpoint(channel['url'], allow_http=self.allow_http)
-      if name != 'webPush' and channel['enabled'] and not channel['url']:
+      if name not in ('webPush', 'appPush') and channel['enabled'] and not channel['url']:
         raise ValueError('Missing notification endpoint')
+    if type(state['appSubscriptions']) is not list or len(state['appSubscriptions']) > 8:
+      raise ValueError('Invalid app subscriptions')
+    for sub in state['appSubscriptions']:
+      if (type(sub) is not dict or set(sub) != {'id', 'token', 'appId', 'label', 'addedAt', 'since', 'lastResult', 'lastAt'} or
+          type(sub['token']) is not str or not 1 <= len(sub['token']) <= 4096 or any(ord(c) <= 32 for c in sub['token']) or
+          sub['id'] != hashlib.sha256(sub['token'].encode()).hexdigest()[:12] or sub['appId'] not in APP_IDS or
+          type(sub['label']) is not str or len(sub['label']) > 64 or
+          type(sub['lastResult']) is not str or len(sub['lastResult']) > 64 or
+          any(type(sub[key]) not in (int, float) or not 0 <= sub[key] < 2**63 for key in ('addedAt', 'since', 'lastAt'))):
+        raise ValueError('Invalid app subscription')
     for sub in state['subscriptions']:
       if type(sub) is not dict or set(sub) != {'id', 'subscription', 'since'} or type(sub['id']) is not str or ID.fullmatch(sub['id']) is None:
         raise ValueError('Invalid browser subscription')
@@ -176,7 +192,8 @@ class NotificationOwner:
           type(key) is not str or len(key) != 64 or type(job['eventId']) is not str or ID.fullmatch(job['eventId']) is None or
           job['kind'] not in ('warning', 'alarm', 'test') or job['channel'] not in CHANNELS or
           type(job['generation']) is not str or ID.fullmatch(job['generation']) is None or
-          (type(job['subscriptionId']) is not str or (job['subscriptionId'] and ID.fullmatch(job['subscriptionId']) is None)) or
+          (type(job['subscriptionId']) is not str or (re.fullmatch(r'[0-9a-f]{12}' if job['channel'] == 'appPush' else
+                                                                  r'[0-9a-f]{32}' if job['channel'] == 'webPush' else r'', job['subscriptionId']) is None)) or
           type(job['attempts']) is not int or not 0 <= job['attempts'] <= MAX_ATTEMPTS or
           job['state'] not in ('queued', 'sending', 'sent', 'failed', 'cancelled') or
           job['error'] not in ('', 'http', 'expired', 'timeout', 'transport', 'delivery_unknown', 'stale') or
@@ -219,6 +236,12 @@ class NotificationOwner:
                 'subscriptionCount': len(self.state['subscriptions']),
                 'subscriptions': [{'id': sub['id']} for sub in self.state['subscriptions']],
                 'deliverySemantics': 'Retries may repeat delivery after an interrupted remote response.'}
+      result['appSubscriptions'] = [{key: sub[key] for key in ('id', 'label', 'appId', 'addedAt', 'lastResult', 'lastAt')}
+                                    for sub in self.state['appSubscriptions']]
+      result['removedAppSubscriptions'] = [
+        {'id': job['subscriptionId'], 'lastResult': 'Phone unregistered — removed', 'lastAt': job['next']}
+        for job in jobs.values() if job['channel'] == 'appPush' and job['error'] == 'expired'][-8:]
+      result['appPushAvailable'] = self.state['channels']['appPush']['enabled'] and bool(self.state['channels']['appPush']['url'] or APP_PUSH_RELAY_URL)
       for name, cfg in self.state['channels'].items():
         relevant = [j for j in jobs.values() if j['channel'] == name and j['generation'] == cfg['generation']]
         latest = max(relevant, key=lambda j: j['created'], default=None)
@@ -272,6 +295,8 @@ class NotificationOwner:
         self.state['channels'][payload['channel']] = fresh_state()['channels'][payload['channel']]
         if payload['channel'] == 'webPush':
           self.state['subscriptions'] = []
+        if payload['channel'] == 'appPush':
+          self.state['appSubscriptions'] = []
       elif action == 'pushKey':
         if set(payload) != {'action'}:
           raise ValueError('Invalid push key request')
@@ -295,6 +320,41 @@ class NotificationOwner:
         if set(payload) != {'action', 'id'} or type(payload['id']) is not str or ID.fullmatch(payload['id']) is None:
           raise ValueError('Choose a browser subscription')
         self.state['subscriptions'] = [s for s in self.state['subscriptions'] if s['id'] != payload['id']]
+      elif action == 'appSubscribe':
+        if (set(payload) != {'action', 'token', 'appId', 'label'} or type(payload['token']) is not str or
+            not 1 <= len(payload['token']) <= 4096 or any(ord(c) <= 32 for c in payload['token']) or
+            type(payload['appId']) is not str or payload['appId'] not in APP_IDS or
+            type(payload['label']) is not str or len(payload['label']) > 64):
+          raise ValueError('Invalid app subscription')
+        current = self.state['appSubscriptions']
+        existing = next((sub for sub in current if sub['token'] == payload['token']), None)
+        if existing:
+          existing.update(appId=payload['appId'], label=payload['label'])
+        elif len(current) < 8:
+          current.append({'id': hashlib.sha256(payload['token'].encode()).hexdigest()[:12], 'token': payload['token'],
+                          'appId': payload['appId'], 'label': payload['label'], 'addedAt': now, 'since': now,
+                          'lastResult': '', 'lastAt': 0})
+        else:
+          raise ValueError('Remove a phone before adding another')
+        cfg = self.state['channels']['appPush']
+        cfg['enabled'] = bool(cfg['url'] or APP_PUSH_RELAY_URL)
+      elif action == 'appUnsubscribe':
+        if set(payload) not in ({'action', 'token'}, {'action', 'id'}):
+          raise ValueError('Choose a phone subscription')
+        key = 'token' if 'token' in payload else 'id'
+        if type(payload[key]) is not str:
+          raise ValueError('Choose a phone subscription')
+        self.state['appSubscriptions'] = [sub for sub in self.state['appSubscriptions'] if sub[key] != payload[key]]
+      elif action == 'test' and 'channel' not in payload:
+        if set(payload) - {'action', 'target', 'id'} or payload.get('target', 'all') not in ('all', 'app'):
+          raise ValueError('Choose a test target')
+        target_id = payload.get('id')
+        if payload.get('target') == 'app' and not any(sub['id'] == target_id for sub in self.state['appSubscriptions']):
+          raise LookupError('Phone subscription not found')
+        if sum(j['kind'] == 'test' and j['created'] > now - 60 for j in self.state['jobs'].values()) >= 32:
+          raise ValueError('Wait a minute before sending more tests')
+        self._enqueue({'eventId': uuid.uuid4().hex, 'kind': 'test', 'wallTimeNs': int(now * 1e9)},
+                      only='appPush' if payload.get('target') == 'app' else None, target_id=target_id)
       elif action == 'test':
         if set(payload) != {'action', 'channel'} or payload['channel'] not in CHANNELS:
           raise ValueError('Choose a test channel')
@@ -314,15 +374,18 @@ class NotificationOwner:
       self._save()
       return self.snapshot()
 
-  def _enqueue(self, event: dict, *, only: str | None = None) -> None:
+  def _enqueue(self, event: dict, *, only: str | None = None, target_id: str | None = None) -> None:
     if event['kind'] == 'selfie':
       return
     now = self.clock()
     for name, cfg in self.state['channels'].items():
       if not cfg['enabled'] or (only is not None and only != name):
         continue
-      targets = self.state['subscriptions'] if name == 'webPush' else [{'id': '', 'since': cfg['since']}]
+      targets = (self.state['subscriptions'] if name == 'webPush' else self.state['appSubscriptions']
+                 if name == 'appPush' else [{'id': '', 'since': cfg['since']}])
       for target in targets:
+        if target_id is not None and target['id'] != target_id:
+          continue
         if event['kind'] != 'test' and event['wallTimeNs'] / 1e9 <= max(cfg['since'], target['since']):
           continue
         key = hashlib.sha256((event['eventId'] + name + cfg['generation'] + target['id']).encode()).hexdigest()
@@ -372,7 +435,9 @@ class NotificationOwner:
           continue
         cfg = self.state['channels'][job['channel']]
         sub = next((s['subscription'] for s in self.state['subscriptions'] if s['id'] == job['subscriptionId']), None)
-        if not cfg['enabled'] or cfg['generation'] != job['generation'] or (job['channel'] == 'webPush' and sub is None):
+        if job['channel'] == 'appPush':
+          sub = next((s for s in self.state['appSubscriptions'] if s['id'] == job['subscriptionId']), None)
+        if not cfg['enabled'] or cfg['generation'] != job['generation'] or (job['channel'] in ('webPush', 'appPush') and sub is None):
           job['state'] = 'cancelled'
           continue
         if now < job['created'] or now - job['created'] > MAX_AGE:
@@ -398,8 +463,18 @@ class NotificationOwner:
           if current_job is None:
             continue
           job = current_job
+          if job['channel'] == 'appPush':
+            current_sub = next((s for s in self.state['appSubscriptions'] if s['id'] == job['subscriptionId']), None)
+            if current_sub is not None:
+              current_sub['lastAt'] = self.clock()
+              current_sub['lastResult'] = ('Delivered to relay' if 200 <= code < 300 else 'Relay not configured' if code == 0 else
+                                           'Phone unregistered — removed' if code == 410 else 'Rate limited' if code == 429 else f'Relay error {code}')
+            if code == 410:
+              self.state['appSubscriptions'] = [s for s in self.state['appSubscriptions'] if s['id'] != job['subscriptionId']]
           if 200 <= code < 300:
             job['state'], job['error'] = 'sent', ''
+          elif code == 410 and job['channel'] == 'appPush':
+            job['state'], job['error'], job['next'] = 'failed', 'expired', now
           elif code in (404, 410) and job['channel'] == 'webPush':
             job['state'], job['error'] = 'failed', 'expired'
             self.state['subscriptions'] = [s for s in self.state['subscriptions']
@@ -408,9 +483,13 @@ class NotificationOwner:
             job['state'], job['error'] = ('queued' if code in (408, 429) or code >= 500 else 'failed'), 'http'
         except (requests.Timeout, TimeoutError):
           job['state'], job['error'] = 'queued', 'timeout'
+          if job['channel'] == 'appPush' and sub is not None:
+            sub['lastAt'], sub['lastResult'] = self.clock(), 'Relay timeout'
         except Exception:
           # Never log response bodies, URLs, exception text, subscription secrets or auth headers.
           job['state'], job['error'] = 'queued', 'transport'
+          if job['channel'] == 'appPush' and sub is not None:
+            sub['lastAt'], sub['lastResult'] = self.clock(), 'Relay unavailable'
         if job['state'] == 'queued':
           if job['attempts'] >= MAX_ATTEMPTS:
             job['state'] = 'failed'
@@ -440,7 +519,17 @@ class NotificationOwner:
     message = 'This is a test StarPilot Sentry notification.' if job['kind'] == 'test' else f"Parked motion detected ({job['kind']})."
     event = {'eventId': job['eventId'], 'kind': job['kind'], 'systemTimeMs': int(job['created'] * 1000)}
     headers = {'Idempotency-Key': key}
-    if name == 'webPush':
+    if name == 'appPush':
+      if subscription is None:
+        raise ValueError('Missing app subscription')
+      relay = cfg['url'] or APP_PUSH_RELAY_URL
+      if not relay:
+        return 0
+      response = requests.post(relay.rstrip('/') + '/v1/sentry', json={
+        'token': subscription['token'], 'appId': subscription['appId'], 'kind': job['kind'], 'eventId': job['eventId'],
+        'wallTimeNs': int(job['created'] * 1e9), 'label': subscription['label']}, headers=headers,
+        timeout=(3, 10), allow_redirects=False, stream=True)
+    elif name == 'webPush':
       if subscription is None:
         raise ValueError('Missing browser subscription')
       body, push_headers = web_push.request(subscription, {'title': 'StarPilot Sentry Mode', 'body': message,

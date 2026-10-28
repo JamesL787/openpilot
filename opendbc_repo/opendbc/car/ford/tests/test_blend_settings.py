@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from opendbc.car.ford.interface import CarInterface
 from opendbc.car.ford.lateral_strategy import FordLateralController
 from opendbc.car.ford.values import CAR
 
@@ -36,7 +37,7 @@ def test_typed_saved_blends_reach_owner_without_model(values, expected, monkeypa
       for key, value in zip(keys, values, strict=True):
         saved.put(key, value, block=True)
     inputs = controller_extensions.ManualTurnInputs(saved)
-    owner = FordLateralController(SimpleNamespace(carFingerprint=CAR.FORD_RANGER_MK2))
+    owner = FordLateralController(CarInterface.get_non_essential_params(CAR.FORD_RANGER_MK2))
     calls = []
     setter = owner.set_blend_settings
 
@@ -66,7 +67,7 @@ def test_typed_saved_blends_reach_owner_without_model(values, expected, monkeypa
 @pytest.mark.parametrize("desired,predicted,direction", ((-0.0005, -0.002, 1), (0.0005, 0.002, 2),
                                                        (-0.001, -0.003, 2), (0.001, 0.003, 1)))
 def test_saved_blends_preserve_source_units_and_lane_direction(desired, predicted, direction):
-  owner = FordLateralController(SimpleNamespace(carFingerprint=CAR.FORD_RANGER_MK2))
+  owner = FordLateralController(CarInterface.get_non_essential_params(CAR.FORD_RANGER_MK2))
   owner.set_blend_settings(0.25, 0.65, 1.1)
   owner.model = SimpleNamespace(meta=SimpleNamespace(laneChangeState=2, laneChangeDirection=direction))
   blend = 0.25 + min(abs(desired) / 0.001, 1.0) * 0.4

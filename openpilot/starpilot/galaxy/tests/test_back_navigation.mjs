@@ -78,3 +78,59 @@ SettingsPage.methods.back.call(nested)
 assert.equal(nested.state.data.page,'standard','dedicated tools also retain each nested parent')
 SettingsPage.methods.back.call(nested)
 assert.equal(nested.state.data.page,'profiles')
+
+// Routed tools must return to the Settings entry that opened them. Reload
+// saved values from the device; keep only the navigation state in memory.
+navigate('/settings')
+const settingsView = route.view
+const props = {initialPage:'hub',initialSection:null,unauthorized() {}}
+const original = {...SettingsPage.setup(props), ...props}
+Object.assign(original.state, {data:{page:'pip',rows:[{value:'old device value'}]},
+  section:'visual',query:'camera',searchOpen:true,parents:['hub']})
+settingsView.scroll = {x:0,y:720}
+SettingsPage.beforeUnmount.call(original)
+assert(!JSON.stringify(settingsView).includes('old device value'))
+navigate('/cameras/pip')
+assert.notEqual(route.view, settingsView)
+navigateBack()
+assert.equal(route.view, settingsView)
+const restored = {...SettingsPage.setup(props), ...props, mode:'local'}
+assert.equal(restored.restoredPage, 'pip')
+assert.equal(restored.state.section, 'visual')
+assert.equal(restored.state.query, 'camera')
+assert.equal(restored.state.searchOpen, true)
+assert.deepEqual(restored.state.parents, ['hub'])
+assert.equal(restored.state.data, null, 'saved settings are always read again')
+const positions = []
+window.scrollTo = (x,y) => positions.push([x,y])
+restored.feed = {active:true,async start(page) {assert.equal(page,'pip')}}
+// Route changes capture the live scroll before unmount, independently of the
+// Settings request lifecycle. Use an explicit restored position here.
+settingsView.scroll = {x:0,y:720}
+await SettingsPage.mounted.call(restored)
+assert.deepEqual(positions.at(-1), [0,720])
+history.forward()
+assert.notEqual(route.view, settingsView)
+navigateBack()
+assert.equal(route.view, settingsView)
+navigate('/tools')
+navigate('/settings')
+assert.notEqual(route.view, settingsView, 'a new Settings visit has a fresh context')
+const fresh = SettingsPage.setup(props)
+assert.equal(fresh.restoredPage, undefined)
+assert.equal(fresh.state.section, 'lateral')
+
+// Search and ordinary Toggles views cannot overwrite each other.
+const searchProps = {...props,initialPage:'standard/following'}
+const search = {...SettingsPage.setup(searchProps),...searchProps}
+search.state.data = {page:'standard/following'}
+SettingsPage.beforeUnmount.call(search)
+assert.equal(route.view.searchPage, 'standard/following')
+const hub = {...SettingsPage.setup(props),...props}
+assert.equal(hub.restoredPage, undefined)
+hub.state.data = {page:'hub'}
+SettingsPage.beforeUnmount.call(hub)
+assert.equal(route.view.searchPage, '')
+const searchAgain = SettingsPage.setup(searchProps)
+assert.equal(searchAgain.restoredPage, undefined, 'a new search after returning to Toggles starts at its requested page')
+console.log('Settings entry, fresh values, search isolation and scroll restoration passed')

@@ -301,11 +301,14 @@ def test_real_pe_stop_preserves_intent_without_rearming(monkeypatch, host_heartb
         assert card.aol_card_intent.allowed_latch and axis.lateralActive and command.latActive
         assert native.aol_get_permission_mask() == 1 and not command.longActive
       for pedal in ('gas', 'brake'):
+        before_lat = emitted_active
         for _ in range(24):
           state, axis, host, command = step(**{pedal: True})
-          assert not axis.lateralActive and not command.latActive
+          assert axis.lateralActive and command.latActive
+          assert native.aol_get_permission_mask() == 1 and not native.get_controls_allowed()
           assert not axis.longitudinalActive and not command.longActive
           assert card.aol_card_intent.allowed_latch, pedal
+        assert emitted_active > before_lat, 'Armed AOL must keep emitting accepted steering through pedals'
         for _ in range(30):
           state, axis, host, command = step()
         assert card.aol_card_intent.allowed_latch and axis.lateralActive and command.latActive, pedal

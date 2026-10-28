@@ -21,11 +21,17 @@ def test_parent_configuration_tunes_and_stock_pair_are_exact(alpha, stock):
   cp = factory(alpha)
   assert pedal_composite.configured(cp) and pedal.configured(cp) and rav4h_filter.configured(cp) and qualified(cp)
   assert cp.safetyConfigs[0].safetyParam == 0xB049
-  assert pedal_composite.parent_cp(cp).to_dict() == parent.to_dict()
+  expected = parent.to_dict()
+  expected['longitudinalActuatorDelay'] = pytest.approx(.2)
+  expected['stopAccel'] = -1.5
+  assert pedal_composite.parent_cp(cp).to_dict() == expected
   if stock:
     assert rav4h_filter.prepare_stock(cp) and rav4h_filter.prepare_stock(parent)
     assert cp.safetyConfigs[0].safetyParam == 0xB249
-    assert pedal_composite.parent_cp(cp).to_dict() == parent.to_dict()
+    expected = parent.to_dict()
+    expected['longitudinalActuatorDelay'] = pytest.approx(.2)
+    expected['stopAccel'] = -1.5
+    assert pedal_composite.parent_cp(cp).to_dict() == expected
     assert pedal_composite.configured(cp) and qualified(cp)
 
 

@@ -18,7 +18,7 @@ daemon_gc_scope = helpers.daemon_gc_scope
 def test_original_prius_factory_card_controls_native_nominal(host_heartbeat_bridge, version, stock):
   def inspect(tick, host, cs, command, native, wires):
     assert host.CI.CS.eps_torque_scale == .66
-    assert abs(host.CP.longitudinalActuatorDelay - .15) < 1e-6
+    assert abs(host.CP.longitudinalActuatorDelay - .05) < 1e-6
     assert host.CP.safetyConfigs[0].safetyParam in prius_sdsu.WORDS
   helpers.run_case(stock, candidate=CAR.TOYOTA_PRIUS, bridge=host_heartbeat_bridge, input_clock=True,
     sdsu_words=(prius_sdsu.LONG_WORD, prius_sdsu.STOCK_WORD), firmware_override=original_firmware(version), on_sample=inspect)
@@ -79,7 +79,7 @@ def run(version, stock, bridge, scenario='nominal', *, aol=True, fault=None, mir
     parser = host.CI.can_parsers[Bus.pt]
     assert isinstance(parser, prius_sdsu.PriusSDSUCANParser)
     assert host.CI.CS.eps_torque_scale == .66
-    assert abs(host.CP.longitudinalActuatorDelay - .15) < 1e-6
+    assert abs(host.CP.longitudinalActuatorDelay - .05) < 1e-6
     assert host.CP.safetyConfigs[0].safetyParam == (prius_sdsu.STOCK_WORD if stock else prius_sdsu.LONG_WORD)
     assert safety.safety_fwd_hook(2, 0x343) == 0 and safety.safety_fwd_hook(2, 0x4CB) == 0
     if scenario == 'physical' and (410 <= tick < 430 or 470 <= tick < 475):

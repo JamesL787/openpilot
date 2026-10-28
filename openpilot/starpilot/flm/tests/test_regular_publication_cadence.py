@@ -62,7 +62,7 @@ def _run_regular(monkeypatch, offsets, *, mode, delay_first_publication=0):
       now[0] += delay_first_publication
     return read(now[0])
 
-  monkeypatch.setattr(steerlearnerd, 'drain', lambda *args: None)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', lambda *args: None)
   with pytest.raises(LoopComplete):
     steerlearnerd.run(
       SimpleNamespace(),

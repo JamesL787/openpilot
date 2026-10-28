@@ -31,6 +31,19 @@ def positive(value):
   return value is not None and math.isfinite(value) and value > 0
 
 
+def toyota_cruise_notice(state):
+  if not positive(state.toyota_cruise_target_kph):
+    return None
+  value = round(state.toyota_cruise_target_kph * (1 if state.metric else 0.6213711922))
+  copy = {
+    'raise_dash': ('Raise', 'dash cruise to'),
+    'release_plus': ('Release', 'cruise + to use'),
+    'off_hold': ('SLC off', 'Dash cruise'),
+    'off_resume': ('SLC off', 'Resume at'),
+  }.get(state.toyota_cruise_status)
+  return (*copy, str(value), 'km/h' if state.metric else 'mph') if copy is not None else None
+
+
 def retaining_limit(observation):
   return (str(observation.kind) != 'valid' and bool(getattr(observation, 'session_id', None)) and
           (positive(observation.last_received_speed_limit_mps) or observation.action_enabled and
@@ -94,7 +107,11 @@ def resolve_unified_speed(state) -> UnifiedSpeedPresentation:
   max_text = speed(state.cruise_kph / 3.6) if positive(state.cruise_kph) else '–'
   source = obs.source if str(obs.kind) == 'valid' else (
     obs.last_received_source if positive(obs.last_received_speed_limit_mps) else obs.accepted_source)
+  proposal = None
+  if pending:
+    proposal = obs.pending_adjusted_limit_mps or (
+      target if obs.pending_speed_limit_mps == posted else obs.pending_speed_limit_mps + (obs.offset_mps or 0))
   return UnifiedSpeedPresentation(mode, max_text, speed(posted), offset, 'km/h' if state.metric else 'mph',
                                   source, pending,
                                   'max' if state.cruise_active else 'none', speed(target), status,
-                                  speed(getattr(obs, 'pending_adjusted_limit_mps', None) or obs.pending_speed_limit_mps) if pending else '–')
+                                  speed(proposal))

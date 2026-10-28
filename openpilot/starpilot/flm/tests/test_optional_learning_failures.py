@@ -60,7 +60,7 @@ def card_fixture():
   cast(SimpleNamespace, card).rk = SimpleNamespace(remaining=0.0)
   card.can_log_mono_time = NOW
   card.last_actuators_output = structs.CarControl.Actuators()
-  cast(SimpleNamespace, card).v_cruise_helper = SimpleNamespace(slc_cruise_change=None)
+  cast(SimpleNamespace, card).v_cruise_helper = SimpleNamespace(slc_cruise_change=None, toyota=None)
   card.car_gps_publisher = CarGpsPublisher()
   card.learning_stamp_observer = card.record_learning_send_stamp
   card.learning_car_state_source_ns = NOW - 1_000_000

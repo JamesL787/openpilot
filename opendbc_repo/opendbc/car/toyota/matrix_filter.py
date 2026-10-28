@@ -19,6 +19,9 @@ def hardware_supported(candidate, fingerprint, car_fw, *, length):
       any(fingerprint.get(0, {}).get(address, size) != size for address, size in ((0x1D3, 8), (0x262, 5))) or
       any(fingerprint.get(2, {}).get(address, 8) != 8 for address in (0x343, 0x4CB))):
     return False
+  # A Matrix is not hybrid; contradictory firmware must not reach a composite assertion.
+  if any(fw.ecu == structs.CarParams.Ecu.hybrid for fw in car_fw):
+    return False
   # Preserve the manual-selection boundary without inventing catalog replies.
   critical = (structs.CarParams.Ecu.eps, structs.CarParams.Ecu.fwdCamera, structs.CarParams.Ecu.fwdRadar)
   return not any(fw.ecu in critical and (fw.logging or fw.bus != 0 or fw.brand != 'toyota' or not bytes(fw.fwVersion))

@@ -16,7 +16,7 @@ from functools import partial
 from opendbc.car.structs import car
 from openpilot.cereal import messaging
 from openpilot.common.params import Params
-from openpilot.starpilot.flm.fullrate_collector import FullrateCollector, drain, ControlEvidence, AppliedEvidence
+from openpilot.starpilot.flm.fullrate_collector import FullrateCollector, drain_pair, ControlEvidence, AppliedEvidence
 from openpilot.starpilot.flm.learning_wire import read_control, read_applied, result_message, write_source_receipt
 from openpilot.starpilot.flm.runtime_adapter_registry import SOURCE_LEASE_NS
 
@@ -45,6 +45,18 @@ class _SourceDelivery:
     self.pending = False
     self.pose_header = 0
     return header
+
+
+def source_receiver(services):
+  # Full-rate control/application tapes retain their original FIFO rows. This optional
+  # process conflates CarState, so its receive count cannot measure the 100Hz
+  # publisher rate while it processes a batch. Keep the actual envelope,
+  # source-age, state-bracket and native checks; do not fabricate freq_ok.
+  # Wake on the actual motion/native/state delivery rather than waiting for
+  # another CarState. All envelope, source-age and current authority checks
+  # still run on the real received messages.
+  return messaging.SubMaster(services, ignore_alive=['aolSafetyWire'],
+    ignore_valid=['aolSafetyWire'], ignore_avg_freq=['aolSafetyWire', 'carState'])
 
 
 MAX_OBJECTIVES = 12
@@ -120,13 +132,13 @@ def _source_config_known(source, now_ns):
     type(source.observed_ns) is int and type(source.expires_ns) is int and
     0 < source.observed_ns <= now_ns <= source.expires_ns <= source.observed_ns + SOURCE_LEASE_NS and
     type(source.cp_sha256) is str and len(source.cp_sha256) == 64 and
-    all(char in '0123456789abcdef' for char in source.cp_sha256) and
+    not source.cp_sha256.strip('0123456789abcdef') and
     type(source.reset) is str and 1 <= len(source.reset) <= 64 and
-    all(char in '0123456789abcdef' for char in source.reset) and
+    not source.reset.strip('0123456789abcdef') and
     type(source.calibration_generation) is str and (not source.calibration_generation or
-      len(source.calibration_generation) == 32 and all(char in '0123456789abcdef' for char in source.calibration_generation)) and
+      len(source.calibration_generation) == 32 and not source.calibration_generation.strip('0123456789abcdef')) and
     type(source.persistent_source_epoch) is str and (not source.persistent_source_epoch or
-      len(source.persistent_source_epoch) == 64 and all(char in '0123456789abcdef' for char in source.persistent_source_epoch)) and
+      len(source.persistent_source_epoch) == 64 and not source.persistent_source_epoch.strip('0123456789abcdef')) and
     type(source.manual_baseline) is tuple and len(source.manual_baseline) in (0, 3) and
     all(type(value) in (int, float) and math.isfinite(value) for value in source.manual_baseline))
 
@@ -421,7 +433,7 @@ def run(
       return False, now
     valid = bool(known and source.enabled and not source.manual and
       type(source.source_epoch) is str and len(source.source_epoch) == 64 and
-      all(char in '0123456789abcdef' for char in source.source_epoch) and
+      not source.source_epoch.strip('0123456789abcdef') and
       (source_cp_sha256 is None or source.cp_sha256 == source_cp_sha256))
     if not valid:
       source_rejected = True
@@ -493,6 +505,21 @@ def run(
           study_health_control = previous
         collector._learning_current_native_allowed = bool(source_valid and previous is not None and
           current_native_health(sm, CP, previous, now))
+
+      native_refreshed = False
+
+      def ingest_current(evidence):
+        nonlocal native_refreshed
+        valid_source, stamp = source_current()
+        if (valid_source and evidence is not None and not native_refreshed and
+            not current_native_health(sm, CP, evidence, stamp)):
+          # A queued native delivery may already revoke or renew the received
+          # state. Consume it once for this bounded batch before excluding an
+          # original tick; the final post-drain refresh remains mandatory.
+          native_refreshed = True
+          source_delivery.refresh(sm)
+          valid_source, stamp = source_current(read=True)
+        return valid_source, stamp
 
       def control(event, current, stamp, offered=live_offer):
         nonlocal collector, raw_context, active_key, unavailable_reason
@@ -581,6 +608,11 @@ def run(
           # The pre-drain reference can have expired while fresh controls were
           # queued; inheriting its Boolean rejects the fresh batch as well.
           # No old receipt or deadline is renewed by this current check.
+          if live_actor is not None:
+            original_collector = collector
+            valid_source, received_now = ingest_current(prepared)
+            if not valid_source or collector is not original_collector:
+              return
           _collect_source_control(collector, prepared, sm, CP, received_now)
           if live_actor is not None and offered is not None:
             from openpilot.starpilot.flm.live_trial_wire import read_application
@@ -604,10 +636,16 @@ def run(
           if event.which() == 'starpilotCarState' and event.starpilotCarState.appliedEvidence.version == 0:
             collector.split('no_current_applied_evidence')
             return
-          _collect_applied_output(collector, read_applied(event), sm, CP, received_now)
+          applied = read_applied(event)
+          if live_actor is not None:
+            original_collector = collector
+            consumed = collector.controls.get(applied.control_ns, collector.recent_controls.get(applied.control_ns))
+            valid_source, received_now = ingest_current(consumed)
+            if not valid_source or collector is not original_collector:
+              return
+          _collect_applied_output(collector, applied, sm, CP, received_now)
 
-      drain(control_socket, control, messaging.recv_one_or_none, sink, now)
-      drain(applied_socket, output, messaging.recv_one_or_none, sink, now)
+      drain_pair(control_socket, control, applied_socket, output, messaging.recv_one_or_none, sink, now)
       if collector is not None:
         # Decoding queued frames may outlast the sampled shared inputs. Consume
         # real pending deliveries before pose/native checks; keep their original
@@ -711,6 +749,7 @@ def run(
         # delay delivery. This neutral status is not a new physical witness;
         # the original settings lease and all trial/restore leases stay fixed.
         if (source_valid and live_offer is None and live_history.offer is None and
+            not (publication_source_reader is not None and now >= next_publish_ns) and
             now + 10_000_000 >= next_tracking_status_ns):
           pm.send('starpilotSteeringTracking', tracking_message(source, now_ns=now,
             current_native=False, offer=None, restore=None))
@@ -755,7 +794,9 @@ def run(
         # source health recoverable without granting any current correction.
         current_proposal = any(value is not None and value.observed_ns <= now <= value.expires_ns
           for value in (live_offer, live_history.offer))
-        idle_status = source_valid and not current_proposal and now + 10_000_000 >= next_tracking_status_ns
+        defer_idle_refresh = (publication_source_reader is not None and now >= next_publish_ns and
+                              live_offer is None and live_history.offer is None)
+        idle_status = source_valid and not current_proposal and not defer_idle_refresh and now + 10_000_000 >= next_tracking_status_ns
         source_withdrawal = not source_valid and _source_config_known(source, now)
         publish_tracking = latest is not None or new_restore or idle_status or new_raw_pose and source_withdrawal
         if publish_tracking:
@@ -795,6 +836,17 @@ def run(
         publication_sequence += 1
         if publication_source_reader is not None:
           source_valid, now = source_current(read=True, publication=True)
+          # Forward the genuine settings read in the existing neutral-status
+          # slot. An extra4Hz stream can exceed Controls' rolling frequency
+          # bound. If earlier work crossed the publication deadline after a
+          # status was already sent, preserve its next slot instead of doubling.
+          if (source_valid and live_actor is not None and live_offer is None and live_history.offer is None and
+              now + 10_000_000 >= next_tracking_status_ns):
+            pm.send('starpilotSteeringTracking', tracking_message(source, now_ns=now,
+              current_native=False, offer=None, restore=None))
+            if next_tracking_status_ns == 0:
+              next_tracking_status_ns = now
+            next_tracking_status_ns += max(1, (now - next_tracking_status_ns) // 50_000_000 + 1) * 50_000_000
         if live_actor is not None:
           message = result_message(None, 'live-tracking', publication_sequence, now)
           value = message.autoSteeringLearning.learning
@@ -937,7 +989,7 @@ def main():
     'onroadEvents',
     'aolSafetyWire',
   ]
-  sm = messaging.SubMaster(services, poll='carState', ignore_alive=['aolSafetyWire'], ignore_valid=['aolSafetyWire'], ignore_avg_freq=['aolSafetyWire'])
+  sm = source_receiver(services)
   control_socket = messaging.sub_sock('starpilotLateralState', conflate=False)
   applied_socket = messaging.sub_sock('starpilotCarState', conflate=False)
   pm = messaging.PubMaster(['autoSteeringLearning', 'starpilotSteeringTracking'])

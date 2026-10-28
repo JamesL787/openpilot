@@ -164,7 +164,10 @@ def test_all_parent_tunes_native_projection_and_stock_restore(name, topology, ra
     'lateralTuning', 'longitudinalTuning', 'steerActuatorDelay', 'steerLimitTimer', 'longitudinalActuatorDelay',
     'minSteerSpeed', 'wheelSpeedFactor', 'mass', 'wheelbase', 'steerRatio', 'centerToFront', 'autoResumeSng',
   ):
-    assert cp.to_dict()[field] == parent.to_dict()[field], field
+    if field == 'longitudinalActuatorDelay' and cp.openpilotLongitudinalControl:
+      assert cp.longitudinalActuatorDelay == pytest.approx(max(parent.longitudinalActuatorDelay, .2))
+    else:
+      assert cp.to_dict()[field] == parent.to_dict()[field], field
   if stock:
     assert pedal_composite.prepare_stock(cp)
     assert pedal_composite.configured(cp) and qualified(cp) and not cp.openpilotLongitudinalControl
@@ -180,7 +183,12 @@ def test_dom_low_speed_entry_requires_qualified_pedal(name, topology, rack):
   cp = CarInterface.get_params(identity, fp, fw, True, False, False)
   assert pedal_composite.configured(cp) and cp.minEnableSpeed == -1.
   for field in ('lateralTuning', 'longitudinalTuning', 'longitudinalActuatorDelay', 'stopAccel'):
-    assert cp.to_dict()[field] == base.to_dict()[field], field
+    if field == 'longitudinalActuatorDelay' and cp.openpilotLongitudinalControl:
+      assert cp.longitudinalActuatorDelay == pytest.approx(max(base.longitudinalActuatorDelay, .2))
+    elif field == 'stopAccel' and cp.openpilotLongitudinalControl:
+      assert cp.stopAccel == -1.5
+    else:
+      assert cp.to_dict()[field] == base.to_dict()[field], field
   fp[0][0x201] = 7
   rejected = CarInterface.get_params(identity, fp, fw, True, False, False)
   assert not pedal_composite.configured(rejected)

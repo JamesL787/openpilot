@@ -24,6 +24,6 @@ test("select uses outgoing API without changing the selected AA receiver", async
   assert.equal(await feed.selectDevice(car.address), false);
 });
 test("search remains blocked during projection and code verification stays available", () => {
-  const page = {pairingReason: "", runtime: {running: true}, feed: {action() {throw Error("unexpected request");}}};
+  const page = {pairingReason: "Disconnect from your car before pairing.", runtime: {running: true, state: "streaming"}, feed: {action() {throw Error("unexpected request");}}};
   assert.equal(AndroidAutoPage.methods.startPairing.call(page), false);
 });

@@ -1,4 +1,5 @@
 """Existing status publications must name settings blocks accurately."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
@@ -36,7 +37,7 @@ def publication(source, evidence=None, adapter=None, sources=None):
                               starpilotLateralState=SimpleNamespace(learningEvidence=SimpleNamespace(version=1)))
       callback(event, now, now)
 
-  with mock.patch.object(steerlearnerd, 'drain', drain), mock.patch.object(steerlearnerd, 'read_control', return_value=evidence):
+  with mock.patch.object(steerlearnerd, 'drain_pair', separate_drain_fixture(drain)), mock.patch.object(steerlearnerd, 'read_control', return_value=evidence):
     with pytest.raises(StopIteration):
       steerlearnerd.run(SimpleNamespace(), sm, control_socket, applied_socket, pm, factory, mock.Mock(),
                         source_reader, lambda item: (('feedforward', 'low', 'steady'),),

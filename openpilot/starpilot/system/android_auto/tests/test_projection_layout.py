@@ -7,7 +7,8 @@ import unittest
 
 from openpilot.starpilot.system.android_auto.display_profile import record_screen, read_screen
 from openpilot.starpilot.system.android_auto.projection_layout import (
-  default_layout, validate_layout, decode_layout, layout_metadata, projection_customization, ProjectionLayoutSource,
+  default_layout, default_layout_for_viewport, validate_layout, validate_layout_for_viewport, decode_layout, layout_metadata,
+  projection_customization, ProjectionLayoutSource,
   PROJECTION_WIDGETS, NAV_CARD, NAV_MAP, FAVORITE_WIDGETS, BOOKMARK_WIDGET, CAR_EXIT, ACTION_WIDGETS, placement_size,
 )
 from openpilot.starpilot.ui.onroad_customization import CLOCK_WIDGET, MODE_WIDGET, STOPPED_TIMER_WIDGET, default_document, customization_metadata
@@ -18,6 +19,25 @@ SCREEN = {'version': 1, 'width': 1280, 'height': 720, 'margin_width': 0,
 
 
 class TestProjectionLayout(unittest.TestCase):
+  def test_sources_save_actual_attached_actions_inside_each_projection_screen(self):
+    from openpilot.starpilot.ui.onroad_customization import default_document, placement
+    for viewport in ((1860, 1080), (2880, 1080), (1920, 1440)):
+      for separate in (False, True):
+        with self.subTest(viewport=viewport, separate=separate):
+          document = default_layout_for_viewport(viewport, {'speedSources': True, 'speedSourcesCard': separate})
+          actions = document['widgets']['speed_limit_actions']
+          self.assertEqual(actions['y'], 367 if separate else 359)
+          self.assertEqual(validate_layout_for_viewport(document, viewport), document)
+          native = projection_customization(document, default_document())
+          self.assertEqual(placement(native, 'large', 'speed_limit_actions'), actions)
+          document['widgets']['cruise_limits']['y'] = 690
+          actions['y'] = 882
+          saved = validate_layout_for_viewport(document, viewport)
+          card, actions = (saved['widgets'][key] for key in ('cruise_limits', 'speed_limit_actions'))
+          self.assertEqual(actions['y'], card['y'] + 284 + (8 if separate else 0))
+          self.assertLessEqual(actions['y'] + 168, viewport[1] - 30)
+          self.assertEqual(validate_layout_for_viewport(saved, viewport), saved)
+
   def test_v4_large_sign_migration_clamps_old_bottom_placement_without_losing_custom_actions(self):
     document = default_layout(SCREEN)
     document['version'] = 4
@@ -29,7 +49,7 @@ class TestProjectionLayout(unittest.TestCase):
     migrated = validate_layout(document, SCREEN)
     self.assertEqual(document, before)
     self.assertEqual(migrated['version'], 5)
-    self.assertEqual(migrated['widgets']['cruise_limits']['y'], bottom - 168)
+    self.assertEqual(migrated['widgets']['cruise_limits']['y'], bottom - 192)
     self.assertEqual(migrated['widgets']['speed_limit_actions'], document['widgets']['speed_limit_actions'])
     self.assertEqual(validate_layout(migrated, SCREEN), migrated)
 
@@ -39,7 +59,7 @@ class TestProjectionLayout(unittest.TestCase):
     card = document['widgets']['cruise_limits']
     document['widgets']['speed_limit_actions'].update(x=card['x']+12, y=card['y']+173)
     migrated = validate_layout(document, SCREEN)
-    self.assertEqual(migrated['widgets']['speed_limit_actions']['y'], card['y']+221)
+    self.assertEqual(migrated['widgets']['speed_limit_actions']['y'], card['y']+192)
 
   def test_jetlink_widget_migrates_and_preserves_placement_and_order(self):
     document = default_layout(SCREEN)

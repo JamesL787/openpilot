@@ -34,11 +34,17 @@ class AlphaLongConfirmPage(NavScroller):
 
 
 class DeveloperLayoutMici(NavScroller):
-  def __init__(self):
+  def __init__(self, on_spacepilot_exit: Callable[[], None] | None = None):
     super().__init__()
     if not isinstance(ui_state.params, Params):
       raise RuntimeError("Developer settings require the device UI")
     self._ssh_fetcher = SshKeyFetcher(ui_state.params)
+    # Only the native C4 shell supplies the immediate return-to-driving owner.
+    if on_spacepilot_exit is not None:
+      from openpilot.common.hardware import HARDWARE
+      if HARDWARE.get_device_type() == 'mici':
+        from openpilot.starpilot.ui.spacepilot.native import VersionButton
+        self._scroller.add_widget(VersionButton(on_spacepilot_exit))
 
     def github_username_callback(username: str):
       if username:

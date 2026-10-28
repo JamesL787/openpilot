@@ -75,6 +75,8 @@ class TestBoltCcControlsLow(unittest.TestCase):
             (0x1E1, button_bytes(button, tick % 4), 0),
           ]
           if stock_acc:
+            if tick % 4 == 0:
+              replacement.append(packer.make_can_msg('EBCMFrictionBrakeCmd', 2, {'RollingCounter': (tick // 4) % 4}))
             replacement.append(packer.make_can_msg('ASCMActiveCruiseControlStatus', 2, {'ACCCruiseState': 2}))
             replacement.append(packer.make_can_msg('EBCMFrictionBrakeStatus', 0,
                                                     {'FrictionBrakeUnavailable': int(310 <= tick < 315)}))

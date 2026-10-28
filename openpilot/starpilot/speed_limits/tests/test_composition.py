@@ -6,7 +6,6 @@ from dataclasses import replace
 from openpilot.starpilot.speed_limits import acceptance as acc
 from openpilot.starpilot.speed_limits import action_arbitration as arb
 from openpilot.starpilot.speed_limits import composition as comp
-from openpilot.starpilot.speed_limits import lead_relaxation as lr
 from openpilot.starpilot.speed_limits import selection as sel
 from openpilot.starpilot.speed_limits import speed_domain as sd
 
@@ -15,9 +14,6 @@ ACTIVE = acc.Authority(acc.Mode.LONGITUDINAL_ONLY, acc.LongitudinalOwner.SYSTEM,
 POLICY = acc.Policy(confirm_lower=False, confirm_higher=False, fallback_previous=True)
 SELECT = sel.SelectionPolicy(sel.SelectionMode.ORDERED, (sel.Source.DASHBOARD, sel.Source.MAP), False)
 OFFSET = sd.OffsetSchedule((sd.OffsetBand(0.0, None, 2.0),))
-LEAD_POLICY = lr.Policy(20.0 * 0.44704, 30.0, 1.2, 0.35, 0.25, 0.001, 0.05,
-                        tuple(v * 0.44704 for v in (0.0, 5.0, 10.0, 15.0)), (0.7, 0.9, 1.15, 1.35))
-NO_LEAD = lr.LeadEvidence(lr.LeadKind.ABSENT)
 HOST = comp.HostState(True, True, True, False, False, 100.0, 100.0)
 
 
@@ -39,12 +35,11 @@ def frame(now: int, *, speed: float | None = 15.0, source_kind: acc.ObservationK
           policy: acc.Policy = POLICY, offset: sd.OffsetSchedule = OFFSET,
           selected_kind: sd.DomainStatus = sd.DomainStatus.VALID,
           ego_kind: sd.DomainStatus = sd.DomainStatus.VALID,
-          ego_raw: float = 20.0, ego_cluster: float = 20.0,
-          lead: lr.LeadEvidence = NO_LEAD, action: acc.DriverAction | None = None) -> comp.Frame:
+          ego_raw: float = 20.0, ego_cluster: float = 20.0, action: acc.DriverAction | None = None) -> comp.Frame:
   ego_pair = (sd.SpeedPair(ego_kind, ego_raw, ego_cluster, SESSION, now) if ego_kind is sd.DomainStatus.VALID
               else sd.SpeedPair(ego_kind))
   return comp.Frame(now, observations(speed, kind=source_kind), SELECT, authority, policy, offset,
-                    selected_kind, ego_pair, False, lead, LEAD_POLICY, host, action=action)
+                    selected_kind, ego_pair, False, host, action=action)
 
 
 class CompositionTests(unittest.TestCase):
@@ -214,10 +209,8 @@ class CompositionTests(unittest.TestCase):
     self.assertEqual(rejected.state.acceptance.last_timestamp_ns, 0)
 
   def test_new_limit_never_creates_a_hidden_planner_target(self):
-    pending = self.run_frame(frame(0, speed=20.))
-    self.assertEqual(pending.acceptance.basis, 'automatic_pending')
-    self.assertIsNone(pending.ceiling)
-    accepted = self.run_frame(frame(acc.AUTOMATIC_ADOPTION_NS, speed=20.))
+    accepted = self.run_frame(frame(0, speed=20.))
+    self.assertEqual(accepted.acceptance.basis, 'accepted')
     self.assertEqual(accepted.domain.context.effective_cluster_mps, 22.)
     self.assertIsNone(accepted.ceiling)
     self.assertIsNone(accepted.state.lead_prior)

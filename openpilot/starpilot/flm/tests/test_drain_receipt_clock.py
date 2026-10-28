@@ -1,4 +1,5 @@
 """Real learner run callback clocks: deterministic transport and monotonic clock."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from types import SimpleNamespace
 from unittest import mock
 
@@ -44,7 +45,7 @@ def exercise(*, control_offset=10_000_000, callback_offset=20_000_000,
       callback(applied, sink, captured_now)
       raise StopIteration  # Stop only after both real run callbacks execute.
 
-  with mock.patch.object(steerlearnerd, 'drain', drain), \
+  with mock.patch.object(steerlearnerd, 'drain_pair', separate_drain_fixture(drain)), \
        mock.patch.object(steerlearnerd, 'read_control', return_value=evidence), \
        mock.patch.object(steerlearnerd, 'read_applied', return_value=output_value), \
        mock.patch.object(steerlearnerd, 'FullrateCollector', return_value=collector):
@@ -100,7 +101,7 @@ def test_post_drain_health_and_fit_use_current_time():
     assert captured_now == NOW
     receipt_clock[0] += 10_000_000
 
-  with mock.patch.object(steerlearnerd, 'drain', drain):
+  with mock.patch.object(steerlearnerd, 'drain_pair', separate_drain_fixture(drain)):
     with pytest.raises(StopIteration):
       steerlearnerd.run(SimpleNamespace(), sm, object(), object(), mock.Mock(),
         mock.Mock(), mock.Mock(), mock.Mock(return_value=source), mock.Mock(),

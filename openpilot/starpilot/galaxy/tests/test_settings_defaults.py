@@ -109,6 +109,13 @@ class TestSettingsDefaults(TestCase):
       self.gateway.confirm(intent['intent'], self.session, self.generation, session_valid=lambda: False)
 
   def test_no_defaults_on_navigation_or_unavailable_feature(self):
+    cp = fixtures.ToyotaInterface.get_non_essential_params(fixtures.ToyotaCar.TOYOTA_COROLLA_TSS2)
+    for name, value in vars(self.context.value.cp).items():
+      if name not in ("lateralTuning", "safetyConfigs"):
+        setattr(cp, name, value)
+    self.assertEqual(cp.lateralTuning.to_dict(), self.context.value.cp.lateralTuning.to_dict())
+    self.assertEqual([row.to_dict() for row in cp.safetyConfigs], [row.to_dict() for row in self.context.value.cp.safetyConfigs])
+    self.context.value = replace(self.context.value, cp=cp)
     for row in self.page('hub')['rows']:
       self.assertIsNone(row['defaultValue'])
       self.assertFalse(row['resetAvailable'])

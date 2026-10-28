@@ -1,11 +1,17 @@
 """Explorer fixed preview must not broaden the admitted Mach-E strategy."""
 from types import SimpleNamespace
+from opendbc.car.ford.interface import CarInterface
 
 import pytest
 
 from opendbc.car.ford.explorer_lateral import ExplorerLateralController
 from opendbc.car.ford.mache_lateral import MachELateralController
 from opendbc.car.ford.values import CAR, CarControllerParams, FordFlags
+
+def controller_params(car, flags):
+  cp = CarInterface.get_non_essential_params(car)
+  return SimpleNamespace(brand=cp.brand, safetyConfigs=cp.safetyConfigs, carFingerprint=car, flags=flags)
+
 
 
 def model():
@@ -14,14 +20,14 @@ def model():
 
 @pytest.mark.parametrize("delay", (0.20, 0.30, 0.40))
 def test_explorer_fixed_lookahead_selects_original_model_sample(delay):
-  owner = ExplorerLateralController(SimpleNamespace(carFingerprint=CAR.FORD_EXPLORER_MK6, flags=0))
+  owner = ExplorerLateralController(controller_params(CAR.FORD_EXPLORER_MK6, 0))
   owner.set_inputs(model(), tuple(i * 0.1 for i in range(33)), delay, True)
   assert owner._curvature_lookahead() == 0.20
   assert owner._predicted_curvature(10.0, owner._curvature_lookahead()) == pytest.approx(0.002)
 
 
 def test_mach_e_compatibility_keeps_current_provider_lookahead():
-  owner = MachELateralController(SimpleNamespace(carFingerprint=CAR.FORD_MUSTANG_MACH_E_MK1, flags=FordFlags.CANFD))
+  owner = MachELateralController(controller_params(CAR.FORD_MUSTANG_MACH_E_MK1, FordFlags.CANFD))
   owner.set_inputs(model(), tuple(i * 0.1 for i in range(33)), 0.40, True)
   assert owner._curvature_lookahead() == 0.40
   assert owner._predicted_curvature(10.0, owner._curvature_lookahead()) == pytest.approx(0.004)
@@ -31,7 +37,7 @@ def test_explorer_strategy_rejects_unrelated_topology():
   for car, flags in ((CAR.FORD_EXPLORER_MK6, FordFlags.CANFD),
                      (CAR.FORD_EDGE_MK2, FordFlags.ALT_STEER_ANGLE | FordFlags.NEW_PORT)):
     with pytest.raises(ValueError):
-      ExplorerLateralController(SimpleNamespace(carFingerprint=car, flags=flags))
+      ExplorerLateralController(controller_params(car, flags))
 
 
 @pytest.mark.parametrize("alpha,release", ((False, False), (True, False), (False, True), (True, True)))
@@ -59,7 +65,7 @@ def test_actual_interface_restores_explicit_longitudinal_ownership(alpha, releas
 def test_classic_modern_envelope_withdraws_infeasible_speed_transition():
   from opendbc.car.ford.explorer_lateral import bounded_command
   from opendbc.car.ford.lateral_strategy import FordLateralResult
-  owner = ExplorerLateralController(SimpleNamespace(carFingerprint=CAR.FORD_EXPLORER_MK6, flags=0))
+  owner = ExplorerLateralController(controller_params(CAR.FORD_EXPLORER_MK6, 0))
   result = bounded_command(owner, FordLateralResult(curvature=.02, active=True), .02, 20., .02)
   assert not result.active
   assert result.curvature == owner.curvature_last == 0.
@@ -69,7 +75,7 @@ def test_classic_modern_envelope_withdraws_infeasible_speed_transition():
 def test_manual_turn_withdraws_without_mach_e_latch_or_gain_compensation():
   from opendbc.car.ford.explorer_lateral import bounded_command
   from opendbc.car.ford.lateral_strategy import FordLateralResult
-  owner = ExplorerLateralController(SimpleNamespace(carFingerprint=CAR.FORD_EXPLORER_MK6, flags=0))
+  owner = ExplorerLateralController(controller_params(CAR.FORD_EXPLORER_MK6, 0))
   owner.manual_turn_detected = True
   result = bounded_command(owner, FordLateralResult(active=True), .002, 10., .002)
   assert not result.active
@@ -80,7 +86,7 @@ def test_manual_turn_withdraws_without_mach_e_latch_or_gain_compensation():
 def test_speed_change_cap_cannot_escape_original_rate_interval():
   from opendbc.car.ford.explorer_lateral import bounded_command
   from opendbc.car.ford.lateral_strategy import FordLateralResult
-  owner = ExplorerLateralController(SimpleNamespace(carFingerprint=CAR.FORD_EXPLORER_MK6, flags=0))
+  owner = ExplorerLateralController(controller_params(CAR.FORD_EXPLORER_MK6, 0))
   # At26m/s modernjerk admits~.000265, originalnative lookup only.000180.
   # Modern bank-tolerant cap~.005309 requires.000211 fromprevious.005520.
   result = bounded_command(owner, FordLateralResult(curvature=.00552, active=True), .00552, 26., .00552)
@@ -131,7 +137,7 @@ def test_typed_offset_eps_and_namespace_guards():
 def test_final_intersection_preserves_source_rise_and_unwind(sign):
   from opendbc.car.ford.explorer_lateral import bounded_command
   from opendbc.car.ford.lateral_strategy import FordLateralResult
-  owner = ExplorerLateralController(SimpleNamespace(carFingerprint=CAR.FORD_EXPLORER_MK6, flags=0))
+  owner = ExplorerLateralController(controller_params(CAR.FORD_EXPLORER_MK6, 0))
   rise = bounded_command(owner, FordLateralResult(curvature=sign*.0015, active=True), sign*.001, 26., sign*.001)
   assert rise.curvature == pytest.approx(sign*.00108)
   fall = bounded_command(owner, FordLateralResult(curvature=0., active=True), sign*.001, 26., sign*.001)
@@ -158,7 +164,7 @@ def test_classic_rate_endpoint_has_correct_decoded_sign(rate, expected):
 def test_measured_recovery_with_empty_source_interval_withdraws(sign):
   from opendbc.car.ford.explorer_lateral import bounded_command
   from opendbc.car.ford.lateral_strategy import FordLateralResult
-  owner = ExplorerLateralController(SimpleNamespace(carFingerprint=CAR.FORD_EXPLORER_MK6, flags=0))
+  owner = ExplorerLateralController(controller_params(CAR.FORD_EXPLORER_MK6, 0))
   command = bounded_command(owner, FordLateralResult(curvature=sign*.008, active=True), 0., 35., sign*.008)
   assert not command.active and command.curvature == 0.
   assert owner.curvature_last == owner.path_angle_last == 0.
@@ -168,7 +174,7 @@ def test_measured_recovery_with_empty_source_interval_withdraws(sign):
 def test_measured_window_requires_recovery_and_bounds_unwind(sign):
   from opendbc.car.ford.explorer_lateral import bounded_command
   from opendbc.car.ford.lateral_strategy import FordLateralResult
-  owner = ExplorerLateralController(SimpleNamespace(carFingerprint=CAR.FORD_EXPLORER_MK6, flags=0))
+  owner = ExplorerLateralController(controller_params(CAR.FORD_EXPLORER_MK6, 0))
   # Recovery outside the error window may proceed when source fall permits it.
   recovery = bounded_command(owner, FordLateralResult(curvature=sign*.001, active=True), sign*.003, 35., 0.)
   delta = CarControllerParams.CURVATURE_LIMITS.MAX_LATERAL_JERK / 35.**2 * .05

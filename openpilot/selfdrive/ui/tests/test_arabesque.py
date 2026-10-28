@@ -66,10 +66,10 @@ def test_menu_dismissal_tool_title_and_desktop_return(shell):
   shell.set_rect(rl.Rectangle(0, 0, 2160, 1080))
   tap(shell, shell._menu_button)
   assert shell._menu_open
-  tap(shell, shell._dock)
+  tap(shell, shell._launchers[0][0])
   assert not shell._menu_open
   assert shell._active_tool is None
-  tap(shell, shell._dock)
+  tap(shell, shell._launchers[0][0])
   assert isinstance(shell._active_tool, terminal.Terminal)
   assert not gui_app.mouse_events
   frame(shell)
@@ -79,7 +79,7 @@ def test_menu_dismissal_tool_title_and_desktop_return(shell):
   tap(shell, shell._back_button)
   assert shell._active_tool is None
   frame(shell)
-  assert desktop.gui_label.call_args_list[-2].args[1] == 'Arabesque'
+  assert any(call.args[1] == 'Arabesque' for call in desktop.gui_label.call_args_list)
   shell._on_exit.assert_not_called()
   tap(shell, shell._menu_button)
   tap(shell, shell._exit_button)
@@ -109,16 +109,18 @@ def test_layout_anchors_and_touch_targets(shell, bounds):
   assert dock.x + dock.width / 2 == pytest.approx(rect.x + rect.width / 2)
   assert dock.y + dock.height < rect.y + rect.height
   assert dock.width >= 44 and dock.height >= 44
-  assert shell._dock_icon.x == pytest.approx(dock.x + dock.width / 2)
   frame(shell)
-  caption = desktop.gui_label.call_args.args[0]
-  assert caption.x + caption.width / 2 == pytest.approx(shell._dock_icon.x)
-  assert caption.y >= shell._dock_icon.y + 64 * shell._scale
-  assert caption.y + caption.height < shell._dock_shelf.y
-  assert caption.width < dock.width
+  captions = [call.args[0] for call in desktop.gui_label.call_args_list if call.args[1] in ('Terminal', 'Files', 'Rebecca')]
+  assert len(captions) == 3
+  for (target, _, _), caption in zip(shell._launchers, captions, strict=True):
+    icon_x, icon_y = target.x + target.width / 2, dock.y + 72 * shell._scale
+    assert caption.x + caption.width / 2 == pytest.approx(icon_x)
+    assert caption.y >= icon_y + 64 * shell._scale
+    assert caption.y + caption.height < shell._dock_shelf.y
+    assert min(target.width, target.height) >= 44
   back_left, front_left, front_right, back_right = shell._dock_top
   assert back_left.x > front_left.x and back_right.x < front_right.x
-  assert back_left.y < shell._dock_icon.y + 64 * shell._scale < front_left.y
+  assert back_left.y < dock.y + 136 * shell._scale < front_left.y
   assert front_left.y == pytest.approx(shell._dock_shelf.y)
   assert front_right.y == pytest.approx(shell._dock_shelf.y)
   assert shell._dock_shelf.y + shell._dock_shelf.height < dock.y + dock.height
@@ -132,8 +134,8 @@ def test_layout_anchors_and_touch_targets(shell, bounds):
   assert shell._tool_rect.y + shell._tool_rect.height == pytest.approx(rect.y + rect.height)
   tap(shell, shell._menu_button)
   assert shell._menu_open
-  tap(shell, shell._dock)
-  tap(shell, shell._dock)
+  tap(shell, shell._launchers[0][0])
+  tap(shell, shell._launchers[0][0])
   frame(shell)
   assert shell._active_tool.rect == shell._tool_rect
   label = desktop.gui_label.call_args
@@ -237,9 +239,9 @@ def test_tool_lifecycle_runs_once_and_closed_tool_is_not_rendered(shell, probe, 
   monkeypatch.setattr(desktop, 'Terminal', create)
   frame(shell)
   create.assert_not_called()
-  tap(shell, shell._dock)
+  tap(shell, shell._launchers[0][0])
   probe.show_event.assert_called_once()
-  tap(shell, shell._dock)
+  tap(shell, shell._launchers[0][0])
   create.assert_called_once()
   probe._handle_mouse_press.assert_called_once()
   probe._handle_mouse_release.assert_called_once()
@@ -266,11 +268,65 @@ def test_closed_tool_instances_are_released(shell):
   shell.set_rect(rl.Rectangle(0, 0, 2160, 1080))
   instances = []
   for _ in range(100):
-    tap(shell, shell._dock)
+    tap(shell, shell._launchers[0][0])
     instances.append(weakref.ref(shell._active_tool))
     tap(shell, shell._back_button)
   gc.collect()
   assert all(instance() is None for instance in instances)
+
+
+def test_files_has_its_own_launcher_and_blank_shelf_does_not_launch(shell, probe, monkeypatch):
+  shell.set_rect(rl.Rectangle(0, 0, 2160, 1080))
+  create = Mock(return_value=probe)
+  monkeypatch.setattr(desktop, 'Files', create)
+  terminal_target, files_target = (item[0] for item in shell._launchers[:2])
+  # A gesture crossing launcher boundaries must not start either tool.
+  frame(shell, event(terminal_target.x + 20, terminal_target.y + 20, pressed=True))
+  frame(shell, event(files_target.x + 20, files_target.y + 20, released=True))
+  assert shell._active_tool is None
+  tap(shell, rl.Rectangle(shell._dock.x + 2, shell._dock.y + 210, 10, 10))
+  assert shell._active_tool is None
+  tap(shell, files_target)
+  assert shell._active_tool is probe
+  create.assert_called_once_with(shell._permitted)
+  frame(shell)
+  assert desktop.gui_label.call_args_list[-2].args[1] == 'Files'
+  tap(shell, shell._back_button)
+  probe.hide_event.assert_called_once()
+  assert shell._active_tool is None
+
+
+def test_rebecca_launcher_uses_shared_lifecycle(shell, probe, monkeypatch):
+  create = Mock(return_value=probe)
+  monkeypatch.setattr(desktop, 'Rebecca', create)
+  shell.set_rect(rl.Rectangle(0, 0, 2160, 1080))
+  tap(shell, shell._launchers[2][0])
+  assert shell._active_tool is probe and not gui_app.mouse_events
+  create.assert_called_once_with()
+  probe.show_event.assert_called_once()
+  frame(shell)
+  assert desktop.gui_label.call_args_list[-2].args[1] == 'Rebecca'
+  tap(shell, shell._back_button)
+  probe.hide_event.assert_called_once()
+
+
+def test_rebecca_menu_pauses_and_dismissal_does_not_flap(shell, monkeypatch):
+  game = desktop.Rebecca()
+  monkeypatch.setattr(game, 'show_event', Mock())
+  monkeypatch.setattr(game, '_render', Mock())
+  monkeypatch.setattr(rl, 'get_frame_time', lambda: 1 / 60)
+  shell.set_rect(rl.Rectangle(0, 0, 2160, 1080))
+  shell._open_tool('Rebecca', game)
+  game._reset()
+  frame(shell)
+  tap(shell, shell._menu_button)
+  frozen = game._distance, game._y, game._vy
+  frame(shell)
+  tap(shell, game._button)
+  assert not shell._menu_open
+  assert (game._distance, game._y, game._vy) == frozen
+  frame(shell)
+  assert game._distance > frozen[0]
 
 
 @pytest.fixture

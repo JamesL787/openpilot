@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <memory>
+#include <map>
 #include <string>
 
 #include "openpilot/cereal/messaging/messaging.h"
@@ -66,5 +67,7 @@ protected:
 };
 
 kj::Array<capnp::word> logger_build_init_data(bool route_log = false);
+kj::Array<capnp::word> logger_model_init_data(kj::ArrayPtr<const capnp::word> original,
+                                           const std::map<std::string, std::string> &metadata);
 std::string logger_get_identifier(std::string key);
 std::string zstd_decompress(const std::string &in);

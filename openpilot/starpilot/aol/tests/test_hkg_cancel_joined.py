@@ -163,7 +163,7 @@ def _exercise_join(identity, alternate, incidental, withdrawal, monkeypatch, *, 
       assert bool(card.CP.openpilotLongitudinalControl) == shared_long
       config = card.CP.safetyConfigs[-1]
       if two_panda:
-        assert card.aol_qualified and config.safetyParam == 0x815, 'GV70_TWO_PANDA_AOL_OWNER_NOT_MARKED'
+        assert card.aol_qualified and config.safetyParam == 0x2815, 'GV70_TWO_PANDA_AOL_OWNER_NOT_MARKED'
         assert card.CP.safetyConfigs[0].safetyParam == 0
         assert str(card.CP.safetyConfigs[0].safetyModel) == 'noOutput'
         assert card.CP.alternativeExperience == 32

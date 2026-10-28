@@ -57,6 +57,7 @@ from openpilot.starpilot.longitudinal.output_max import KEY as OUTPUT_MAX_KEY
 from openpilot.starpilot.ui.tesla_screen_feature import TeslaScreenFeature, KEYS as TESLA_SCREEN_KEYS
 from openpilot.starpilot.ui.night_star_feature import NightStarFeature, KEYS as NIGHT_STAR_KEYS
 from openpilot.starpilot.ui.ford_lateral_feature import FordLateralFeature, FordClusterFeature
+from openpilot.starpilot.ui.ford_pinion_feature import FordPinionFeature
 from openpilot.starpilot.ui.preap_radar_feature import PreAPRadarFeature, KEYS as PREAP_RADAR_KEYS, capability as preap_radar_capability
 from openpilot.starpilot.ui.gm_tune_feature import GmTuneFeature, GmTruckFeature, GmEvPresetFeature
 from openpilot.starpilot.car.gm.tune_preferences import KEY as GM_TUNE_KEY
@@ -999,6 +1000,7 @@ class FeatureSettingsOwner:
     elif page == FeaturePage.TORQUE:
       title = "Steering and Torque"
       rows.extend(FordLateralFeature(self).rows(parked))
+      rows.extend(FordPinionFeature(self).rows(parked))
       rows.extend(FordClusterFeature(self).rows(parked))
       controller_row = self.controller.row()
       if controller_row is not None:
@@ -1082,7 +1084,7 @@ class FeatureSettingsOwner:
       rows.append(self._bool_row("ShowSpeedLimits", "Show speed limit signs", self.authority("preferences"),
                                  reason="Display signs independently of Speed Limit Controller; does not change cruise speed"))
       confirmation = self._bool_row("SLCConfirmation", "Automatic adoption", allowed,
-        reason="On flashes new limits for 3 seconds, then sets cruise speed; Off asks for confirmation within 10 seconds")
+        reason="On adopts new limits immediately; Off asks for confirmation within 10 seconds")
       rows.append(replace(confirmation, value={"On": "Off", "Off": "On"}.get(confirmation.value, confirmation.value), default_value="On"))
       source_capability = self._source_capability()
       vision_dev, maps_available = source_capability
@@ -1332,6 +1334,8 @@ class FeatureSettingsOwner:
       return self._apply_lateral_pause(request)
     if key == "FordHandsFreeCluster":
       return FordClusterFeature(self).apply(request)
+    if key == "FordPrefSteerAngleCurvature":
+      return FordPinionFeature(self).apply(request)
     if key == "FordLateralMode":
       return FordLateralFeature(self).apply(request)
     if key == "TurnAssist":

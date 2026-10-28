@@ -31,9 +31,9 @@ def numerical_fixture(domain='torque', group='ff.left'):
 def test_oriented_delivered_torque_and_measured_slope_have_correct_units_and_sign():
   row = probe._physical_row(NAMES[0], 0., -.005, .005, .105, .1, .11, 2., 'separated')
   assert row.physical_derivative == pytest.approx(-2.)
-  assert row.max_step_physical_delta == pytest.approx(.01)
+  assert row.max_step_physical_delta == pytest.approx(2. * MAX_STEP)
   assert row.max_step_physical_delta == abs(row.physical_derivative)*MAX_STEP
-  # The old unit ambiguity would overstate visibility by 1/.005 = 200.
+  # A derivative is not the physical delta at the current bounded trial cap.
   assert row.max_step_physical_delta != abs(row.physical_derivative)
   reversed_delivery = probe._physical_row(NAMES[0], 0., -.005, .005, .105, .11, .1, 2., 'separated')
   assert reversed_delivery.physical_derivative == pytest.approx(2.)
@@ -42,7 +42,7 @@ def test_oriented_delivered_torque_and_measured_slope_have_correct_units_and_sig
 def test_one_sided_original_bound_uses_actual_secant_width():
   row = probe._physical_row(NAMES[0], .25, .245, .25, .1, .1, .11, 2., 'separated')
   assert row.physical_derivative == pytest.approx(-4.)
-  assert row.max_step_physical_delta == pytest.approx(.02)
+  assert row.max_step_physical_delta == pytest.approx(4. * MAX_STEP)
 
 
 @pytest.mark.parametrize('status', ['quantized', 'native_unavailable'])
@@ -86,7 +86,7 @@ def test_mutated_row_and_binding_fail_fresh_content_check():
 
 
 @pytest.mark.parametrize('field,value', [('physical_derivative', math.nan), ('baseline_coordinate', True),
-  ('plus_coordinate', .006), ('native_separated', 1), ('status', 'unknown')])
+  ('plus_coordinate', MAX_STEP + .001), ('native_separated', 1), ('status', 'unknown')])
 def test_invalid_per_coordinate_domain_rejected(field, value):
   result = numerical_fixture()
   row = replace(result.rows[0], **{field: value})

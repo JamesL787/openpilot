@@ -159,6 +159,9 @@ def test_first_join_cannot_hide_authority_health_identity_or_original_deadline_l
     change(sm, 'aolAxisState', lambda a: setattr(a, 'intentIntegrityEpoch', 2))
   elif fault in ('old-proof', 'renewed-proof'):
     now = NOW + 40_000_000
+    if fault == 'old-proof':
+      now = int(sm['aolAxisState'].validUntilMonoTime) + 1
+      assert now > sm['aolAxisState'].validUntilMonoTime
     if fault == 'renewed-proof':
       event = sm.messages['aolAxisState'].as_builder()
       event.logMonoTime = event.aolAxisState.observedMonoTime = event.aolAxisState.sourceCarStateMonoTime = NOW + 30_000_000
@@ -202,3 +205,16 @@ def test_first_join_cannot_hide_authority_health_identity_or_original_deadline_l
   if fault in ('native-rx', 'native-heartbeat', 'panda-rx', 'wrong-producer', 'critical-axis', 'old-proof'):
     assert feedback.observe(sm, cp, cs, now, latched=latched, intent_producer_session=producer)
     assert feedback.failed
+
+
+@pytest.mark.parametrize('offset', [-1, 0, 1])
+def test_native_first_brake_retains_intent_only_through_original_source_deadline(offset):
+  cp, cs, feedback, sm, _ = setup('alpha-brake')
+  axis_before = sm['aolAxisState'].to_dict()
+  native_before = bytes(sm['aolSafetyWire'])
+  deadline = int(sm['aolAxisState'].validUntilMonoTime)
+  now = deadline + offset
+  assert feedback.observe(sm, cp, cs, now, latched=True, intent_producer_session=PRODUCER) == (offset > 0)
+  assert sm['aolAxisState'].to_dict() == axis_before
+  assert sm['aolAxisState'].validUntilMonoTime == deadline
+  assert bytes(sm['aolSafetyWire']) == native_before

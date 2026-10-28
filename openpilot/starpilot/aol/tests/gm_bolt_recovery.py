@@ -173,6 +173,8 @@ def exercise_bolt_cancel_recovery(self, identity, removed, *, critical=None, com
         sensor[5] = pedal_crc(sensor)
         if cp.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and not removed:
           prime_packets.append(packer.make_can_msg('ASCMActiveCruiseControlStatus', 2, {'ACCCruiseState': 0}))
+          if offset == -20_000_000:
+            prime_packets.append(packer.make_can_msg('EBCMFrictionBrakeCmd', 2, {'RollingCounter': 0}))
         # Required sensor readiness precedes each physical SET/release edge.
         prime_packets += [(0x201, bytes(sensor), 0), (0x1E1, button_bytes(button, counter), 0)]
         previous = ci.update([(prime_now, prime_packets)])
@@ -226,6 +228,8 @@ def exercise_bolt_cancel_recovery(self, identity, removed, *, critical=None, com
         packets.append((0x201, bytes(sensor), 0))
         if not removed:
           packets.append(packer.make_can_msg('ASCMActiveCruiseControlStatus', 2, {'ACCCruiseState': 0}))
+          if cp.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and (tick + 2) % 4 == 0:
+            packets.append(packer.make_can_msg('EBCMFrictionBrakeCmd', 2, {'RollingCounter': ((tick + 2) // 4) % 4}))
         self.assertTrue(any(address == 0x201 for address, _, _ in packets), msg=ctx)
         if communications is not None:
           packets = [packet for packet in packets if packet[0] != 0xBD]

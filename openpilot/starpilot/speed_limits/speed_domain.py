@@ -1,10 +1,11 @@
 """Pure offset selection and qualified raw/cluster coordinate conversion for SLC."""
 
 import math
+import struct
 from dataclasses import dataclass
 from enum import Enum
 
-from openpilot.selfdrive.car.cruise import V_CRUISE_MIN, V_CRUISE_MAX
+from openpilot.selfdrive.car.cruise import V_CRUISE_MIN, V_CRUISE_MAX, slc_target_kph
 from openpilot.starpilot.speed_limits import acceptance as acc
 
 
@@ -148,6 +149,20 @@ def adjusted_limit(speed_mps: float, schedule: OffsetSchedule, *, minimum_target
   if offset < 0 and value <= minimum_target_mps:
     value = speed_mps
   return min(max(value, V_CRUISE_MIN / 3.6), V_CRUISE_MAX / 3.6) if _number(value, positive=True) else None
+
+
+def set_speed_matches(target_mps: float, raw_kph: float, cluster_kph: float | None, is_metric: bool | None) -> bool:
+  """Compare the SET values Card would actually write, including display-unit rounding."""
+  if type(is_metric) is not bool or not all(_number(v, positive=True) for v in (target_mps, raw_kph, cluster_kph)):
+    return False
+  if not V_CRUISE_MIN / 3.6 <= target_mps <= V_CRUISE_MAX / 3.6:
+    return False
+  assert cluster_kph is not None
+  # Card receives targetMps as Float32; transport can move a half-unit rounding boundary.
+  target_mps = struct.unpack('f', struct.pack('f', target_mps))[0]
+  target_kph = slc_target_kph(target_mps, is_metric)
+  return (math.isclose(target_kph, raw_kph, rel_tol=0, abs_tol=0.001) and
+          math.isclose(target_kph, cluster_kph, rel_tol=0, abs_tol=0.001))
 
 
 def resolve(decision: acc.Decision, schedule: OffsetSchedule, selected: SpeedPair, ego: SpeedPair) -> DomainResolution:

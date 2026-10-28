@@ -51,8 +51,9 @@ class Command:
 
 
 class AngleController:
-  def __init__(self, *, low_gain=1.0, high_gain=1.15, trim_config=None):
+  def __init__(self, *, low_gain=1.0, high_gain=1.15, trim_config=None, recovery_blips=True):
     self.trim_config = TrimConfig() if trim_config is None else trim_config
+    self.recovery_blips = recovery_blips
     self.trim = LaneCenterTrim()
     self.low_gain = low_gain
     self.high_gain = high_gain
@@ -68,10 +69,13 @@ class AngleController:
     self.blip_hold = 0.0
     self.blip_count = 0
 
-  def reset(self):
+  def reset_actuator(self):
     self.trim.reset()
     self.path_last = 0.0
     self.speed_last = 0.1
+
+  def reset(self):
+    self.reset_actuator()
     self.desired_last = 0.0
     self.human_timer = 0.0
     self.press_last = False
@@ -107,7 +111,7 @@ class AngleController:
     if i.steering_pressed:
       self.press_timer += 0.05
     else:
-      if self.press_timer >= 0.5 and self.blip_cooldown <= 0.0 and self.blip_frames <= 0 and abs(self.path_last) < 0.1:
+      if self.recovery_blips and self.press_timer >= 0.5 and self.blip_cooldown <= 0.0 and self.blip_frames <= 0 and abs(self.path_last) < 0.1:
         self.blip_frames = 6
       self.press_timer = 0.0
     if self.blip_frames > 0:
@@ -194,7 +198,7 @@ class AngleController:
     gap = i.desired_curvature - i.measured_curvature
     stalled = (not i.steering_pressed and not i.lane_change and i.speed > 9.0 and abs(gap) > 0.004 and
                abs(i.desired_curvature) > abs(i.measured_curvature))
-    if stalled:
+    if self.recovery_blips and stalled:
       if abs(kappa - requested) > 1e-9 and self.blip_cooldown <= 0.0:
         self.blip_hold += 0.05
       if self.blip_hold >= 0.5 and self.blip_count < 3 and abs(path) < 0.1:

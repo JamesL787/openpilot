@@ -17,6 +17,17 @@ const response = (body) => ({ ok: true, status: 200, json: async () => body })
 const tick = async () => { for (let i = 0; i < 8; i++) await Promise.resolve() }
 
 assert.equal(validDriveStats(fixture), true)
+const aolRoute = { ...route, aolSeconds: 900, aolPercent: 25 }
+const aolTotals = { aolSeconds: 900, aolPercent: 25, aolDurationSeconds: 3600, aolDrives: 1 }
+const aolFixture = { ...fixture, lastDrive: aolRoute, recentDrives: [aolRoute],
+  totals: { ...fixture.totals, ...aolTotals }, week: { ...fixture.week, ...aolTotals } }
+assert.equal(validDriveStats(aolFixture), true)
+assert.equal(validDriveStats({ ...aolFixture, lastDrive: { ...aolRoute, aolSeconds: 3601 } }), false)
+assert.equal(validDriveStats({ ...aolFixture, lastDrive: { ...aolRoute, aolPercent: NaN } }), false)
+assert.equal(validDriveStats({ ...aolFixture, lastDrive: { ...aolRoute, aolPercent: null } }), false)
+assert.equal(validDriveStats({ ...aolFixture, totals: { ...aolFixture.totals, aolDrives: 2 } }), false)
+assert.equal(validDriveStats({ ...aolFixture, totals: { ...aolFixture.totals, aolDurationSeconds: 500 } }), false)
+assert.equal(validDriveStats({ ...aolFixture, lastDrive: { ...aolRoute, aolSeconds: null, aolPercent: null } }), true)
 assert.equal(validDriveStats({ ...fixture, isMetric: null }), false)
 assert.equal(validDriveStats({ ...fixture, week: { ...fixture.week, days: [] } }), false)
 assert.equal(validDriveStats({ ...fixture, recentDrives: [{ ...route, ignored: "no" }] }), false)

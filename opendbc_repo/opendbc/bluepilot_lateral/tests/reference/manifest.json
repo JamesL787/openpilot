@@ -26,8 +26,14 @@
   },
   "starpilot_curvature_controller": {
     "origin": "opendbc_repo/opendbc/car/ford/carcontroller.py",
-    "sha256": "c131d1d5f4231004e00f46968988b5d5f379ec22ef8c44d7f67ded8464344855",
-    "revision": "d2ae98eb3959c88011ed537e7cbc033d91fd3efa"
+    "sha256": "9838f258b7a4eef48c8c1ed4fb40d180939b86e22ac9079a734d1eabf4c0060e",
+    "revision": "d2ae98eb3959c88011ed537e7cbc033d91fd3efa",
+    "intentional_changes": [
+      {
+        "commit": "d60f2d7ada6cf6aa0f32e881aa916809686a65a6",
+        "contract": "Generic CAN-FD stock-idle and same-batch mode-before-bounded-command handoff. Retains the pre-angle curvature oracle and all full-byte comparisons."
+      }
+    ]
   },
   "bpdev_trim": {
     "origin": "opendbc_repo/opendbc/sunnypilot/car/ford/lane_center_trim.py",

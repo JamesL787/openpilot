@@ -37,12 +37,64 @@ def cp():
   return HondaInterface.get_non_essential_params(HONDA.HONDA_CIVIC)
 
 
-def step(owner, tick, **changes):
+def step(owner, tick, *, observed_accel=None, **changes):
   sm, now = frame(tick)
+  if observed_accel is not None:
+    sm['carState'].aEgo = observed_accel
   args = {'now_ns': now, 'drive_id': 1, 'dt': .05, 'target_speed': 27., 'model_accel': 0.,
               'mpc_accel': .8, 'cruise_accel': .8, 'lateral_accel': 0., 'blocked': False}
   args.update(changes)
   return owner.update(sm, cp(), **args)
+
+
+@pytest.mark.parametrize('model_accel,observed_accel', [(0., .35), (.4, .4), (.7, .7)])
+def test_normal_recovery_receives_no_extra_acceleration(model_accel, observed_accel):
+  owner = Encouragement()
+  for tick in range(240):
+    assert step(owner, tick, model_accel=model_accel, observed_accel=observed_accel) == model_accel
+    assert owner.boost == 0.
+
+
+def test_minor_deficit_and_short_hesitation_do_not_trigger():
+  owner = Encouragement()
+  for tick in range(120):
+    assert step(owner, tick, target_speed=20.8) == 0.
+  for tick in range(120, 170):
+    assert step(owner, tick) == 0.
+  assert step(owner, 170, observed_accel=.4) == 0.
+  assert owner.clear_seconds == owner.boost == 0.
+  for tick in range(171, 221):
+    assert step(owner, tick) == 0.
+
+
+def test_recovery_floor_does_not_stack_on_model_acceleration():
+  owner = Encouragement()
+  for tick in range(250):
+    step(owner, tick)
+  assert owner.boost == pytest.approx(MAX_BOOST)
+  assert step(owner, 250, model_accel=.2) == pytest.approx(MAX_BOOST)
+  assert step(owner, 251, model_accel=.7, observed_accel=.4) == pytest.approx(.7)
+  assert step(owner, 252, mpc_accel=.25) == pytest.approx(.25)
+  assert step(owner, 253, cruise_accel=.2) == pytest.approx(.2)
+
+
+@pytest.mark.parametrize('factory,car', [(HondaInterface, HONDA.HONDA_CIVIC),
+                                       (HyundaiInterface, HYUNDAI.HYUNDAI_IONIQ_6),
+                                       (ToyotaInterface, TOYOTA.TOYOTA_RAV4_TSS2)])
+def test_native_planner_normal_acceleration_is_unchanged(factory, car):
+  params = factory.get_non_essential_params(car)
+  params.openpilotLongitudinalControl = True
+  original, current = (LongitudinalPlanner(params, init_v=20.) for _ in range(2))
+  for tick in range(160):
+    sm, now = frame(tick)
+    sm['carState'].aEgo = .4
+    sm['modelV2'].action.desiredAcceleration = .4
+    with patch.object(original.encouragement, 'update', side_effect=lambda *a, **kw: kw['model_accel']):
+      original.update(sm, now_ns=now)
+    current.update(sm, now_ns=now)
+    assert current.output_a_target == original.output_a_target
+    assert current.output_should_stop == original.output_should_stop
+    assert current.encouragement.boost == 0.
 
 
 def test_ramp_settling_bound_and_near_target_taper():
@@ -192,6 +244,38 @@ def test_native_planner_limits_and_immediate_withdrawal(case):
       assert current.output_a_target <= original.output_a_target + 1e-6
       assert current.encouragement.boost == 0.
       assert current.output_should_stop == original.output_should_stop
+
+
+@pytest.mark.parametrize('factory,car', [(HondaInterface, HONDA.HONDA_CIVIC),
+                                       (HyundaiInterface, HYUNDAI.HYUNDAI_IONIQ_6),
+                                       (ToyotaInterface, TOYOTA.TOYOTA_RAV4_TSS2)])
+def test_native_planner_override_release_uses_higher_request_without_stacking(factory, car):
+  params = factory.get_non_essential_params(car)
+  params.openpilotLongitudinalControl = True
+  planner = LongitudinalPlanner(params, init_v=20.)
+  for tick in range(220):
+    sm, now = frame(tick)
+    planner.update(sm, now_ns=now)
+  assert planner.encouragement.boost == pytest.approx(MAX_BOOST)
+  for tick in range(220, 260):
+    sm, now = frame(tick)
+    sm['carState'].gasPressed = True
+    planner.update(sm, now_ns=now)
+    assert planner.encouragement.boost == 0.
+  assert planner.accel_boost.total_boost == pytest.approx(.05)
+  for tick in range(260, 480):
+    sm, now = frame(tick)
+    planner.update(sm, now_ns=now)
+    assert planner.mpc.solution_status == 0
+    assert planner.accel_boost.total_boost == pytest.approx(.05)
+    assert planner.output_a_target <= max(.05, planner.encouragement.boost) + 1e-6
+    assert planner.output_a_target <= planner.a_cruise + 1e-6
+  assert planner.encouragement.boost == pytest.approx(MAX_BOOST)
+  assert planner.output_a_target == pytest.approx(MAX_BOOST, abs=.01)
+  sm, now = frame(480)
+  sm['selfdriveState'].enabled = False
+  planner.update(sm, now_ns=now)
+  assert planner.accel_boost.total_boost == planner.encouragement.boost == 0.
 
 
 def test_native_planner_preserves_manual_override_input_and_boost():

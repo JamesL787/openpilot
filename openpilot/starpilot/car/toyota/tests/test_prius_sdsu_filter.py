@@ -39,9 +39,13 @@ def test_full_factory_cp_and_numeric_tunes(label):
   alpha = alpha == 'alpha=True'
   cp = factory(version, hardware=hardware, alpha=alpha)
   expected = deepcopy(BASE[label])
+  expected['flags'] |= int(ToyotaFlags.HYBRID)
+  if hardware == 'none' and version != prius_sdsu.RETROFIT_EPS:
+    expected['safetyConfigs'][0]['safetyParam'] = 0x6242
   owner = prius_sdsu if hardware == '2FF8' else prius_advert_filter
   if version in ORIGINAL and hardware in ('2FF4', '2FF8'):
     expected['flags'] |= int(ToyotaFlags.HYBRID | ToyotaFlags.LONG_FILTER | ToyotaFlags.RAISED_ACCEL_LIMIT)
+    expected['longitudinalActuatorDelay'] = pytest.approx(.05)
     expected['openpilotLongitudinalControl'] = True
     expected['safetyConfigs'][0]['safetyParam'] = owner.LONG_WORD
     assert owner.configured(cp) and prius_longitudinal.enabled(cp)
@@ -58,6 +62,7 @@ def test_full_factory_cp_and_numeric_tunes(label):
     assert not prius_sdsu.configured(cp)
     if version == prius_sdsu.RETROFIT_EPS and hardware != 'none':
       expected['safetyConfigs'][0]['safetyParam'] = 0xD049 if hardware == '2FF4' else 0x8049
+      expected['longitudinalActuatorDelay'] = pytest.approx(.05)
     assert cp.to_dict() == expected
     if version == prius_sdsu.RETROFIT_EPS and hardware != 'none':
       assert cp.safetyConfigs[0].safetyParam == (0xD049 if hardware == '2FF4' else 0x8049)

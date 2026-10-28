@@ -8,9 +8,8 @@ from openpilot.starpilot.ui.onroad_state import ObservationKind, OnroadState
 from openpilot.starpilot.ui.unified_speed_presentation import displayed_limit_mps
 
 
-CONFIRMATION_PURPLE = (170, 115, 235)
-CONFIRMATION_PULSES = ((0.0, .7), (.9, .7), (2.6, .3), (3.1, .3))
-CONFIRMATION_CYCLE_SECONDS = 4.4
+CONFIRMATION_PULSES = ((0.0, .7), (.9, .7))
+CONFIRMATION_CYCLE_SECONDS = 3.2
 
 
 class SpeedLimitPulse:
@@ -57,24 +56,25 @@ class SpeedLimitPulse:
     self.manual_pending = manual
     self.last_limit = limit
 
+  def confirmation_strength(self, now: float) -> float:
+    elapsed = now - self.start_time
+    if not self.manual_pending or not 0 <= elapsed < 10:
+      return 0.0
+    phase = elapsed % CONFIRMATION_CYCLE_SECONDS
+    for start, duration in CONFIRMATION_PULSES:
+      if start <= phase < start + duration:
+        return math.sin(math.pi * (phase - start) / duration) ** 2
+    return 0.0
+
   def color(self, base: rl.Color, now: float) -> rl.Color:
     if isinstance(base, (tuple, list)):
       base = rl.Color(*base)
     elapsed = now - self.start_time
-    if not math.isfinite(elapsed) or elapsed < 0:
+    if self.manual_pending or not math.isfinite(elapsed) or elapsed < 0:
       return base
-    if self.manual_pending:
-      phase = elapsed % CONFIRMATION_CYCLE_SECONDS
-      fraction = 0.0
-      for start, duration in CONFIRMATION_PULSES:
-        if start <= phase < start + duration:
-          fraction = math.sin(math.pi * (phase - start) / duration) ** 2
-          break
-      target = CONFIRMATION_PURPLE
-    else:
-      if elapsed >= 3.0:
-        return base
-      fraction = (1 - math.cos(2 * math.pi * elapsed)) / 2
-      target = (188, 132, 255)
+    if elapsed >= 3.0:
+      return base
+    fraction = (1 - math.cos(2 * math.pi * elapsed)) / 2
+    target = (188, 132, 255)
     return rl.Color(*(round(value + (target - value) * fraction)
                       for value, target in zip((base.r, base.g, base.b), target, strict=True)), base.a)

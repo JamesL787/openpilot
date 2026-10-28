@@ -61,9 +61,9 @@ class OverrideTests(unittest.TestCase):
     self.decision(3)
     self.assertEqual(self.reduce(3, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.0)).contribution_mps, 25.0)
     self.decision(4, candidate=LOW)
-    self.assertEqual(self.reduce(4, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.0)).contribution_mps, 25.)
-    self.decision(3_000_000_004, candidate=LOW)
-    self.assertIsNone(self.reduce(3_000_000_004, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.0)).contribution_mps)
+    self.assertIsNone(self.reduce(4, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.0)).contribution_mps)
+    self.decision(5, candidate=LOW)
+    self.assertIsNone(self.reduce(5, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.0)).contribution_mps)
 
   def test_decrease_only_reduces_an_existing_override(self):
     for existing, previous, chosen, expected in (
@@ -92,9 +92,7 @@ class OverrideTests(unittest.TestCase):
     self.assertEqual(self.reduce(3, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.)).contribution_mps, 25.)
     mid = replace(SAME, speed_mps=22.)
     self.decision(4, candidate=mid)
-    self.assertEqual(self.reduce(4, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.)).contribution_mps, 25.)
-    self.decision(3_000_000_004, candidate=mid)
-    self.assertIsNone(self.reduce(3_000_000_004, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.)).contribution_mps)
+    self.assertIsNone(self.reduce(4, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 25.)).contribution_mps)
 
   def test_pedal_tracks_current_ego_and_release_restores_persistence(self):
     self.arm()
@@ -315,18 +313,17 @@ class OverrideTests(unittest.TestCase):
     self.arm()
     old_effect = self.classified(effect=2, now=3, chosen=26.0)
     self.decision(3, candidate=LOW)
-    self.decision(3_000_000_003, candidate=LOW)
-    lower = self.reduce(3_000_000_003, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 26.0), change=old_effect)
+    lower = self.reduce(3, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 26.0), change=old_effect)
     self.assertIsNone(lower.contribution_mps)
     self.assertFalse(lower.event_receipt.consumed)
     self.assertNotEqual(lower.context, self.first.context)
 
     ledger = arb.step(arb.new_ledger(SESSION), arb.BeginAction(SESSION, 2, arb.Origin.DRIVER_CRUISE,
-                                                               lower.context.context_id), now_ns=3_000_000_004).state
-    ledger = arb.step(ledger, arb.ResolveAction(SESSION, 2, arb.Disposition.DRIVER_INTENT), now_ns=3_000_000_004).state
-    fresh = arb.step(ledger, arb.CruiseChange(SESSION, 3, 2, 26.0, 27.0), now_ns=3_000_000_005).change
-    self.decision(3_000_000_005, candidate=LOW)
-    rearmed = self.reduce(3_000_000_005, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 27.0), change=fresh)
+                                                               lower.context.context_id), now_ns=4).state
+    ledger = arb.step(ledger, arb.ResolveAction(SESSION, 2, arb.Disposition.DRIVER_INTENT), now_ns=4).state
+    fresh = arb.step(ledger, arb.CruiseChange(SESSION, 3, 2, 26.0, 27.0), now_ns=5).change
+    self.decision(5, candidate=LOW)
+    rearmed = self.reduce(5, selected=ov.SelectedEvidence(ov.EvidenceKind.VALID, 27.0), change=fresh)
     self.assertTrue(rearmed.event_receipt.consumed)
     self.assertEqual(rearmed.contribution_mps, 27.0)
 

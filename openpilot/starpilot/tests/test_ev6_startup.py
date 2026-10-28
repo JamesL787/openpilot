@@ -112,7 +112,8 @@ class TestEV6Startup(unittest.TestCase):
           admission_results and admission_results[0]):
         self.assertIs(holder.owner.outcome, Outcome.SENT_UNCONFIRMED)
         self.assertTrue(ci.CP.openpilotLongitudinalControl)
-        self.assertEqual(ci.CP.safetyConfigs[-1].safetyParam, 0x15)
+        self.assertEqual(ci.CP.safetyConfigs[-1].safetyParam,
+                         0x2015 if car == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN else 0x15)
     return ci, holder, requests
 
   def test_sent_prepublication_binds_immutable_template_and_suppressed_protocol(self):

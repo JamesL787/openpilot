@@ -75,7 +75,7 @@ def test_early(mode, condition):
         mock.patch.object(messaging, 'recv_one_or_none', side_effect=receive),
       ):
         axis, state, command = step(5, timeout=True, offset_ns=-100_000, intent_message=wire(BASE, 3), gas=gas, brake=brake, steering=True, latched=lateral)
-      if condition in ['timely', 'repeat'] or (condition == 'entry_expired' and mode in ('ordinary', 'lateral_gas')):
+      if condition in ['timely', 'repeat', 'entry_expired']:
         assert axis.to_dict() == original.to_dict() and command.latActive
         assert command.longActive == (mode == 'ordinary')
         assert sd.aol_axis_publication_deferred and attempt == [True]

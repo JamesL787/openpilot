@@ -35,12 +35,12 @@ class Frame:
   selected_kind: sd.DomainStatus
   ego_pair: sd.SpeedPair
   pedal_pressed: bool | None
-  lead: lr.LeadEvidence
-  lead_policy: lr.Policy
   host: HostState
   action: acc.DriverAction | None = None
   adopt: acc.AdoptRequest | None = None
   classified_cruise: arb.Result | None = None
+  is_metric: bool | None = None
+  set_speed_ready: bool = True
 
 
 @dataclass(frozen=True)
@@ -135,7 +135,7 @@ def step(state: State, frame: Frame) -> Result:
                                                 frame.acceptance_policy.fallback_previous,
                                                 frame.acceptance_policy.display_only)) or
       not isinstance(frame.selected_kind, sd.DomainStatus) or not isinstance(frame.ego_pair, sd.SpeedPair) or
-      not isinstance(frame.lead, lr.LeadEvidence)):
+      (frame.is_metric is not None and type(frame.is_metric) is not bool) or type(frame.set_speed_ready) is not bool):
     return Result(replace(state, lead_prior=None, reset_required=True), status="invalid_frame", errors=("invalid frame or clock",))
   host = frame.host
   selected_initialized = host.driver_v_cruise_kph > 0 and host.driver_v_cruise_kph != 255.0
@@ -168,8 +168,19 @@ def step(state: State, frame: Frame) -> Result:
   selected = sel.select_limit(frame.observations, frame.selection_policy)
   if selected.errors:
     return Result(replace(base, lead_prior=None, reset_required=True), selection=selected, status="invalid_selection", errors=selected.errors)
+  ego = frame.ego_pair
+  candidate = selected.observation.candidate
+  matches_set = False
+  if (active_path and frame.set_speed_ready and candidate is not None and frame.selected_kind is sd.DomainStatus.VALID and
+      ego.status is sd.DomainStatus.VALID and ego.session_id == state.session_id and ego.timestamp_ns == frame.now_ns and
+      _number(ego.raw_mps) and _number(ego.cluster_mps)):
+    assert ego.raw_mps is not None and ego.cluster_mps is not None
+    target = sd.adjusted_limit(candidate.speed_mps, frame.offset_schedule,
+                               minimum_target_mps=max(0.0, ego.cluster_mps - ego.raw_mps))
+    matches_set = target is not None and sd.set_speed_matches(
+      target, host.driver_v_cruise_kph, host.selected_cluster_kph, frame.is_metric)
   acceptance = acc.step(base.acceptance, selected.observation, frame.authority, frame.acceptance_policy,
-                        now_ns=frame.now_ns, action=frame.action, adopt=frame.adopt)
+                        now_ns=frame.now_ns, action=frame.action, adopt=frame.adopt, set_speed_matches=matches_set)
   base = replace(base, acceptance=acceptance.state)
   if acceptance.errors:
     return Result(replace(base, lead_prior=None, reset_required=True), selected, acceptance,

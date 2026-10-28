@@ -17,5 +17,7 @@ def test_pedal_admission_changes_only_hardware_flags_and_native_owner(candidate)
   expected = baseline.to_dict()
   expected['flags'] |= int(ToyotaFlags.GAS_INTERCEPTOR)
   expected['safetyConfigs'][0]['safetyParam'] = 0x2049
+  expected['stopAccel'] = -1.5
+  expected['longitudinalActuatorDelay'] = pytest.approx(max(baseline.longitudinalActuatorDelay, .2))
   assert cp.to_dict() == expected
   assert qualified(cp)

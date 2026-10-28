@@ -1077,7 +1077,9 @@ class RuntimeReplayTests(unittest.TestCase):
     self.assertIn('longitudinalPlan', services)
     state = next(message.slcState for service, message in publisher.sent if service == 'slcState')
     self.assertFalse(state.hasCeiling)
-    self.assertTrue(state.automaticAdoptionPending)
+    self.assertTrue(state.hasAccepted)
+    self.assertFalse(state.hasPending)
+    self.assertFalse(state.automaticAdoptionPending)
     self.assertEqual(state.observationKind, 'valid')
     self.assertEqual(state.frameMonoTime, 2_010_000_000)
 
@@ -1332,10 +1334,12 @@ class RuntimeReplayTests(unittest.TestCase):
     source.carStateLogMonoTime = 2_000_000_000
     matched = runtime.step(self.sm, self.cp, now_ns=2_000_000_000)
     first_identity = matched.result.selection.observation.candidate.observation_identity.value
-    self.assertTrue(matched.message.slcState.hasPending)
+    self.assertTrue(matched.message.slcState.hasAccepted)
+    self.assertFalse(matched.message.slcState.hasPending)
     self.sm.logMonoTime['carState'] = 2_010_000_000  # independent sockets deliver the next card tick first
     lagged = runtime.step(self.sm, self.cp, now_ns=2_010_000_000)
-    self.assertTrue(lagged.message.slcState.hasPending)
+    self.assertTrue(lagged.message.slcState.hasAccepted)
+    self.assertFalse(lagged.message.slcState.hasPending)
     source.producerSessionId = 'restarted-card'
     restarted = runtime.step(self.sm, self.cp, now_ns=2_010_000_000)
     second_identity = restarted.result.selection.observation.candidate.observation_identity.value

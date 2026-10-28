@@ -278,6 +278,41 @@ class CompanionTests(unittest.TestCase):
       save.assert_not_called()
     self.assertEqual(host.config['companion_address'], '')
 
+  def test_forgetting_the_selected_car_stops_its_retry_then_deletes_it(self):
+    from openpilot.starpilot.system.android_auto.supervisor import Supervisor
+    host = Supervisor.__new__(Supervisor)
+    host._lock = threading.RLock()
+    host.config = {'receiver_address': ADAPTER}
+    host._shared_bluetooth_owner = self.owner
+    host.auto = Mock()
+    alive = {'value': True}
+    host._session_alive = Mock(side_effect=lambda: alive['value'])
+    host.stop = Mock(side_effect=lambda: alive.update(value=False))
+    host.forget_receiver = Mock(return_value=True)
+    self.owner.request = Mock(return_value={'devices': []})  # test double
+    self.assertEqual(host.companion_bluetooth_action('forget', ADAPTER.lower(), SESSION), {'devices': []})
+    host.auto.manual_stop.assert_called_once_with(True)
+    host.stop.assert_called_once_with()
+    self.owner.request.assert_called_once_with('forget', address=ADAPTER.lower())
+    host.forget_receiver.assert_called_once_with(ADAPTER.lower())
+
+  def test_forgetting_the_selected_car_waits_out_pairing_and_expired_sessions(self):
+    from openpilot.starpilot.system.android_auto.supervisor import Supervisor
+    host = Supervisor.__new__(Supervisor)
+    host.config = {'receiver_address': ADAPTER}
+    host._shared_bluetooth_owner = self.owner
+    host.stop = Mock()
+    self.lease.session = SESSION
+    with self.assertRaises(Rejected) as error:
+      host.companion_bluetooth_action('forget', ADAPTER, SESSION)
+    self.assertEqual(error.exception.code, 'busy')
+    self.lease.session = None
+    self.state['valid'] = False
+    with self.assertRaises(Rejected) as error:
+      host.companion_bluetooth_action('forget', ADAPTER, SESSION)
+    self.assertEqual(error.exception.code, 'session_expired')
+    host.stop.assert_not_called()
+
   def daemon_call(self, operation='connect', address=CAR, valid=True, parked=True):
     supervisor = SimpleNamespace(companion_bluetooth_action=self.owner.companion_action,
       bind_source_session=lambda session: self.fail('Companion command must not rebind projection source'))

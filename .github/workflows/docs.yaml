@@ -29,6 +29,11 @@ jobs:
     steps:
     - uses: commaai/timeout@v1
     - uses: actions/checkout@v7
+      with:
+        sparse-checkout: |
+          /docs/
+          /openpilot/selfdrive/assets/icons_mici/settings/comma_icon.png
+        sparse-checkout-cone-mode: false
 
     # Build
     - name: Build docs

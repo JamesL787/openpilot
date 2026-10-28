@@ -81,7 +81,7 @@ def test_card_companion_is_available_when_car_state_wakes_selfdrive(pause_latera
       last_actuators_output=car.CarControl.Actuators.new_message(), can_rcv_cum_timeout_counter=0,
       rk=SimpleNamespace(remaining=0), aol_replay=True, aol_qualified=qualified, aol_sequence=1,
       slc_producer_session='card', aol_card_intent=SimpleNamespace(allowed_latch=True, output=lambda _: (True, pause_lateral, False)),
-      v_cruise_helper=SimpleNamespace(slc_cruise_change=None))
+      v_cruise_helper=SimpleNamespace(slc_cruise_change=None, toyota=None))
     initialize_publication_sources(card)
     create = messaging.new_message
 
@@ -157,7 +157,7 @@ def _queued_publication():
     last_actuators_output=car.CarControl.Actuators.new_message(), can_rcv_cum_timeout_counter=0,
     rk=SimpleNamespace(remaining=0), aol_replay=True, aol_qualified=True, aol_sequence=0,
     slc_producer_session='card', aol_card_intent=SimpleNamespace(allowed_latch=True, output=lambda _: (True, False, False)),
-    v_cruise_helper=SimpleNamespace(slc_cruise_change=None))
+    v_cruise_helper=SimpleNamespace(slc_cruise_change=None, toyota=None))
   initialize_publication_sources(card)
   return card, sd, time.monotonic_ns()
 

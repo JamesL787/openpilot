@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from openpilot.cereal import log, messaging
-from openpilot.starpilot.gps.phone import PhoneGpsPublisher, phone_gps, read_phone_gps
+from openpilot.starpilot.gps.phone import PhoneGpsPublisher, phone_gps, read_phone_gps, phone_gps_status
 from openpilot.starpilot.gps import source
 from openpilot.starpilot.gps.source import GPS_SERVICES, PHONE_MAX_AGE_NS, gps_mode, select_location, select_source
 from openpilot.starpilot.navigation.runtime import publish_status
@@ -17,6 +17,11 @@ NOW = 101_000_000_000
 PATH = Path(tempfile.gettempdir()) / "phone_gps.json"
 FIX = {"latitude": 40., "longitude": -110., "horizontalAccuracy": 5., "ageMs": 300, "altitude": 100., "speed": 20., "bearing": 90.,
        "bearingAccuracy": 10., "speedAccuracy": 1., "timestamp": 1_790_000_000_000}
+
+
+@pytest.fixture(autouse=True)
+def isolated_handoff(tmp_path, monkeypatch):
+  monkeypatch.setitem(globals(), "PATH", tmp_path / "phone_gps.json")
 
 
 class Messages:
@@ -111,16 +116,19 @@ def test_unknown_vertical_accuracy_is_not_used():
 
 
 @pytest.mark.parametrize("field", ("altitude", "speed", "bearing", "bearingAccuracy", "speedAccuracy"))
-def test_partial_fix_is_rejected(field):
+def test_partial_fix_preserves_position_with_unknown_measurement(field):
   payload = dict(FIX)
   payload.pop(field)
-  with pytest.raises(ValueError, match=field):
-    phone_gps(payload, NOW)
+  gps = phone_gps(payload, NOW)
+  assert gps['hasFix'] and gps['latitude'] == FIX['latitude']
+  key = {'bearing': 'bearingDeg', 'bearingAccuracy': 'bearingAccuracyDeg'}.get(field, field)
+  assert math.isnan(gps[key])
+  if field == 'bearingAccuracy':
+    assert math.isnan(gps['bearingDeg'])
 
 
 @pytest.mark.parametrize("change", [{"ageMs": 2500}, {"ageMs": -1}, {"latitude": 91.}, {"latitude": 0., "longitude": 0.},
-                                    {"horizontalAccuracy": 0}, {"latitude": True}, {"extra": 1}, {"timestamp": 1.5},
-                                    {"speed": -1}, {"altitude": None}, {"bearingAccuracy": 0}, {"speedAccuracy": -1}])
+                                    {"horizontalAccuracy": 0}, {"latitude": True}, {"extra": 1}, {"timestamp": 1.5}])
 def test_invalid_fixes_are_rejected(change):
   with pytest.raises(ValueError):
     phone_gps({**FIX, **change}, NOW)
@@ -235,3 +243,78 @@ def test_selected_source_is_named():
   native(sm)
   assert select_source(sm, NOW)[0] == "comma"
   assert select_source(sm, NOW, "phone")[0] == "phone"
+
+
+def test_zero_bearing_uncertainty_is_known():
+  from openpilot.starpilot.gps.source import bearing
+  gps = SimpleNamespace(**phone_gps({**FIX, "bearingAccuracy": 0}, NOW))
+  assert bearing(gps) == 90.
+
+
+def test_unknown_speed_keeps_position_without_heading_prediction(tmp_path):
+  from openpilot.starpilot.navigation.runtime import location
+  sm = Messages()
+  publish(sm, {key: value for key, value in FIX.items() if key not in ('speed', 'bearing', 'bearingAccuracy')}, tmp_path=tmp_path)
+  position = location(sm, NOW)
+  assert position[1:] == ((-110., 40.), None, None)
+
+
+def test_accuracy_drop_preserves_good_fix_until_original_expiry(tmp_path):
+  path = tmp_path / 'gps.json'
+  now = [NOW]
+  publisher = PhoneGpsPublisher(path, lambda: now[0])
+  publisher.publish(FIX)
+  original = read_phone_gps(now[0], path)[0]
+  now[0] += 1_000_000_000
+  assert publisher.publish({**FIX, 'horizontalAccuracy': 26.})['reason'] == 'poorAccuracy'
+  assert read_phone_gps(now[0], path)[0] == original
+  assert phone_gps_status(now[0], path)['usable']
+  now[0] = original + PHONE_MAX_AGE_NS + 1
+  publisher.publish({**FIX, 'horizontalAccuracy': 26.})
+  assert read_phone_gps(now[0], path) is None
+  assert not phone_gps_status(now[0], path)['usable']
+  publisher.publish({**FIX, 'timestamp': FIX['timestamp'] + 11000})
+  assert read_phone_gps(now[0], path) is not None
+
+
+def test_duplicate_and_reordered_fixes_do_not_renew_age(tmp_path):
+  path = tmp_path / 'gps.json'
+  now = [NOW]
+  publisher = PhoneGpsPublisher(path, lambda: now[0])
+  publisher.publish(FIX)
+  stamp = read_phone_gps(now[0], path)[0]
+  now[0] += 1_000_000_000
+  for timestamp in (FIX['timestamp'], FIX['timestamp'] - 1000):
+    assert publisher.publish({**FIX, 'timestamp': timestamp})['reason'] == 'outOfOrder'
+    assert read_phone_gps(now[0], path)[0] == stamp
+
+
+def test_timestamp_deltas_detect_added_queue_delay(tmp_path):
+  path = tmp_path / 'gps.json'
+  now = [NOW]
+  publisher = PhoneGpsPublisher(path, lambda: now[0])
+  publisher.publish(FIX)
+  now[0] += 5_000_000_000
+  assert publisher.publish({**FIX, 'timestamp': FIX['timestamp'] + 1000})['reason'] == 'delayed'
+  # A current measurement recovers; rejected requests did not move the anchor.
+  assert publisher.publish({**FIX, 'timestamp': FIX['timestamp'] + 5000}) == {'ok': True}
+  assert read_phone_gps(now[0], path)[0] == now[0] - 300_000_000
+
+
+def test_clock_change_can_recover_after_original_fix_expires(tmp_path):
+  path = tmp_path / 'gps.json'
+  now = [NOW]
+  publisher = PhoneGpsPublisher(path, lambda: now[0])
+  publisher.publish(FIX)
+  now[0] += PHONE_MAX_AGE_NS + 1
+  assert publisher.publish({**FIX, 'timestamp': FIX['timestamp'] - 60000}) == {'ok': True}
+
+
+def test_invalid_upload_reports_reason_without_erasing_last_fix(tmp_path):
+  path = tmp_path / 'gps.json'
+  publisher = PhoneGpsPublisher(path, lambda: NOW)
+  publisher.publish(FIX)
+  with pytest.raises(ValueError):
+    publisher.publish({**FIX, 'ageMs': 5000})
+  status = phone_gps_status(NOW, path)
+  assert status['reason'] == 'Location is too old' and status['usable']

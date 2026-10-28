@@ -25,7 +25,7 @@ def test_neutral_status_meets_declared_frequency_without_renewing_physical_proof
   def send(topic, message):
     if topic == 'starpilotSteeringTracking':
       sends.append((now[0], message.as_reader()))
-  monkeypatch.setattr(steerlearnerd, 'drain', lambda *args: None)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', lambda *args: None)
   actor, fitter = RecordingActor(), NoLegacyFitter()
   fitter.cancel = lambda reason: None
   actor.interrupt = lambda reason, **kwargs: None
@@ -74,7 +74,7 @@ def test_explicit_learning_off_still_publishes_withdrawal_on_the_next_source_pac
   def send(topic, message):
     if topic == 'starpilotSteeringTracking':
       sends.append((now[0], message.as_reader()))
-  monkeypatch.setattr(steerlearnerd, 'drain', lambda *args: None)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', lambda *args: None)
   with pytest.raises(LoopComplete):
     steerlearnerd.run(SimpleNamespace(), SM(), object(), object(), SimpleNamespace(send=send),
       None, None, current, None, None, None, None, fitter, None, clock=lambda: now[0], live_actor=actor)
@@ -107,7 +107,7 @@ def test_missing_source_does_not_enter_the_explicit_withdrawal_serializer(monkey
   def send(topic, message):
     if topic == 'starpilotSteeringTracking':
       sends.append((now[0], message.as_reader()))
-  monkeypatch.setattr(steerlearnerd, 'drain', lambda *args: None)
+  monkeypatch.setattr(steerlearnerd, 'drain_pair', lambda *args: None)
   with pytest.raises(LoopComplete):
     steerlearnerd.run(SimpleNamespace(), SM(), object(), object(), SimpleNamespace(send=send),
       None, None, current, None, None, None, None, fitter, None, clock=lambda: now[0], live_actor=actor)

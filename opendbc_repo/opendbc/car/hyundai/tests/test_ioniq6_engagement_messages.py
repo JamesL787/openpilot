@@ -129,7 +129,7 @@ class TestIoniq6EngagementMessages(unittest.TestCase):
       stock = cp.as_reader().as_builder()
       stock.openpilotLongitudinalControl = False
       packets = create_steering_messages(CANPacker(DBC[cp.carFingerprint][Bus.pt]), stock, CanBus(stock), True, True, 20)
-      self.assertEqual(packets[-1][1][8], 100)
+      self.assertEqual(packets[-1][1][8], 0)
       angle = cp.as_reader().as_builder()
       angle.flags |= int(HyundaiFlags.CANFD_ANGLE_STEERING)
       packets = create_steering_messages(CANPacker(DBC[cp.carFingerprint][Bus.pt]), angle, CanBus(angle), True, True, 20)

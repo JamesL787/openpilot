@@ -1,4 +1,5 @@
 """Actual optional publisher cache reports child rejection without admission."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from types import SimpleNamespace
 from unittest import mock
 
@@ -78,7 +79,7 @@ def test_actual_cached_child_without_profile_reports_reason_without_admission(st
     return source
 
   with mock.patch.object(steerlearnerd, 'FullrateCollector', return_value=collector), \
-       mock.patch.object(steerlearnerd, 'drain', drain), \
+       mock.patch.object(steerlearnerd, 'drain_pair', separate_drain_fixture(drain)), \
        mock.patch.object(steerlearnerd, 'read_control', return_value=evidence), \
        mock.patch.object(collector, 'control'), mock.patch.object(collector, 'physical'), \
        mock.patch.object(collector, 'job_snapshot', side_effect=[{'job': 'bounded'}, None, None]), \

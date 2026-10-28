@@ -327,7 +327,7 @@ class FullrateCollector:
       or type(value.control_ns) is not int
       or type(value.state_ns) is not int
       or not 0 < value.state_ns <= value.control_ns <= now_ns
-      or value.control_ns - value.state_ns > JOIN_NS
+      or value.domain != 'normalized_torque' and value.control_ns - value.state_ns > JOIN_NS
       or not 1 <= len(value.features) <= 8
       or not all(finite(v) for v in (value.requested, value.baseline_prediction, *value.features, *value.applied_coordinates))
       or len(value.stage_values) > 40
@@ -410,9 +410,9 @@ class FullrateCollector:
     ):
       self.split('ineligible_control')
       return False
-    if now_ns - value.control_ns > MAX_AGE_NS:
-      # Expiry alone rejects this row, but may retain an already suspended
-      # numerical study. Explicit original native refusal is not a timing gap.
+    if now_ns - value.control_ns > MAX_AGE_NS or value.control_ns - value.state_ns > JOIN_NS:
+      # Receiver or normalized source-state delay still rejects this row.
+      # Only inert study data may survive; native refusal is not a timing gap.
       if value.native_required and (not value.native_allowed or not identity(value.native_identity) or
           not 0 < value.native_observed_ns <= value.control_ns <= value.native_expires_ns <= value.native_observed_ns + 200_000_000):
         self.split('original_native_admission_unavailable')
@@ -425,7 +425,9 @@ class FullrateCollector:
         self.split('changed_duplicate_control', reset=True)
         return False
       return True
-    if self.controls and value.control_ns <= next(reversed(self.controls)):
+    # A joined command leaves controls but remains part of this producer tape.
+    # Cross-stream ingestion must not hide its ordering boundary after a join.
+    if self.recent_controls and value.control_ns <= next(reversed(self.recent_controls)):
       self.split('reordered_control')
       return False
     self._last_live_ingest_ns = now_ns
@@ -518,6 +520,11 @@ class FullrateCollector:
     current_sources = (consumed_sources_current(command, output) if command.domain == 'normalized_torque' else
                        command.state_ns <= output.state_ns <= output.apply_ns and output.state_ns - command.state_ns <= JOIN_NS)
     if not current_sources:
+      from openpilot.starpilot.flm.unchanged_output import redundant_late_output
+      if redundant_late_output(self, command, output):
+        # The original on-time pair remains untouched. This repeat creates no
+        # ready row, sample, application time, physical witness or permission.
+        return
       # This pair is unusable, but it does not change the identity/provenance
       # of independently sealed historical samples. Withdraw current admission
       # and discard the partial window; real context changes still hard-reset.
@@ -872,6 +879,22 @@ class FullrateCollector:
     return self.result
 
 
+def _check_evidence_wire(event):
+  wire_bytes = len(event.as_builder().to_bytes())
+  if wire_bytes > MAX_SNAPSHOT_WIRE_BYTES:
+    raise ValueError('wire_bound')
+  if wire_bytes > MAX_WIRE_BYTES:
+    kind = event.which()
+    control_snapshot = kind == 'starpilotLateralState' and bool(len(event.starpilotLateralState.learningEvidence.replaySnapshot))
+    ford_events = (
+      kind == 'starpilotCarState'
+      and event.starpilotCarState.fordLearningEvidence.version == 1
+      and 0 < len(event.starpilotCarState.fordLearningEvidence.rows) <= 4
+    )
+    if not (control_snapshot or ford_events):
+      raise ValueError('non_snapshot_wire_bound')
+
+
 def drain(socket, decode, receive, collector, now_ns):
   """Nonblocking bounded existing transport; overflow rejects whole maneuver."""
   for _ in range(MAX_DRAIN):
@@ -879,19 +902,7 @@ def drain(socket, decode, receive, collector, now_ns):
     if event is None:
       return True
     try:
-      wire_bytes = len(event.as_builder().to_bytes())
-      if wire_bytes > MAX_SNAPSHOT_WIRE_BYTES:
-        raise ValueError('wire_bound')
-      if wire_bytes > MAX_WIRE_BYTES:
-        kind = event.which()
-        control_snapshot = kind == 'starpilotLateralState' and bool(len(event.starpilotLateralState.learningEvidence.replaySnapshot))
-        ford_events = (
-          kind == 'starpilotCarState'
-          and event.starpilotCarState.fordLearningEvidence.version == 1
-          and 0 < len(event.starpilotCarState.fordLearningEvidence.rows) <= 4
-        )
-        if not (control_snapshot or ford_events):
-          raise ValueError('non_snapshot_wire_bound')
+      _check_evidence_wire(event)
       decode(event, collector, now_ns)
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
       collector.split('malformed_evidence', reset=True)
@@ -899,5 +910,52 @@ def drain(socket, decode, receive, collector, now_ns):
   # The bounded lookahead is observation only; an overrun cannot silently pass.
   if receive(socket) is not None:
     collector.overrun()
+    return False
+  return True
+
+
+class _DrainOverrun(Exception):
+  pass
+
+
+def drain_pair(control_socket, control, applied_socket, applied, receive, collector, now_ns):
+  """Merge two bounded FIFO tapes by their original publisher headers.
+
+  Only the two queue heads compete; never sort a producer's own tape. A held
+  command can be republished by Card, so embedded control/apply clocks are not
+  transport ordering keys. Headers choose order only: the original callbacks
+  still decode the untouched event and resample source/native/receiver clocks.
+  Equal headers put control first, matching the previous causal preference.
+  Malformed input or either stream overrunning remains a maneuver boundary.
+  """
+  sockets, callbacks = (control_socket, applied_socket), (control, applied)
+  counts = [0, 0]
+
+  def head(index):
+    event = receive(sockets[index])
+    if event is None:
+      return None
+    # This is the same one-message bounded lookahead as the single-stream drain.
+    if counts[index] == MAX_DRAIN:
+      raise _DrainOverrun
+    _check_evidence_wire(event)
+    stamp = event.logMonoTime
+    if type(stamp) is not int or stamp <= 0:
+      raise ValueError('invalid_publisher_header')
+    return event, stamp
+
+  try:
+    pending = [head(0), head(1)]
+    while pending[0] is not None or pending[1] is not None:
+      index = 0 if pending[1] is None or (pending[0] is not None and pending[0][1] <= pending[1][1]) else 1
+      event, _stamp = pending[index]
+      callbacks[index](event, collector, now_ns)
+      counts[index] += 1
+      pending[index] = head(index)
+  except _DrainOverrun:
+    collector.overrun()
+    return False
+  except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+    collector.split('malformed_evidence', reset=True)
     return False
   return True

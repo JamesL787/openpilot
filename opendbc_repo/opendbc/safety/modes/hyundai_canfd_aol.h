@@ -18,6 +18,6 @@ static inline bool hyundai_canfd_stock_torque_aol_param(uint16_t param) {
 
 #if defined(ALLOW_DEBUG) || defined(__cplusplus)
 static inline bool hyundai_canfd_torque_long_aol_param(uint16_t param) {
-  return (param == 0x0815U) || (param == 0x0895U);
+  return (param == 0x0815U) || (param == 0x0895U) || (param == 0x2815U) || (param == 0x2895U);
 }
 #endif

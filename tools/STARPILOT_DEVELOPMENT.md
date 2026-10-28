@@ -20,6 +20,7 @@ cache. The UI remains the custom large and compact Raylib UI.
 | `./dev pytest <arguments>` | pytest, including its xdist and mock plugins |
 | `./dev shell` | Shell with host imports and private settings |
 | `./dev sync [shared\|cabana]` | Refresh source and dependencies without launching a tool |
+| `./heatdeath --help` | Joined Controls replay benchmark and CPU-placement experiments; [setup](heatdeath/README.md) |
 | `./test` | Run lint, packaging, startup, control, model, UI and selected vehicle regressions |
 | `./test --full` | Run the complete Linux pre-deployment suite, including recorded routes and replay |
 

@@ -31,7 +31,8 @@ def targets_for_coverage(root=ROOT):
         selected.add(f'{relative}::{node.name}')
   # These existing end-to-end callers bind the supplied library. Other vehicle suites
   # deliberately compile distinct DEBUG/RELEASE artifacts and retain their own gates.
-  for relative in ('openpilot/starpilot/car/nissan/tests/test_aol.py',
+  for relative in ('opendbc_repo/opendbc/car/ford/tests/test_pinion_measurement.py',
+                   'openpilot/starpilot/car/nissan/tests/test_aol.py',
                    'openpilot/starpilot/car/rivian/tests/test_aol_native.py'):
     if (root / relative).is_file():
       selected.add(relative)

@@ -198,7 +198,7 @@ def test_actual_card_publishes_fault_companion_before_matching_car_state(brand, 
   card.slc_replay = card.curve_replay = card.aol_replay = False
   card.can_rcv_cum_timeout_counter = 0
   card.rk = SimpleNamespace(remaining=0.)
-  card.v_cruise_helper = SimpleNamespace(slc_cruise_change=None)
+  card.v_cruise_helper = SimpleNamespace(slc_cruise_change=None, toyota=None)
   card.car_gps_publisher = CarGpsPublisher()
   CS = car.CarState.new_message(canValid=valid)
   card.state_publish(CS, None)

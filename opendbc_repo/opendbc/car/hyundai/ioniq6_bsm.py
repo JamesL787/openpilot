@@ -25,7 +25,8 @@ def rear_body(status: BlindspotStatus) -> bytes:
   body = bytearray(REAR_NEUTRAL_BODY)
   body[3] = int(bool(left or right)) | (left << 6)
   body[4] = right
-  body[5] = left << 1
+  # The legacy FL_INDICATOR alias overlaps the right sound-warning field.
+  # Mirror lamps have their own indication bits below.
   body[6] = right << 5
   body[7] = 0x80 | (max(left, right) << 3)
   body[16] = left | (right << 2)

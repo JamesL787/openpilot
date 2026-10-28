@@ -139,7 +139,7 @@ def write_control(parent, evidence):
     or not all(finite(v) and v != 0.0 for v in evidence.vehicle_model_anchor)
   ):
     raise ValueError('control evidence')
-  parent.learningEvidence = {
+  payload = {
     'version': VERSION,
     'identity': evidence.identity,
     'generation': evidence.generation,
@@ -194,8 +194,22 @@ def write_control(parent, evidence):
     },
   }
 
+  # Construct typed nested rows directly. Recursive Python-dict conversion in
+  # pycapnp is costly on the Controls publisher; every original field/value
+  # and the validation above remain unchanged.
+  wire = parent.init('learningEvidence')
+  for name, value in payload.items():
+    if name in ('replaySnapshot', 'replayInputs', 'stageValues'):
+      nested_values = cast(list[dict[str, object]], value)
+      rows = wire.init(name, len(nested_values))
+      for row, fields in zip(rows, nested_values, strict=True):
+        for field, item in fields.items():
+          setattr(row, field, item)
+    else:
+      setattr(wire, name, value)
+
   if evidence.effect_trace is not None:
-    parent.learningEvidence.effectTrace = _write_effect_trace(evidence.effect_trace)
+    wire.effectTrace = _write_effect_trace(evidence.effect_trace)
 
 
 def read_control(event):

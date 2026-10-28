@@ -80,3 +80,40 @@ def test_standstill_commit_survives_unknowns_and_requires_continuous_clear_evide
   for tick in range(79, 86):
     detector.step(frame(tick, speed=0., standstill=True, horizon=192., model_should_stop=False))
   assert not detector.committed and not detector.standstill_committed
+
+
+def test_ford_stopped_commit_needs_prior_bounded_geometry_and_current_stop_bit():
+  from opendbc.car.ford.values import CAR
+  for name in CAR:
+    detector = StopLightDetector()
+    held = replace(frame(0, speed=0., standstill=True, horizon=None, model_should_stop=True),
+                   car_fingerprint=str(name), standstill_path_extent_m=.1, longitudinal_stop_active=True)
+    detector.step(held)
+    assert not detector.committed
+    detector.step(replace(held, observed_mono_s=100.05, now_mono_s=100.055))
+    assert detector.committed
+    missing = replace(held, observed_mono_s=100.1, now_mono_s=100.105, standstill_path_extent_m=None)
+    assert detector.step(missing).standstill_hold
+    assert not detector.step(replace(missing, observed_mono_s=100.15, now_mono_s=100.155,
+                                     pedal_override=True)).standstill_hold
+    assert not detector.committed
+  for defect in ('unknown', 'invalid', 'no_stop', 'moving', 'stale', 'long_off'):
+    detector = StopLightDetector()
+    current = replace(frame(0, speed=0., standstill=True, horizon=None, model_should_stop=True),
+                      car_fingerprint=str(CAR.FORD_MUSTANG_MACH_E_MK1), standstill_path_extent_m=.1, longitudinal_stop_active=True)
+    if defect == 'unknown':
+      current = replace(current, car_fingerprint='FORD_UNKNOWN')
+    elif defect == 'invalid':
+      current = replace(current, standstill_path_extent_m=None)
+    elif defect == 'no_stop':
+      current = replace(current, model_should_stop=False)
+    elif defect == 'moving':
+      current = replace(current, standstill=False)
+    elif defect == 'stale':
+      current = replace(current, observed_mono_s=99.)
+    elif defect == 'long_off':
+      current = replace(current, longitudinal_stop_active=False)
+    detector.step(current)
+    detector.step(replace(current, now_mono_s=current.now_mono_s+.05,
+                          observed_mono_s=current.observed_mono_s+.05))
+    assert not detector.committed, defect

@@ -182,11 +182,11 @@ def test_raw_projection_owner_excludes_separate_pedal_profiles(topology, alpha, 
 
 @pytest.mark.parametrize('sdgm', [False, True])
 @pytest.mark.parametrize('alpha,sascm', [(False, True), (True, False)])
-def test_raw_projection_owner_excludes_stock_and_missing_sascm(sdgm, alpha, sascm):
+def test_raw_projection_owner_includes_stock_ascm_without_changing_stock_sdgm(sdgm, alpha, sascm):
   from openpilot.starpilot.car.gm.aol import steering_raw_projection_owner
   cp = sdgm_params(alpha=alpha, sascm=sascm) if sdgm else ascm_params(CAR.CHEVROLET_VOLT_ASCM, alpha=alpha, sascm=sascm)
   cp.alternativeExperience = 32
-  assert not steering_raw_projection_owner(cp)
+  assert steering_raw_projection_owner(cp) == (not sdgm)
 
 
 @pytest.mark.parametrize('full_op', [False, True])

@@ -30,7 +30,9 @@ def params(identity, hybrid=False, alpha=True, alt=False):
 @pytest.mark.parametrize("alt", [False, True])
 def test_radar_hda2_factory_requires_startup_owner_before_transmission(identity, hybrid, alt):
   cp = params(identity, hybrid, alt=alt)
-  assert cp.openpilotLongitudinalControl and not cp.pcmCruise and cp.safetyConfigs[0].safetyParam in (0x14, 0x16, 0x94, 0x96)
+  calibration = 0x2000 if identity == CAR.KIA_CARNIVAL_4TH_GEN else 0
+  assert cp.openpilotLongitudinalControl and not cp.pcmCruise
+  assert cp.safetyConfigs[0].safetyParam == (0x14 | (2 if hybrid else 0) | (128 if alt else 0) | calibration)
   sent = []
   owner = CarInterface.startup_owner(cp, (list, sent.extend), requested=True)
   assert not sent

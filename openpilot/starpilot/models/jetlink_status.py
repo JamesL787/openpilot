@@ -1,4 +1,4 @@
-"""Read-only Jetlink status for the home icon and the Android Auto card, polled off the drawing thread."""
+"""Read-only Jetlink status for model feedback and Android Auto, polled off the drawing thread."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -76,7 +76,7 @@ def read_status() -> JetlinkStatus:
     return JetlinkStatus(device, 'active', read_latency(), port)
   if status.reason:
     return JetlinkStatus(device, 'unavailable', port=port)
-  return JetlinkStatus(device, RUNNING.get(status.running, 'connected'), port=port)
+  return JetlinkStatus(device, RUNNING.get(status.running, 'ready' if status.ready else 'connected'), port=port)
 
 
 class JetlinkStatusFeed:

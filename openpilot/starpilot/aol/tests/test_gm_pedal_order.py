@@ -41,6 +41,8 @@ def test_all_volt_and_bolt_profiles_keep_lateral_intent_when_native_long_withdra
       return cs
     feedback = TransportPauseFeedback(card.CP)
     now = NOW + 20_000_000
+    if int(card.CP.safetyConfigs[0].safetyParam) == 0x1CD:
+      parse(0)  # Receive the first 25 Hz factory clock before the later pedal sample.
     cs = parse(2)
     card.aol_card_intent.update(cs, fault_active=False, now_ns=now)
     assert card.aol_card_intent.allowed_latch

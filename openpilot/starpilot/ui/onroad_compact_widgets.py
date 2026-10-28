@@ -12,7 +12,7 @@ import pyray as rl
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.starpilot.conditional_mode.policy import ModeChoice
 from openpilot.starpilot.ui.onroad_customization import offset as widget_offset, placement, rgba, widget_size
-from openpilot.starpilot.ui.onroad_state import AlertSize, ObservationKind, OnroadState, is_lane_change_notice
+from openpilot.starpilot.ui.onroad_state import AlertSize, ObservationKind, OnroadState, is_lane_change_notice, manual_slc_confirmation
 from openpilot.starpilot.ui.onroad_curve import controlling as curve_controlling
 from openpilot.starpilot.ui.onroad_conditional import reason as conditional_reason, status as conditional_status, stop_active
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
@@ -192,7 +192,9 @@ class CompactHudRenderer:
       self._last_cruise_display = display
       self._last_cruise_ns = now_ns
       elapsed = now_ns - self._set_speed_changed_ns if self._set_speed_changed_ns is not None else 0
-      return self._set_speed_alpha.update(float(0 < elapsed < 2_500_000_000))
+      persistent = (manual_slc_confirmation(Profile.COMPACT, state) or
+                    state.toyota_cruise_status in ('raise_dash', 'release_plus', 'off_hold'))
+      return self._set_speed_alpha.update(float(persistent or 0 < elapsed < 2_500_000_000))
     if (self._last_cruise_ns is None or now_ns < self._last_cruise_ns or
         now_ns - self._last_cruise_ns > 150_000_000):
       self._set_speed_alpha.x = 0.0
@@ -203,7 +205,7 @@ class CompactHudRenderer:
     return 0.0
 
   def _speed_limit_sign(self, state: OnroadState) -> None:
-    self._speed_limit_widget.render(state)
+    self._speed_limit_widget.render(state, defer_confirmation=True)
 
 
 class MiciSidebarWidgets:

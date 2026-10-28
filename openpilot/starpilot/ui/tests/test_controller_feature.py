@@ -62,7 +62,7 @@ class TestControllerFeature(unittest.TestCase):
         self.assertEqual(row.choices, ('Stock Controller', 'StarPilot Controller'))
         self.assertIn('next drive', row.reason)
         self.assertNotIn('active', row.reason.lower())
-        self.assertEqual(_projection(row, 'torque')['choices'], list(row.choices))
+        self.assertEqual(_projection(row)['choices'], list(row.choices))
     self.assertTrue(_onroad_preference('torque', DOCUMENT_KEY))
     self.assertFalse(self.params.get_bool('AdvancedLateralTune'))
     self.cp = interfaces[HYUNDAI.KIA_EV6].get_non_essential_params(HYUNDAI.KIA_EV6)
@@ -92,7 +92,7 @@ class TestControllerFeature(unittest.TestCase):
     learning = self.require_row('ForceAutoTuneOff')
     self.assertEqual((learning.label, learning.value), ('Use StarPilot Auto Learn', 'On'))
     self.assertTrue(learning.available)
-    self.assertEqual(_projection(learning, 'torque')['choices'], ['Off', 'On'])
+    self.assertEqual(_projection(learning)['choices'], ['Off', 'On'])
     self.assertTrue(self.owner.apply(required_change(learning)))
     self.assertFalse(read_preference(self.params, self.cp).enabled)
     self.assertIsNone(self.params.get('ForceAutoTuneOff'))
@@ -278,7 +278,7 @@ class TestControllerFeature(unittest.TestCase):
         self.assertEqual(row.value, 'On')
         self.assertEqual(row.reason, 'StarPilot’s FLM tuning will attempt to automatically correct torque profiles as you drive.')
         from openpilot.starpilot.galaxy.setting_descriptions import description
-        self.assertEqual(_projection(row, 'torque')['reason'], description(row))
+        self.assertEqual(_projection(row)['reason'], description(row))
 
 if __name__ == '__main__':
   unittest.main()

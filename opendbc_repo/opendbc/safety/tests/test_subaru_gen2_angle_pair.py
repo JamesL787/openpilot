@@ -70,7 +70,7 @@ class TestSubaruGen2AnglePair(unittest.TestCase):
     command.actuators.steeringAngleDeg = 1.0
     _, sends = CarController(DBC[car], cp).update(command.as_reader(), state, 1_100_000_000)
     steer = next(frame for frame in sends if frame[0] == 0x124)
-    self.assertEqual(steer[2], 1)
+    self.assertEqual(steer[2], 0)
     self.assertEqual(bool(steer[1][1] & 0x10), active and state.out.cruiseState.available and
                      state.out.cruiseState.enabled and not state.out.brakePressed)
     return state, steer, sends
@@ -102,8 +102,8 @@ class TestSubaruGen2AnglePair(unittest.TestCase):
           self.assertTrue(self.safety.safety_tx_hook(self.packet(steer)))
           self.assertEqual({frame[0] for frame in sends}, {0x124, 0x321, 0x322})
           self.assertFalse(self.safety.safety_tx_hook(self.packet((0x122, bytes(8), 0))))
-          self.assertFalse(self.safety.safety_tx_hook(self.packet((0x124, steer[1], 0))))
-          self.assertFalse(self.safety.safety_tx_hook(self.packet((0x124, steer[1][:-1], 1))))
+          self.assertFalse(self.safety.safety_tx_hook(self.packet((0x124, steer[1], 1))))
+          self.assertFalse(self.safety.safety_tx_hook(self.packet((0x124, steer[1][:-1], 0))))
           self.assertFalse(self.safety.safety_tx_hook(self.packet(packer.make_can_msg('ES_Distance', 1, {}))))
           cancel = structs.CarControl()
           cancel.cruiseControl.cancel = True
@@ -139,7 +139,7 @@ class TestSubaruGen2AnglePair(unittest.TestCase):
       self.arm(cp, frames)
       _, steer, _ = self.controller(car, cp, frames)
       invalid_option = 0x200 if car == CAR.SUBARU_LEGACY_2025 else 0x100
-      for flags in (SubaruSafetyFlags.LONG, 0x20, invalid_option):
+      for flags in (SubaruSafetyFlags.LONG, 0x800, invalid_option):
         with self.subTest(car=car, flags=flags):
           self.mode(cp, extra_flags=flags)
           for frame in required:
@@ -223,7 +223,7 @@ class TestSubaruGen2AnglePair(unittest.TestCase):
       cp = self.params(car)
       self.mode(cp)
       self.assertEqual(self.safety.safety_fwd_hook(0, 0x124), 2)
-      self.assertEqual(self.safety.safety_fwd_hook(2, 0x124), 0)
+      self.assertEqual(self.safety.safety_fwd_hook(2, 0x124), -1)
       self.assertEqual(self.safety.safety_fwd_hook(2, 0x321), -1)
       self.assertEqual(self.safety.safety_fwd_hook(2, 0x322), -1)
       self.assertEqual(self.safety.safety_fwd_hook(2, 0x221), 0)

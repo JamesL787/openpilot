@@ -421,8 +421,15 @@
     },
     "openpilot/starpilot/car/toyota/tests/test_legacy_stop_timer_callers.py": {
       "cases": 38,
-      "seconds": 51.80703006199974,
-      "source_sha256": "bcd8f46d4e0520181d43c19975c6b9b454199f944bcb4db034ace3a7cf7b18e0"
+      "seconds": 85.24435488099948,
+      "source_sha256": "bcd8f46d4e0520181d43c19975c6b9b454199f944bcb4db034ace3a7cf7b18e0",
+      "reference": {
+        "revision": "1320712ab4de8a531714d3a8c2e4cd7d284a868d",
+        "run_id": 40444892065,
+        "artifact_id": 12709085395,
+        "shard": 8,
+        "results_sha256": "a14538044b22704179bab89d0f9ded3a4f90480c14d4ea9c76047f933d2e48c5"
+      }
     },
     "openpilot/starpilot/car/toyota/tests/test_lexus_is_caller_native.py": {
       "cases": 12,
@@ -746,6 +753,58 @@
         "artifact_id": 12574163616,
         "shard": 12,
         "results_sha256": "3484585f40bb30a502adf638949ca5b251252365917d6f0d0c90db962f9ee3d5"
+      }
+    },
+    "openpilot/starpilot/car/toyota/tests/test_dsu_bypass_callers.py": {
+      "cases": 132,
+      "seconds": 291.0783922190003,
+      "source_sha256": "40d47442009fcdbc29e9b4d0b35d771e8f74b02db117d246779cc83d15df5c6c",
+      "reference": {
+        "revision": "1320712ab4de8a531714d3a8c2e4cd7d284a868d",
+        "run_id": 40444892065,
+        "artifact_id": 12709085395,
+        "shard": 8,
+        "results_sha256": "a14538044b22704179bab89d0f9ded3a4f90480c14d4ea9c76047f933d2e48c5"
+      }
+    },
+    "openpilot/starpilot/car/toyota/tests/test_matrix_filter_callers.py": {
+      "cases": 16,
+      "seconds": 63.53352316399997,
+      "source_sha256": "f374bbdb0a1e2a853b58d16b375d611661963ee63dcd62917419e2473d926e74",
+      "reference": {
+        "revision": "1320712ab4de8a531714d3a8c2e4cd7d284a868d",
+        "run_id": 40444892065,
+        "artifact_id": 12709085395,
+        "shard": 8,
+        "results_sha256": "a14538044b22704179bab89d0f9ded3a4f90480c14d4ea9c76047f933d2e48c5"
+      }
+    },
+    "openpilot/starpilot/tests/test_ford_bluepilot_aol.py": {
+      "cases": 133,
+      "seconds": 274.055069753,
+      "source_sha256": "ef4d8ff607cedc41c2cf88375a707c0eecaaab623d1a6ba8c8bb3aeb13391e68",
+      "reference": {
+        "basis": "Maximum of complete same-source whole-module hosted measurements; phase time only, no grouping or deadline changes.",
+        "source_blob": "ce0ee89600b5b608eb2c905a43c0c8ec8db5cc0b",
+        "measurements": [
+          {
+            "revision": "12dab8c31dd362a6198b9f2bb55facdf7dd34a9f",
+            "run_id": 40449589613,
+            "artifact_id": 12710448232,
+            "shard": 19,
+            "suite": "custom-pytest",
+            "seconds": 274.055069753
+          },
+          {
+            "revision": "5f84b6c763b9aa185ed4e169a63b058a4cbce3d9",
+            "run_id": 40477003765,
+            "artifact_id": 12722625581,
+            "shard": 8,
+            "suite": "aol-lifecycle",
+            "seconds": 266.7861787670016,
+            "results_sha256": "ab0b19b17563bd052360b59cac490415407f5c0196fa3762219a960e3a426cc1"
+          }
+        ]
       }
     }
   },

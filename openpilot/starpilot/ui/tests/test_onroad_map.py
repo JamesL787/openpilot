@@ -185,7 +185,7 @@ def test_phone_map_keeps_moving_between_delayed_fixes(tmp_path):
     overlay.close()
 
 
-@pytest.mark.parametrize('speed, bearing', [(0., 90.), (20., None)])
+@pytest.mark.parametrize('speed, bearing', [(0., 90.), (20., None), (float('nan'), 90.)])
 def test_phone_map_hold_does_not_invent_stationary_or_unknown_heading_movement(tmp_path, speed, bearing):
   overlay = MapOverlay(tmp_path)
   try:

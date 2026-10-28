@@ -151,7 +151,7 @@ class TestEv6ConfiguredDesire(unittest.TestCase):
         self.assertEqual(owner.physical.authorized, lkas_action == AOL_TOGGLE)
         self.assertFalse(owner.allowed_latch)  # Physical release alone never forces desire.
         self.sample(owner, [], active=True)
-        self.assertEqual(owner.allowed_latch, lkas_action == AOL_TOGGLE)
+        self.assertTrue(owner.allowed_latch)  # A successful fresh full engagement arms either configured mode.
 
   def test_raw_manual_off_wins_over_full_engagement_without_net_button_event(self):
     owner = self.owner(main=AOL_TOGGLE)

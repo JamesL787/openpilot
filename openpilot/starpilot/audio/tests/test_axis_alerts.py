@@ -77,7 +77,7 @@ def test_park_lkas_producer_wire_and_sound(audio):
                          slc_replay=False, curve_replay=False, conditional_replay=False,
                          last_actuators_output=car.CarControl.Actuators.new_message(), can_rcv_cum_timeout_counter=0,
                          rk=SimpleNamespace(remaining=0), aol_replay=True, aol_qualified=True, aol_sequence=0,
-                         slc_producer_session='card', aol_card_intent=owner, v_cruise_helper=SimpleNamespace(slc_cruise_change=None))
+                         slc_producer_session='card', aol_card_intent=owner, v_cruise_helper=SimpleNamespace(slc_cruise_change=None, toyota=None))
   card = Car.__new__(Car)
   card.__dict__.update(vars(fields))
   initialize_publication_sources(card)

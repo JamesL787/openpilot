@@ -1,3 +1,4 @@
+import { settingControl } from "../web/js/galaxy-setting-row.js"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { AndroidAutoFeed, AndroidAutoPage, validPairingStatus, validPromptInput, uploadPackage, uploadTimeout,
@@ -18,7 +19,7 @@ assert.equal(validPromptInput({ kind: "passkey" }, "1234567"), false)
 assert.equal(validPromptInput(prompt, ""), true)
 assert.match(AndroidAutoPage.template, /Check that this code matches your car/)
 assert.match(AndroidAutoPage.template, /Cancel Search \/ Pairing/)
-assert.match(AndroidAutoPage.template, /:row="wiredRow"[^>]*:disabled="wiredDisabled"/)
+assert.doesNotMatch(AndroidAutoPage.template, /:row="wiredRow"/)
 assert.match(AndroidAutoPage.template, /Read the Android Auto troubleshooting guide/)
 assert.doesNotMatch(AndroidAutoPage.template, /v-html|autoaccept/i)
 const app = readFileSync(new URL("../web/js/app.js", import.meta.url), "utf8")
@@ -160,23 +161,24 @@ function page(selectedSetup = setup) {
   for (const [key, method] of Object.entries(AndroidAutoPage.methods)) vm[key] = method.bind(vm)
   return vm
 }
-// Wired setup is available, while the existing parked/session/ownership gates remain enforced.
 const wiredSetup = page()
-wiredSetup.runtime = { connection: "wireless", running: false }
-assert.equal(wiredSetup.wiredDisabled, false)
-for (const field of ["enabled", "parked"]) {
-  const blocked = page({ ...setup, [field]: false })
-  assert.equal(blocked.wiredDisabled, true, field)
-}
-wiredSetup.pairing = { active: true }
-assert.equal(wiredSetup.wiredDisabled, true, "pairing owns the connection")
-wiredSetup.pairing = null
-wiredSetup.runtime.running = true
-assert.equal(wiredSetup.wiredDisabled, true, "a running session cannot change connection")
-wiredSetup.runtime = { connection: "wireless", running: false, wired_blocked: "USB is busy" }
-assert.equal(wiredSetup.wiredDisabled, true, "another USB owner blocks enabling wired mode")
-wiredSetup.runtime.connection = "wired"
-assert.equal(wiredSetup.wiredDisabled, false, "the existing wired connection can still be disabled")
+wiredSetup.runtime = { connection: "wired", running: false, wired_busy: "Turn off Jetlink to use wired Android Auto" }
+assert.equal(wiredSetup.wiredJetlinkBusy, true)
+assert.equal(wiredSetup.wiredStatus.tone, "expired")
+assert.equal(wiredSetup.wiredStatus.label, "Wired Android Auto not enabled")
+assert.match(wiredSetup.connectReason, /Jetlink/)
+assert.match(AndroidAutoPage.template, /class="gx-link" href="#\/manage_models"/)
+assert.match(AndroidAutoPage.template, /bi-arrow-right/)
+wiredSetup.runtime.wired_busy = ""
+assert.equal(wiredSetup.wiredStatus.tone, "ready")
+assert.equal(wiredSetup.wiredStatus.label, "Wired Android Auto enabled")
+assert.equal(wiredSetup.connectReason, "")
+wiredSetup.runtime.wired_blocked = "USB is unavailable"
+assert.equal(wiredSetup.wiredStatus.tone, "expired")
+assert.equal(wiredSetup.connectReason, "USB is unavailable")
+wiredSetup.runtime.wired_blocked = ""
+wiredSetup.setup.enabled = false
+assert.equal(wiredSetup.wiredStatus.tone, "expired")
 
 const uploadPage = page({ ...setup, enabled: false })
 const uploadCalls = []
@@ -473,3 +475,79 @@ const audioTool = catalog.tools.find(tool => tool.path === "/android-auto").chil
 assert.equal(audioTool.name, "Spotify and Phone Audio")
 assert.match(AndroidAutoPage.template, /href="#\/android-auto\/audio"/)
 assert.ok(app.includes(`SpotifyPage v-else-if="['/android-auto/audio', '/spotify'].includes(route.path)"`))
+// Setup type: what is in the car decides which pairing steps appear.
+const typed = page(setup)
+assert.equal(typed.carType, 'builtin', 'built-in wireless is the default')
+typed.runtime = { car_type: 'adapter' }
+assert.equal(typed.adapterSetup, true)
+assert.equal(typed.pairsHere, true)
+assert.equal(typed.findLabel, 'adapter')
+typed.runtime = { car_type: 'usb' }
+assert.equal(typed.pairsHere, false, 'a USB cable needs no Bluetooth pairing')
+typed.runtime = { running: false, connection: 'wired' }
+assert.equal(typed.carType, 'usb', 'older daemons without car_type still follow the connection')
+typed.runtime = { connection: 'headunitpad' }
+assert.equal(typed.carType, 'app')
+const typedCalls = []
+typed.control = (action, extra) => typedCalls.push([action, extra])
+typed.saveCarType(0, 'Wireless adapter')
+typed.saveCarType(0, 'Not a type')
+assert.deepEqual(typedCalls, [['car_type', { carType: 'adapter' }]])
+assert.deepEqual(new Set(page(setup).carTypeRow.choices), new Set(['Built-in wireless', 'Wireless adapter', 'Wired AA', 'App']))
+// A blocked wired port explains itself instead of silently refusing the pick.
+const blocked = page(setup)
+blocked.feed = { error: '', emit() {} }
+blocked.runtime = { car_type: 'builtin', wired_blocked: 'Turn off Jetlink to use wired Android Auto' }
+assert.equal(blocked.wiredUnavailable, true)
+const blockedCalls = []
+blocked.control = (action, extra) => blockedCalls.push([action, extra])
+assert.equal(blocked.saveCarType(0, 'Wired AA'), false)
+assert.deepEqual(blockedCalls, [])
+assert.match(blocked.feed.error, /Turn off Jetlink/)
+blocked.runtime = { car_type: 'usb', connection: 'wired', wired_blocked: 'Turn off Jetlink to use wired Android Auto' }
+assert.equal(blocked.wiredUnavailable, false, 'already wired: the pick is not blocked')
+// The line names the chosen tablet app.
+const named = page(setup)
+named.runtime = { car_type: 'app', connection: 'openheadunit' }
+assert.equal(named.carTypeRow.value, 'App (Open Headunit)')
+assert.ok(named.carTypeRow.choices.includes('App (Open Headunit)'))
+const namedCalls = []
+named.control = (action, extra) => namedCalls.push([action, extra])
+named.saveCarType(0, 'Wireless adapter')
+assert.deepEqual(namedCalls, [['car_type', { carType: 'adapter' }]])
+// The adapter model picks the AAWireless tuning; any other adapter keeps the regular pairing.
+const dongle = page(setup)
+dongle.runtime = { car_type: 'adapter', car_profile: 'default', car_profile_source: 'standard' }
+assert.equal(dongle.adapterRow.value, 'Choose one', 'no default: the owner picks')
+assert.equal(settingControl(dongle.adapterRow), 'select', 'the initial adapter prompt must open a picker')
+assert.match(dongle.pairingReason, /adapter model/)
+dongle.runtime = { car_type: 'adapter', car_profile: 'default', car_profile_source: 'override' }
+assert.equal(dongle.adapterRow.value, 'Other')
+assert.deepEqual(dongle.adapterRow.choices, ['AAWireless', 'Other'])
+dongle.runtime = { car_type: 'adapter', car_profile: 'aawireless', car_profile_source: 'override' }
+assert.equal(dongle.adapterRow.value, 'AAWireless')
+const dongleCalls = []
+dongle.control = (action, extra) => dongleCalls.push([action, extra])
+dongle.saveAdapter(0, 'Other')
+dongle.saveAdapter(0, 'AAWireless')
+assert.deepEqual(dongleCalls, [['car_profile', { profile: 'default' }], ['car_profile', { profile: 'aawireless' }]])
+assert.match(AndroidAutoPage.template, /adapterSetup" :row="adapterRow"/)
+assert.match(AndroidAutoPage.template, /What’s in your car\?|carTypeRow/)
+assert.match(AndroidAutoPage.template, /runtime\?\.pairing_note/)
+assert.match(AndroidAutoPage.template, /'Find ' \+ findLabel/)
+// A session that is only waiting or retrying never locks the pickers or Find; it is stopped first.
+const idle = page(setup)
+idle.runtime = { car_type: 'builtin', running: true, state: 'backoff' }
+assert.equal(idle.appDisabled, false)
+assert.equal(idle.pairingReason, '')
+idle.runtime = { car_type: 'builtin', running: true, state: 'streaming' }
+assert.equal(idle.appDisabled, true)
+assert.match(idle.pairingReason, /Disconnect/)
+// The home card offers the setup type; the app picker belongs to App only.
+assert.match(AndroidAutoPage.template, /v-if="app" :row="appRow"/)
+assert.equal(page(setup).homeTitle, 'car')
+const wiredHome = page(setup); wiredHome.runtime = { car_type: 'usb', connection: 'wired' }
+assert.equal(wiredHome.homeTitle, 'Wired Android Auto')
+const appHome = page(setup); appHome.runtime = { car_type: 'app', connection: 'headunitpad' }
+assert.equal(appHome.homeTitle, 'Headunit Emulator')
+console.log('Android Auto page: setup type, adapter checklist and adapter model passed')

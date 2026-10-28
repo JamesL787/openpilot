@@ -36,6 +36,7 @@ class Ev6CardIntent(AolCardIntent):
     self._acc_faulted = False
     self._controller_override = None
     self._engagement_manual_withdrawal = False
+    self._full_engagement_release_ns = 0
 
   def observe_physical_samples(self, state, *, now_ns):
     stamp = int(state.ev6_aol_sample_stamp_ns)
@@ -86,6 +87,7 @@ class Ev6CardIntent(AolCardIntent):
       self.allowed_latch = False
       self._last_latch_edge_ns = 0
       self._raw_neutral_seen = False
+      self._full_engagement_release_ns = 0
     lkas_managed = self.settings.enabled and self.settings.lkas_action == AOL_TOGGLE
     main_managed = self.settings.main_action == AOL_TOGGLE
     auto_main = self.settings.enabled and not lkas_managed and not main_managed
@@ -106,7 +108,12 @@ class Ev6CardIntent(AolCardIntent):
         self._engagement_manual_withdrawal |= main_press or lkas_press
         engagement_release = (self.physical.lkas_on_engage and cruise != previous_cruise
                               and previous_cruise in (Buttons.SET_DECEL, Buttons.RES_ACCEL))
-        if main_press or lkas_press or engagement_release:
+        if main_press or lkas_press or cruise == Buttons.CANCEL:
+          self._full_engagement_release_ns = 0
+        if (not main and not lkas and cruise == Buttons.NONE and cruise != previous_cruise
+            and previous_cruise in (Buttons.SET_DECEL, Buttons.RES_ACCEL)):
+          self._full_engagement_release_ns = now_ns
+        if main_press or lkas_press or engagement_release or self._full_engagement_release_ns == now_ns:
           # Fresh physical authorization never forces configured desired intent.
           self._last_latch_edge_ns = now_ns
         if main_press and int(ButtonType.mainCruise) not in consumed_buttons:
@@ -125,6 +132,13 @@ class Ev6CardIntent(AolCardIntent):
     self._samples = ()
 
   def _arm_from_full_engagement(self, CS, *, source_ns):
+    # Successful ordinary engagement may claim its fresh physical SET/RES
+    # release. A release alone, held startup input or delayed ACK cannot arm.
+    if (self._buttons_current and not self._fault_inhibit and not self._acc_faulted and not self.pause_lateral
+        and self._controller_override is not False
+        and 0 < self._full_engagement_release_ns <= source_ns <= self._full_engagement_release_ns + 200_000_000):
+      self.physical.lkas_on = True
+      self._full_engagement_release_ns = 0
     if (self._buttons_current and self.physical.authorized and self._last_latch_edge_ns > 0
         and self._controller_override is not False and not self._acc_faulted and not self.pause_lateral):
       # Keep the raw physical edge credit; host engagement cannot manufacture it.

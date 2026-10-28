@@ -334,6 +334,8 @@ class NavigationOwner:
     result = {key: document[key] for key in ('enabled', 'destination', 'recents', 'revision')}
     result.update({key: document[key] for key in ROUTE_AVOIDANCES})
     result['gpsSource'] = document['gpsSource']
+    from openpilot.starpilot.gps.phone import phone_gps_status
+    result['phoneGps'] = phone_gps_status()
     # Home and Work lead, then places in the order they were saved.
     result['favorites'] = sorted(document['favorites'], key=lambda row: FAVORITE_LABELS.index(row['label']) if 'label' in row else 2)
     from openpilot.starpilot.navigation.mapbox_budget import read_usage
@@ -513,10 +515,13 @@ class NavigationOwner:
     token = self.read()['token']
     if not token:
       raise ValidationError('Add your Mapbox access token first')
-    # Address results are saved in favorites and recents, so request permanent geocoding.
-    self.geocode_budget.spend(enforce=False)
+    from openpilot.starpilot.navigation.mapbox_budget import BudgetExhausted
+    try:
+      self.geocode_budget.spend()
+    except BudgetExhausted as error:
+      raise ValidationError(str(error)) from None
     data = response_json(self.session, 'https://api.mapbox.com/search/geocode/v6/forward',
-                         {'q': query.strip(), 'access_token': token, 'limit': 8, 'autocomplete': 'false', 'permanent': 'true', **self._search_context()})
+                         {'q': query.strip(), 'access_token': token, 'limit': 8, 'autocomplete': 'false', 'permanent': 'false', **self._search_context()})
     results = []
     features = data.get('features')
     if not isinstance(features, list):

@@ -73,6 +73,8 @@ def api(tmp_path):
       self.running = False
       self.auto_connect = False
       self.connection = 'wireless'
+      self.car_type = 'builtin'
+      self.profile = ''
       self.available = True
       self.stop_error = False
       self.stop_completes = True
@@ -82,7 +84,7 @@ def api(tmp_path):
       if command == 'status':
         return {'status': {'receiver_address': self.receiver, 'receiver_name': 'My car', 'state': 'streaming' if self.running else 'idle',
                            'running': self.running, 'auto_connect': self.auto_connect, 'pairing_ready': False,
-                           'connection': self.connection}}
+                           'connection': self.connection, 'car_type': self.car_type}}
       if command == 'devices':
         return {'devices': [{'address': 'AA:BB:CC:DD:EE:FF', 'name': 'Saved car', 'paired': True, 'android_auto': True}]}
       if command == 'select_receiver':
@@ -91,6 +93,10 @@ def api(tmp_path):
         self.auto_connect = kwargs['enabled']
       if command == 'set_connection':
         self.connection = kwargs['connection']
+      if command == 'set_car_type':
+        self.car_type = kwargs['car_type']
+      if command == 'set_car_profile':
+        self.profile = kwargs['profile']
       if command == 'start':
         self.running = True
       if command == 'stop':
@@ -425,6 +431,29 @@ def test_wired_connection_requires_park_but_not_a_paired_receiver(api, connectio
   code, result, _ = request('POST', '/api/android-auto/control', json.dumps({'action': 'start'}), cookie=cookie,
                             content_type='application/json')
   assert code == 409 and result['error'] == 'Verify your Android Auto package first'
+
+
+def test_setup_type_and_car_profile_need_park_and_valid_values(api):
+  request, _, state, client = api
+  code, _, headers = request('POST', '/api/auth/login', json.dumps({'password': 'password123'}),
+                             content_type='application/json')
+  assert code == 200
+  cookie = headers['Set-Cookie'].split(';', 1)[0]
+
+  def post(body):
+    return request('POST', '/api/android-auto/control', json.dumps(body), cookie=cookie, content_type='application/json')
+
+  state['parked'] = False
+  assert post({'action': 'car_type', 'carType': 'adapter'})[0] == 403
+  assert post({'action': 'car_profile', 'profile': 'default'})[0] == 403
+  state['parked'] = True
+  code, result, _ = post({'action': 'car_type', 'carType': 'adapter'})
+  assert code == 200 and result['status']['car_type'] == 'adapter'
+  assert post({'action': 'car_type', 'carType': 'hovercraft'})[0] == 400
+  assert post({'action': 'car_type', 'carType': 'usb', 'extra': 1})[0] == 400
+  assert post({'action': 'car_profile', 'profile': 'default'})[0] == 200 and client.profile == 'default'
+  assert post({'action': 'car_profile', 'profile': ''})[0] == 200 and client.profile == ''
+  assert post({'action': 'car_profile', 'profile': 'not-a-profile'})[0] == 400
 
 
 def test_local_enable_then_upload_bundle_preserves_binary_bytes(api):

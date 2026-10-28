@@ -19,6 +19,9 @@ def test_eps73_advert_actual_cold_callers(candidate,stock,host_heartbeat_bridge)
     frames=helpers.physical(packer,**fields)
     assert len(next(data for address,data,bus in frames if address==0x262 and bus==0))==8
     frames.extend(((0x2FF,bytes.fromhex('80007409'),0),(0x2FF,bytes.fromhex('80007409'),2)))
+    # Route 16c1c1b1b2152da0/00000001--a0679e3a1b: after the
+    # safety handoff, forwarded four-byte advertisements return on bus 130.
+    frames.extend((address,data,bus+128) for address,data,bus in list(frames) if bus == 2 or address == 0x2FF)
     return frames
 
   def observe(tick,host,cs,cc,safety,native):

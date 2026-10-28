@@ -37,7 +37,7 @@ class MainLayout(Widget):
       MainState.HOME: self._home_layout,
       MainState.SETTINGS: SettingsLayout(on_open_arabesque=self._open_arabesque, arabesque_available=self._arabesque_allowed),
       MainState.ONROAD: AugmentedRoadView(),
-      MainState.ARABESQUE: ArabesqueLayout(self._exit_arabesque),
+      MainState.ARABESQUE: ArabesqueLayout(self._exit_arabesque, self._arabesque_allowed),
     }
 
     self._sidebar_rect = rl.Rectangle(0, 0, 0, 0)

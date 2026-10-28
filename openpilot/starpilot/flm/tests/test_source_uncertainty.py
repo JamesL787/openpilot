@@ -1,4 +1,5 @@
 """Actual source reader/parent loop; synthetic transport, no fitted admission."""
+from openpilot.starpilot.flm.tests._drain_fixture import separate_drain_fixture
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
@@ -134,7 +135,7 @@ def exercise(recovery=None, *, publication_uncertain=False, publication_only_rec
   persistence, publisher = mock.Mock(), mock.Mock()
   persistence.save_current.side_effect = lambda *args, **kwargs: saves.append(phase[0])
   publisher.send.side_effect = send
-  with mock.patch.object(steerlearnerd, 'drain', drain), \
+  with mock.patch.object(steerlearnerd, 'drain_pair', separate_drain_fixture(drain)), \
        mock.patch.object(steerlearnerd, 'FullrateCollector', side_effect=factory), \
        mock.patch('openpilot.starpilot.flm.native_health.current_native_health', return_value=True):
     with pytest.raises(StopIteration):

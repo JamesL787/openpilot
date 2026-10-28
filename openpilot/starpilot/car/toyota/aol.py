@@ -17,14 +17,15 @@ AOL_WORDS = frozenset((
   0x8042, 0x8242, 0xC042, 0xC242, 0xD049, 0xD249,
   0xC049, 0xC249,
   0x9449, 0x9549, 0x9558, 0x9564, 0x9649, 0x9749, 0x9758, 0x9764, 0xD44D, 0xD549, 0xD64D, 0xD749,
-  73, 585, 856, 4169, 4681, 2121, 0x9049, 0x9249,
+  0x5249, 0x5349, 0x5358, 0x5364, 0x564D, 0x5749, 0x6242, 0x6249,
+  73, 585, 856, 4169, 4681, 2121, 2633, 6217, 0x9049, 0x9249,
   0xB049, 0xB249, 0x2449, 0x2649, 0x2049, 0x2249, 0x424D, 0x449, 0x649, 0x1449, 0x1649,
   0x8049, 0x8249, 0x8449, 0x8649, 0x9158, 0x9358, 0x9149,
   0x9349, 0x9164, 0x9364, 0xd149, 0xd349, 0xd04d, 0xd24d,
 ))
 
 
-SECOC_TORQUE_CARS = frozenset((CAR.TOYOTA_SIENNA_4TH_GEN,))
+SECOC_TORQUE_CARS = frozenset((CAR.TOYOTA_SIENNA_4TH_GEN, CAR.TOYOTA_RAV4_PRIME, CAR.TOYOTA_YARIS))
 RADAR_TORQUE_CARS = frozenset((CAR.TOYOTA_CHR_TSS2, CAR.TOYOTA_RAV4_TSS2_2022))
 CAMERA_TORQUE_CARS = frozenset((
   CAR.TOYOTA_ALPHARD_TSS2, CAR.TOYOTA_AVALON_TSS2, CAR.TOYOTA_CAMRY_TSS2, CAR.TOYOTA_COROLLA_TSS2,
@@ -35,18 +36,25 @@ CAMERA_TORQUE_CARS = frozenset((
 
 
 def secoc_qualified(cp, *, marked_only=False):
+  radar = cp is not None and cp.carFingerprint == CAR.TOYOTA_YARIS
   required = ToyotaFlags.TSS2 | ToyotaFlags.NO_DSU | ToyotaFlags.SECOC | ToyotaFlags.RAISED_ACCEL_LIMIT
+  if radar:
+    required |= ToyotaFlags.RADAR_ACC
+    if cp.openpilotLongitudinalControl:
+      required |= ToyotaFlags.DISABLE_RADAR
   allowed = required | ToyotaFlags.HYBRID | ToyotaFlags.HAS_BSM
   if (cp is None or cp.brand != 'toyota' or cp.carFingerprint not in SECOC_TORQUE_CARS or
-      cp.notCar or cp.passive or cp.dashcamOnly or not cp.pcmCruise or not cp.openpilotLongitudinalControl or
+      cp.notCar or cp.passive or cp.dashcamOnly or not cp.pcmCruise or (not cp.openpilotLongitudinalControl and not radar) or
       not cp.secOcRequired or not cp.secOcKeyAvailable or
       cp.steerControlType != structs.CarParams.SteerControlType.torque or len(cp.safetyConfigs) != 1 or
       cp.alternativeExperience not in ((32,) if marked_only else (0, 32)) or
       cp.flags & required != required or int(cp.flags) & ~int(allowed)):
     return False
   config = cp.safetyConfigs[0]
+  mode = (ToyotaSafetyFlags.SECOC_RADAR_LONG if cp.openpilotLongitudinalControl else
+          ToyotaSafetyFlags.SECOC | ToyotaSafetyFlags.STOCK_LONGITUDINAL) if radar else ToyotaSafetyFlags.SECOC
   return (config.safetyModel == structs.CarParams.SafetyModel.toyota and
-          config.safetyParam == EPS_SCALE[cp.carFingerprint] | int(ToyotaSafetyFlags.SECOC))
+          config.safetyParam == EPS_SCALE[cp.carFingerprint] | int(mode))
 
 
 def lexus_is_qualified(cp, *, marked_only=False):
@@ -105,6 +113,9 @@ def stock_prius_retrofit_qualified(cp, *, marked_only=False):
 
 
 def qualified(cp, *, marked_only=False):
+  from opendbc.car.toyota import stock_aol
+  if stock_aol.configured(cp):
+    return cp.alternativeExperience in ((32,) if marked_only else (0, 32))
   from opendbc.car.toyota.pedal_composite import hold_base_cp
   base = hold_base_cp(cp)
   if base is not cp:
@@ -206,7 +217,7 @@ def retain_on_native_denial(cp, native, state):
   gears = structs.CarState.GearShifter
   return bool(state is not None and qualified(cp, marked_only=True) and state.canValid and not state.canTimeout and
               not state.steerFaultPermanent and
-              (state.gearShifter not in (gears.drive, gears.sport, gears.low) or state.steerFaultTemporary or state.vehicleSensorsInvalid))
+              (state.gearShifter not in (gears.drive, gears.sport, gears.low, gears.brake) or state.steerFaultTemporary or state.vehicleSensorsInvalid))
 
 
 class ToyotaCardIntent(AolCardIntent):
@@ -231,3 +242,29 @@ def configuration_settings_policy(cp):
       cp.steerControlType == structs.CarParams.SteerControlType.torque):
     return AolVehiclePolicy(settings_supported=True, fixed_cruise_buttons=True, distance_pause_only=True)
   return None
+
+
+def held_lateral_pedal(owner, cs):
+  """An already accepted pedal may retain LAT intent, never stale output."""
+  from math import isfinite
+  from openpilot.starpilot.nostalgia import physical_cancel
+  anchor = getattr(owner, 'aol_ordinary_source_anchor', None)
+  settings = getattr(owner, 'aol_settings', None)
+  if not qualified(owner.CP, marked_only=True) or anchor is None:
+    return False
+  proof, native, accepted, _, state = anchor
+  return bool(cs is state and not getattr(owner, 'car_state_samples', ()) and
+    proof[8] and not proof[9] and not owner.enabled and not owner.active and
+    native is not None and native.requestedLateral and native.lateralAllowed and
+    not native.requestedLongitudinal and not native.longitudinalAllowed and
+    accepted is not None and accepted.allowedLatch and accepted.lateralArmed and
+    accepted.settingsQualified and not accepted.pauseLateral and not accepted.pauseLongitudinal and
+    settings is not None and settings.enabled and
+    not getattr(owner, 'aol_dm_lateral_inhibit', False) and
+    cs.brakePressed != cs.gasPressed and not cs.regenBraking and
+    cs.cruiseState.available and not cs.cruiseState.enabled and
+    cs.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.sport,
+                       structs.CarState.GearShifter.low, structs.CarState.GearShifter.brake) and
+    isfinite(cs.vEgoRaw) and isfinite(cs.vEgo) and
+    (not cs.brakePressed or cs.standstill or cs.vEgo >= settings.pause_brake_mps) and
+    not cs.seatbeltUnlatched and not physical_cancel(cs, owner.CP))
