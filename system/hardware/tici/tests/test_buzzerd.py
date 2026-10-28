@@ -27,11 +27,11 @@ class TestBuzzerd:
     assert writes == [(f"{GPIO_DIR}/value", v) for _ in range(3) for v in ("1", "0")]
 
   def test_only_warning_alerts_beep(self, mocker):
-    for alert in (AudibleAlert.refuse, AudibleAlert.prompt, AudibleAlert.warningSoft):
+    for alert in (AudibleAlert.refuse, AudibleAlert.prompt, AudibleAlert.warningSoft, AudibleAlert.warningImmediate):
       b, writes = self._buzzer(mocker)
       b.update_alert(alert)
       assert len(writes) == 6
-    for alert in (AudibleAlert.engage, AudibleAlert.disengage, AudibleAlert.warningImmediate, AudibleAlert.none):
+    for alert in (AudibleAlert.engage, AudibleAlert.disengage, AudibleAlert.none):
       b, writes = self._buzzer(mocker)
       b.update_alert(alert)
       assert writes == []

@@ -16,7 +16,7 @@ BUZZER_GPIO = 42
 GPIO_ROOT = "/sys/class/gpio"
 GPIO_DIR = f"{GPIO_ROOT}/gpio{BUZZER_GPIO}"
 
-WARNING_ALERTS = (AudibleAlert.refuse, AudibleAlert.prompt, AudibleAlert.warningSoft)
+WARNING_ALERTS = (AudibleAlert.refuse, AudibleAlert.prompt, AudibleAlert.warningSoft, AudibleAlert.warningImmediate)
 WARNING_PULSES = 3
 PULSE_S = 0.01
 
