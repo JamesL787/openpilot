@@ -58,8 +58,17 @@ class TestHondaCurrentCaller(unittest.TestCase):
   def test_relay_fault_during_recovered_reverse(self):
     self.run_current_caller(candidate=CAR.HONDA_CIVIC_BOSCH, word=0, fault='relay')
 
+  # A hard driver override raises the EPS temporary fault while the driver still holds the wheel. selfdrived skips
+  # steerTempUnavailable while steering is pressed, so the latch must not depend on that event (Clarity
+  # 00000055--32067800c4 seg 9 32.4 s, 00000056--c3fdf28de7 seg 5 58.4 s: lateral waited for an LKAS press).
+  def test_nidec_civic_temporary_eps_during_override(self):
+    self.run_current_caller(candidate=CAR.HONDA_CIVIC, word=0, override=True)
+
+  def test_classic_civic_temporary_eps_during_override(self):
+    self.run_current_caller(candidate=CAR.HONDA_CIVIC_BOSCH, word=0, override=True)
+
   def run_current_caller(self, *, candidate, word, fault=None, alternate_brake=False, alpha=False, speed_mps=12.5,
-                         pedal=False, host_scenario=None, serialized=False):
+                         pedal=False, host_scenario=None, serialized=False, override=False):
     safety = libsafety_py.libsafety
     with (
       OpenpilotPrefix(),
@@ -163,6 +172,7 @@ class TestHondaCurrentCaller(unittest.TestCase):
             eps=6 if 80 <= tick < 95 else 0,
             gear=2 if 110 <= tick < 125 else None,
             lkas=0, speed_kph=speed_mps * 3.6,
+            steer_torque=3000 if override and 78 <= tick < 97 else 0,
           )
           safety.set_timer((now // 1000) & 0xFFFF_FFFF)
           if tick == 110 and fault == 'relay':
