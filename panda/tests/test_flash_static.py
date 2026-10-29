@@ -4,6 +4,8 @@ import pytest
 
 from panda import Panda
 from panda.python.constants import McuType
+from panda.python.spi import PandaSpiHandle
+from panda.python.usb import PandaUsbHandle
 
 
 def _handle():
@@ -50,3 +52,25 @@ def test_the_remapped_type_is_an_f4():
   panda._handle.controlRead.return_value = b"\x05"
   panda._bcd_hw_type = None
   assert panda.get_mcu_type() == McuType.F4
+
+
+def _panda(reply, bootstub, usb):
+  panda = Panda.__new__(Panda)
+  panda._handle = MagicMock(spec=PandaUsbHandle if usb else PandaSpiHandle)
+  panda._handle.controlRead.return_value = reply
+  panda._bcd_hw_type = None
+  panda.bootstub = bootstub
+  return panda
+
+
+def test_unknown_usb_bootstub_is_a_dos():
+  # MR.ONE clone bootstub on an UNO-strapped board
+  panda = _panda(Panda.HW_TYPE_UNKNOWN, bootstub=True, usb=True)
+  assert panda.get_type() == Panda.HW_TYPE_DOS
+  assert panda.get_mcu_type() == McuType.F4
+
+
+@pytest.mark.parametrize("bootstub,usb", [(False, True), (True, False)])
+def test_unknown_stays_unknown_outside_a_usb_bootstub(bootstub, usb):
+  panda = _panda(Panda.HW_TYPE_UNKNOWN, bootstub=bootstub, usb=usb)
+  assert panda.get_type() == Panda.HW_TYPE_UNKNOWN

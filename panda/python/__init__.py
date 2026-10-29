@@ -634,6 +634,11 @@ class Panda:
     if ret == b'\x05':
       ret = Panda.HW_TYPE_DOS
 
+    # MR.ONE clone bootstubs only detect the DOS straps, so on their UNO-strapped boards they report
+    # UNKNOWN; without this the reflash can't reconnect to the bootstub and leaves the panda in it
+    if ret == Panda.HW_TYPE_UNKNOWN and self.bootstub and self.is_connected_usb():
+      ret = Panda.HW_TYPE_DOS
+
     return ret
 
   # Returns tuple with health packet version and CAN packet/USB packet version

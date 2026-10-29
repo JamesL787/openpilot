@@ -18,6 +18,10 @@ void detect_board_type(void) {
   if (!detect_with_pull(GPIOB, 1, PULL_UP) && !detect_with_pull(GPIOB, 7, PULL_UP)) {
     hw_type = HW_TYPE_DOS;
     current_board = &board_dos;
+  } else if (!detect_with_pull(GPIOB, 15, PULL_UP)) {
+    // comma 3 clone boards (MR.ONE "lite") carry the old UNO straps but are wired as a DOS
+    hw_type = HW_TYPE_DOS;
+    current_board = &board_dos;
   }
 
   // Return A13 to the alt mode to fix SWD
