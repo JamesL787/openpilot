@@ -14,13 +14,13 @@ class TestModelGeometry(unittest.TestCase):
     stock = {'road': [medmodel_fl, 0.5 * MEDMODEL_INPUT_SIZE[0], MEDMODEL_CY],
              'wide': [sbigmodel_fl, 0.5 * MEDMODEL_INPUT_SIZE[0], 0.5 * (256 + MEDMODEL_CY)]}
     for geometry in (stock, json.dumps(stock)):
-      road, wide = model_frame_corrections(geometry)
+      road, wide = model_frame_corrections(geometry)  # ty: ignore[not-iterable]
       np.testing.assert_allclose(road, np.eye(3), atol=1e-5)
       np.testing.assert_allclose(wide, np.eye(3), atol=1e-5)
 
   def test_student_geometry_maps_its_centre_to_the_stock_frame(self):
     # The G1b students' metadata: road 768x448 at fl 910, wide at fl 455.
-    road, _ = model_frame_corrections({'road': [910.0, 384.0, 239.6], 'wide': [455.0, 384.0, 343.8]})
+    road, _ = model_frame_corrections({'road': [910.0, 384.0, 239.6], 'wide': [455.0, 384.0, 343.8]})  # ty: ignore[not-iterable]
     centre = road @ np.array([384.0, 239.6, 1.0])  # the student's principal point lands on the stock one
     np.testing.assert_allclose(centre[:2] / centre[2], [0.5 * MEDMODEL_INPUT_SIZE[0], MEDMODEL_CY], atol=1e-3)
 

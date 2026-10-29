@@ -5,8 +5,7 @@ import numpy as np
 import pytest
 
 from openpilot.common.logging_extra import json_robust_dumps
-from openpilot.selfdrive.locationd.lateral_timing import (BandLearner, AimLearner, Streams, TimingLearner, find_turns,
-                                                           frame_aims, size_correction, slow_composite, ema_delay,
+from openpilot.selfdrive.locationd.lateral_timing import (BandLearner, AimLearner, TimingLearner, frame_aims, size_correction, slow_composite, ema_delay,
                                                            FREEZE_TURNS, MONITOR_TURNS, AIM_FREEZE_FRAMES, T_IDXS)
 from openpilot.selfdrive.locationd.lateral_timingd import LateralTimingRunner, model_key, CARSTATE_LATENCY_S
 
@@ -34,18 +33,19 @@ def drive(duration=200.0, t_start=1000.0):
   rows = []
   tc = t_start + np.arange(0, duration, 0.01)
   tm = t_start + np.arange(0, duration, 0.05)
-  k = lambda t: curvature(t - t_start)
-  for t, a in zip(tm, k(tm)):
+  def k(t):
+    return curvature(t - t_start)
+  for t, a in zip(tm, k(tm), strict=True):
     row = [a * V] * 33
     rows.append(("modelV2", t, NS(timestampEof=int((t - 0.05) * 1e9), action=NS(desiredCurvature=float(a)),
                                   orientation=NS(z=[a * V * T for T in T_IDXS]), orientationRate=NS(z=row), velocity=NS(x=[V] * 33))))
   # the car side is continuous (controlsd ramps the action across each frame); the published action is held
   C = k(tc - RAMP)
   tgt = k(tc - RAMP - CMD) * RATIO
-  ang = k(tc - RAMP - CMD - TW) * RATIO
+  angle = k(tc - RAMP - CMD - TW) * RATIO
   yaw = k(tc - CARSTATE_LATENCY_S - RAMP - CMD - TW - WY) * V   # carState carries the CAN yaw sample from before it
   for i, t in enumerate(tc):
-    rows.append(("carState", t, NS(vEgo=V, steeringAngleDeg=float(ang[i]), steeringPressed=False, yawRate=float(yaw[i]))))
+    rows.append(("carState", t, NS(vEgo=V, steeringAngleDeg=float(angle[i]), steeringPressed=False, yawRate=float(yaw[i]))))
     rows.append(("carControl", t, NS(latActive=True)))
     rows.append(("controlsState", t, NS(desiredCurvature=float(C[i]), lateralControlState=NS(
       which=lambda: "pidState", pidState=NS(steeringAngleDesiredDeg=float(tgt[i]))))))
@@ -68,7 +68,7 @@ def run(rows, step_every=None, state=None, drive_id="d1"):
     if step_every is not None and which == "carState":
       r.step(t)
     last = t
-  r.step(last + 10.0, force=True)   # flush: everything is final
+  r.step(last + 10.0, force=True)   # ty: ignore[unsupported-operator]  # flush: everything is final
   return r, logs
 
 
@@ -90,7 +90,7 @@ class TestTurnSearch:
     batch, _ = run(rows)
     stream, _ = run(rows, step_every=True)
     assert len(stream.turns) == len(batch.turns)
-    for a, b in zip(batch.turns, stream.turns):
+    for a, b in zip(batch.turns, stream.turns, strict=True):
       assert b["t0"] == pytest.approx(a["t0"], abs=0.011)
       for k in ("ramp", "tw", "wy", "ay"):
         assert b[k] == pytest.approx(a[k], abs=0.002)
@@ -114,7 +114,7 @@ class TestSlowComposite:
     assert size_correction(30.0 / math.e) == pytest.approx(-0.020)
 
   def test_needs_all_three_stages(self):
-    rec = dict(ramp=0.04, tw=0.06, wy=0.05, tgt_rate=30.0)
+    rec = {"ramp": 0.04, "tw": 0.06, "wy": 0.05, "tgt_rate": 30.0}
     assert slow_composite(rec) == pytest.approx(0.15)
     assert slow_composite({**rec, "tw": None}) is None
 
@@ -132,7 +132,7 @@ class TestBandLearner:
     b = BandLearner()
     events = [b.add(0.15 + rng.normal(0, 0.03), f"d{i % 3}") for i in range(FREEZE_TURNS)]
     assert events[-1] == "frozen" and events.count("frozen") == 1
-    assert b.frozen["value"] == pytest.approx(0.15, abs=0.015)
+    assert b.frozen["value"] == pytest.approx(0.15, abs=0.015)  # ty: ignore[not-subscriptable]
 
   def test_split_halves_must_agree(self):
     b = BandLearner()
@@ -144,9 +144,9 @@ class TestBandLearner:
     for i in range(FREEZE_TURNS):
       b.add(0.15, f"d{i % 3}")
     assert b.state == "frozen"
-    for i in range(MONITOR_TURNS):
+    for _ in range(MONITOR_TURNS):
       assert b.add(0.165, "d4") is None      # 15 ms off: noise, kept
-    assert b.frozen["value"] == pytest.approx(0.15)
+    assert b.frozen["value"] == pytest.approx(0.15)  # ty: ignore[not-subscriptable]
     events = [b.add(0.20, "d5") for _ in range(MONITOR_TURNS)]
     assert events.count("stale") == 1 and b.state == "learning" and b.stale_count == 1
     assert len(b.turns) == MONITOR_TURNS - 1 - events.index("stale")   # learning starts over from the next turn
@@ -156,7 +156,7 @@ class TestTimingLearner:
   def test_car_change_resets_bands_but_keeps_model_aims(self):
     t = TimingLearner({"calibration": "a"})
     for i in range(FREEZE_TURNS):
-      t.add_turn(dict(v=7.0, ramp=0.04, tw=0.06, wy=0.05, tgt_rate=30.0), f"d{i % 3}")
+      t.add_turn({"v": 7.0, "ramp": 0.04, "tw": 0.06, "wy": 0.05, "tgt_rate": 30.0}, f"d{i % 3}")
     t.add_aims("m1", [0.30] * AIM_FREEZE_FRAMES)
     d = t.to_dict()
     same = TimingLearner({"calibration": "a"}, d)
@@ -168,7 +168,7 @@ class TestTimingLearner:
   def test_estimate_sets_the_two_knobs(self):
     t = TimingLearner({})
     for i in range(FREEZE_TURNS):
-      t.add_turn(dict(v=7.0, ramp=0.04, tw=0.06, wy=0.05, tgt_rate=30.0), f"d{i % 3}")
+      t.add_turn({"v": 7.0, "ramp": 0.04, "tw": 0.06, "wy": 0.05, "tgt_rate": 30.0}, f"d{i % 3}")
     t.add_aims("m1", [0.30] * AIM_FREEZE_FRAMES)
     e = t.estimate("m1", "actionHead", 0.033, 0.1, {"5-9": 0.265})
     band = e["bands"]["5-9"]
@@ -198,7 +198,7 @@ class TestAims:
 
 class TestRunner:
   def test_learns_across_drives_and_persists(self):
-    state, saved = None, {}
+    state = None
     for d in range(3):
       r, logs = run(drive(duration=260.0, t_start=1000.0 + 1000 * d), state=state, drive_id=f"d{d}")
       state = r.learner.to_dict()
@@ -225,9 +225,9 @@ def test_rack_converter_matches_rack_map():
   from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse
   from opendbc.car.honda.values import HondaFlags
   inv = next(get_honda_vgr_inverse(f) for f in HondaFlags if get_honda_vgr_inverse(f) is not None)
-  rack = HondaEpsRackMap(2.75, inv, CLARITY_TRW_A020.rack)
+  rack = HondaEpsRackMap(2.75, inv, CLARITY_TRW_A020.rack)  # ty: ignore[invalid-argument-type]
   conv = rack_converter(rack)
-  ang = np.array([-500.0, -120.0, -3.0, 0.0, 2.0, 45.0, 300.0, 600.0])
-  v = np.full(len(ang), 8.0)
-  roll = np.full(len(ang), 0.03)
-  assert conv(ang, v, roll) == pytest.approx([rack.curvature_from_angle(a, 8.0, 0.03) for a in ang], rel=1e-9, abs=1e-12)
+  angle = np.array([-500.0, -120.0, -3.0, 0.0, 2.0, 45.0, 300.0, 600.0])
+  v = np.full(len(angle), 8.0)
+  roll = np.full(len(angle), 0.03)
+  assert conv(angle, v, roll) == pytest.approx([rack.curvature_from_angle(a, 8.0, 0.03) for a in angle], rel=1e-9, abs=1e-12)

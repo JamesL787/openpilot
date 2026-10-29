@@ -124,13 +124,13 @@ def request_big_model_retry(params: Params) -> bool:
   its power) is retried once with an onroad cycle. comma latches it in a ChestnutRetry param; this keeps it in a /dev/shm
   marker instead (no params_keys.h change): at most one retry per 10 minutes, cleared by a successful load."""
   try:
-    if time.time() - os.path.getmtime(CHESTNUT_RETRY_MARKER) < CHESTNUT_RETRY_WINDOW_S:
+    if time.time() - os.path.getmtime(CHESTNUT_RETRY_MARKER) < CHESTNUT_RETRY_WINDOW_S:  # noqa: TID251  # compared with a file mtime
       return False
   except OSError:
     pass
   try:
     with open(CHESTNUT_RETRY_MARKER, "w") as f:
-      f.write(str(time.time()))
+      f.write(str(time.time()))  # noqa: TID251  # wall clock, like the marker's mtime
   except OSError:
     return False
   cloudlog.error("big model load failed, cycling onroad to retry")

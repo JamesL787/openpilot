@@ -3,6 +3,7 @@ from openpilot.cereal import log
 from openpilot.starpilot.aol.panda_faults import blocking_fault_mask, blocking_fault_list
 from openpilot.starpilot.aol.runtime import AXIS_MAX_AGE_NS, SAFETY_MAX_AGE_NS, current_native, native_inventory_matches_cp
 from openpilot.starpilot.aol.wire import SafetyState, decode_intent
+from openpilot.starpilot.aol.honda_override import honda_override_withdrawal
 
 
 def cp_identity(cp):
@@ -805,14 +806,7 @@ class TransportPauseFeedback:
         pending and any(event.userDisable for event in events)):
       return False
     temporary_event = any(event.name in temporary_names for event in events)
-    # selfdrived adds no temporary-steering event while the driver steers (a hard override alone puts the Honda EPS
-    # in NO_TORQUE_ALERT_1), so on Honda stock AOL the driver override is the withdrawal's cause. Without this the
-    # latch reset and lateral waited for an LKAS press after every hard takeover (Clarity 00000055--32067800c4
-    # seg 9 32.4 s, 00000056--c3fdf28de7 seg 5 58.4 s).
-    honda_override = False
-    if cp.brand == 'honda' and cs.steeringPressed:
-      from opendbc.car.honda.stock_aol import qualified as honda_stock_qualified
-      honda_override = bool(honda_stock_qualified(cp, marked_only=True))
+    honda_override = honda_override_withdrawal(cp, cs)  # Night Star: the driver override is the cause
     matched_withdrawal = bool((temporary_event or honda_override) and axis.faultEventMonoTime == event_ns <= stamp)
     original_active = bool(previous is not None and previous[0] == self.session and
       previous[7] == self.session and previous[5] == 'none' and

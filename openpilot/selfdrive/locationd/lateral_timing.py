@@ -217,7 +217,7 @@ def find_turns(s: Streams, conv, lss: float, closed_before: float, open_after: f
   for i in np.flatnonzero(np.diff(CS[:, 0]) > HOLE_GAP):
     hole |= (g > CS[i, 0] - 0.5) & (g < CS[i + 1, 0] + 2.0)
   v = np.interp(g, CS[:, 0], CS[:, 1])
-  ang = np.interp(g, CS[:, 0], CS[:, 2])
+  angle = np.interp(g, CS[:, 0], CS[:, 2])
   lat = np.interp(g, CC[:, 0], CC[:, 1])
   if len(LP):
     off, roll = np.interp(g, LP[:, 0], LP[:, 1]), np.interp(g, LP[:, 0], LP[:, 2])
@@ -229,7 +229,7 @@ def find_turns(s: Streams, conv, lss: float, closed_before: float, open_after: f
   C = np.interp(g, CTL[:, 0], CTL[:, 1])
   tgt = np.interp(g, CTL[:, 0], CTL[:, 2])
   has_tgt = np.isfinite(CTL[:, 2]).mean() > 0.9
-  W, T = conv(ang - off, v, roll), conv(np.nan_to_num(tgt) - off, v, roll)
+  W, T = conv(angle - off, v, roll), conv(np.nan_to_num(tgt) - off, v, roll)
 
   vf = np.interp(tp, CS[:, 0], CS[:, 1])
   eng = np.interp(tp, CC[:, 0], CC[:, 1]) > 0.5
@@ -271,25 +271,25 @@ def find_turns(s: Streams, conv, lss: float, closed_before: float, open_after: f
       if r is not None:
         fits[k] = r
     if 'ay' not in fits:   # still reported, so the caller does not search it again
-      turns.append(dict(win_start=float(g[a]), rejected=True))
+      turns.append({"win_start": float(g[a]), "rejected": True})
       continue
     a0, b0 = fits['ay'][0], fits['ay'][1]
     t0, t1 = g[a0], g[b0]
     fm = (tf >= t0 - 0.5) & (tf <= t1)
     ta = tgt[a0:b0]
     rate = float(np.sqrt(np.mean((np.gradient(ta) / DT) ** 2))) if has_tgt else float('nan')
-    rec = dict(win_start=float(g[a]), rejected=False, t0=float(t0), t1=float(t1), v=float(np.median(v[a0:b0])), pub=pub, lss=lss,
-               cmd_applied=float(np.nanmedian(cmd[a0:b0])) if np.isfinite(cmd[a0:b0]).any() else None,
-               told=float(np.nanmedian(told[fm])) if np.isfinite(told[fm]).any() else None,
-               aim=float(np.nanmedian(aim[fm])) if np.isfinite(aim[fm]).any() else None,
-               n_aim=int(np.isfinite(aim[fm]).sum()), tgt_rate=rate)
+    rec = {"win_start": float(g[a]), "rejected": False, "t0": float(t0), "t1": float(t1), "v": float(np.median(v[a0:b0])), "pub": pub, "lss": lss,
+               "cmd_applied": float(np.nanmedian(cmd[a0:b0])) if np.isfinite(cmd[a0:b0]).any() else None,
+               "told": float(np.nanmedian(told[fm])) if np.isfinite(told[fm]).any() else None,
+               "aim": float(np.nanmedian(aim[fm])) if np.isfinite(aim[fm]).any() else None,
+               "n_aim": int(np.isfinite(aim[fm]).sum()), "tgt_rate": rate}
     for k in ('ramp', 'cmd', 'tw', 'wy', 'ay'):
       r = fits.get(k)
       ok = r is not None and r[0] == a0 and r[1] == b0
       rec[k] = r[2] if ok else None
       rec[k + '_fit'] = r[3] if ok else None
     turns.append(rec)
-  frames = dict(tp=tp, tf=tf, told=told, aim=aim)
+  frames = {"tp": tp, "tf": tf, "told": told, "aim": aim}
   return turns, frames
 
 
@@ -326,7 +326,7 @@ class BandLearner:
     self.stale_count: int = d.get('stale_count', 0)
 
   def to_dict(self) -> dict:
-    return dict(turns=self.turns, frozen=self.frozen, monitor=self.monitor, stale_count=self.stale_count)
+    return {"turns": self.turns, "frozen": self.frozen, "monitor": self.monitor, "stale_count": self.stale_count}
 
   @property
   def state(self) -> str:
@@ -340,7 +340,7 @@ class BandLearner:
       xs = [x for x, _ in self.turns]
       drives = {d for _, d in self.turns}
       if len(xs) >= FREEZE_TURNS and len(drives) >= FREEZE_DRIVES and _split_ok(xs, FREEZE_SPLIT):
-        self.frozen = dict(value=float(np.median(xs)), n=len(xs), drives=len(drives), se=_se(xs))
+        self.frozen = {"value": float(np.median(xs)), "n": len(xs), "drives": len(drives), "se": _se(xs)}
         self.monitor = []
         return 'frozen'
       return None
@@ -354,8 +354,8 @@ class BandLearner:
 
   def estimate(self) -> dict:
     xs = [x for x, _ in self.turns]
-    out = dict(state=self.state, n=len(xs), drives=len({d for _, d in self.turns}), stale_count=self.stale_count,
-               running=float(np.median(xs)) if xs else None, running_se=_se(xs) if xs else None)
+    out = {"state": self.state, "n": len(xs), "drives": len({d for _, d in self.turns}), "stale_count": self.stale_count,
+               "running": float(np.median(xs)) if xs else None, "running_se": _se(xs) if xs else None}
     if self.frozen is not None:
       out.update(value=self.frozen['value'], se=self.frozen['se'], frozen_n=self.frozen['n'],
                  frozen_drives=self.frozen['drives'], monitor_n=len(self.monitor),
@@ -371,7 +371,7 @@ class AimLearner:
     self.frozen: float | None = d.get('frozen')
 
   def to_dict(self) -> dict:
-    return dict(offsets=self.offsets, frozen=self.frozen)
+    return {"offsets": self.offsets, "frozen": self.frozen}
 
   def add(self, offsets) -> bool:
     if self.frozen is not None:
@@ -384,8 +384,8 @@ class AimLearner:
     return False
 
   def estimate(self) -> dict:
-    return dict(state='frozen' if self.frozen is not None else 'learning', n=len(self.offsets),
-                offset=self.frozen if self.frozen is not None else (float(np.median(self.offsets)) if self.offsets else None))
+    return {"state": 'frozen' if self.frozen is not None else 'learning', "n": len(self.offsets),
+                "offset": self.frozen if self.frozen is not None else (float(np.median(self.offsets)) if self.offsets else None)}
 
 
 class TimingLearner:
@@ -404,8 +404,8 @@ class TimingLearner:
     self.drives = int(d.get('drives', 0))
 
   def to_dict(self) -> dict:
-    return dict(version=VERSION, keys=self.keys, drives=self.drives,
-                bands={k: b.to_dict() for k, b in self.bands.items()}, aims={k: a.to_dict() for k, a in self.aims.items()})
+    return {"version": VERSION, "keys": self.keys, "drives": self.drives,
+                "bands": {k: b.to_dict() for k, b in self.bands.items()}, "aims": {k: a.to_dict() for k, a in self.aims.items()}}
 
   def add_turn(self, rec: dict, drive: str) -> str | None:
     S = slow_composite(rec)

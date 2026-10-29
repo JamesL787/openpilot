@@ -21,7 +21,7 @@ from collections.abc import Callable
 from urllib.request import urlopen
 
 from openpilot.starpilot.models.catalog import (
-  ARTIFACT_ABI, BUNDLED_CURRENT, BY_ID, CATALOG_PATH, COMPILER_REVISION, DEFAULT_SMALL, DEFAULT_SMALL_SHA256,
+  ARTIFACT_ABI, BUNDLED_CURRENT, BY_ID, COMPILER_REVISION, DEFAULT_SMALL, DEFAULT_SMALL_SHA256,
   DEFAULT_SMALL_SIZE, GENERATION, model_entries,
 )
 

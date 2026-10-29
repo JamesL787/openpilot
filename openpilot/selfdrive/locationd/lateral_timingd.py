@@ -190,9 +190,9 @@ class LateralTimingRunner:
       self.save(self.learner.to_dict())
     return S is not None and band is not None
 
-  def _aims(self, frames: dict, upto: float) -> bool:
+  def _aims(self, frames: dict, until: float) -> bool:
     tp, aim, told = frames["tp"], frames["aim"], frames["told"]
-    sel = (tp > self.aim_after) & (tp <= upto)
+    sel = (tp > self.aim_after) & (tp <= until)
     if not sel.any():
       return False
     self.aim_after = float(tp[sel].max())
@@ -242,10 +242,10 @@ def main():
 
   conv = rack_converter(rack)
   eps_fw = next((normalize_honda_eps_fw(fw.fwVersion) for fw in CP.carFw if fw.ecu == "eps"), None)
-  keys = dict(fingerprint=str(CP.carFingerprint), eps_fw=eps_fw, calibration=calibration.name,
-              calibration_hash=calibration_hash(calibration), settings=settings_hash(params),
-              code=code_hash((latcontrol_honda_eps.__file__, honda_eps_firmware_ff.__file__)),
-              device=HARDWARE.get_device_type())
+  keys = {"fingerprint": str(CP.carFingerprint), "eps_fw": eps_fw, "calibration": calibration.name,
+              "calibration_hash": calibration_hash(calibration), "settings": settings_hash(params),
+              "code": code_hash((latcontrol_honda_eps.__file__, honda_eps_firmware_ff.__file__)),
+              "device": HARDWARE.get_device_type()}
   runner = LateralTimingRunner(conv, lateral_smooth_seconds(CP, 0.0), keys, load_state(STATE_PATH),
                                log=cloudlog.event, save=lambda d: save_state(STATE_PATH, d))
   cloudlog.event("lateralTiming.start", keys=keys, drive=runner.drive, drives=runner.learner.drives)

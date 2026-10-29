@@ -104,7 +104,7 @@ def test_real_failed_startup_exits_with_live_daemon_before_small_can_start():
     child.close()
 
 
-@pytest.mark.skip(reason="personal branch: a failed Chestnut startup drops the Chestnut and retries the big model "
+@pytest.mark.skip(reason="personal branch: a failed Chestnut startup drops the Chestnut and retries the big model " +
                          "(request_big_model_retry) instead of SGSP's os._exit for an isolated Small restart")
 @pytest.mark.parametrize("cleanup", ["daemon", "non_daemon", "atexit"])
 def test_actual_failed_startup_exits_without_waiting_for_cleanup(cleanup):

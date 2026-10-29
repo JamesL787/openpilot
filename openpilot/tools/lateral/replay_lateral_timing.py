@@ -18,7 +18,6 @@ import sys
 import numpy as np
 import zstandard as zstd
 
-from opendbc.car.structs import car
 from openpilot.cereal import log
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, normalize_honda_eps_fw
 from openpilot.selfdrive.controls.lib.honda_eps_calibrations import select_eps_firmware_calibration
@@ -68,7 +67,7 @@ def replay(paths, state, label):
   if calibration is None or rack is None:
     print(f"{label}: not a Honda EPS controller car ({CP.carFingerprint})")
     return None, state
-  keys = dict(fingerprint=str(CP.carFingerprint), calibration=calibration.name)   # replay: the car only
+  keys = {"fingerprint": str(CP.carFingerprint), "calibration": calibration.name}   # replay: the car only
   runner = LateralTimingRunner(rack_converter(rack), LAT_SMOOTH_SECONDS, keys, state,
                                log=lambda name, **kw: None, drive=label)
   now = None
@@ -114,7 +113,7 @@ def main():
     print("   t0      v   band  ramp  cmd   tw   wy   ay | size    S  | told  aim  event")
     ref = [o for o in offline if o.get("label") == label]
     for r in runner.turns:
-      print(f"  {r['t0'] % 10000:7.1f} {r['v']:4.1f} {str(r['band']):5s} {fmt(r['ramp'])} {fmt(r['cmd'])} {fmt(r['tw'])} {fmt(r['wy'])} "
+      print(f"  {r['t0'] % 10000:7.1f} {r['v']:4.1f} {str(r['band']):5s} {fmt(r['ramp'])} {fmt(r['cmd'])} {fmt(r['tw'])} {fmt(r['wy'])} " +
             f"{fmt(r['ay'])} | {fmt(r['size_corr'])} {fmt(r['S'])} | {fmt(r['told'])} {fmt(r['aim'])}  {r['outcome'] or ''}")
       match = [o for o in ref if abs(o["t"] - r["t0"]) < 0.3]
       if match:
@@ -126,7 +125,7 @@ def main():
     for name, b in est["bands"].items():
       print(f"  {name} m/s: {b['state']}, {b['n']} turns over {b['drives']} drives, S running {fmt(b['running'])} ±{fmt(b['running_se'])} ms"
             + (f", frozen {fmt(b['value'])}" if b.get("value") is not None else "")
-            + (f" -> delivery {fmt(b.get('delivery_running'))} ms, plan told {fmt(b.get('plan_told_running'))}, "
+            + (f" -> delivery {fmt(b.get('delivery_running'))} ms, plan told {fmt(b.get('plan_told_running'))}, " +
                f"head command delay {fmt(b.get('head_cmd_delay_running'))}" if b.get("delivery_running") is not None else ""))
     print(f"  aim: {est['aim']}")
   if args.state and state is not None:
@@ -136,7 +135,8 @@ def main():
     for k, d in diffs.items():
       if d:
         a = np.abs(d)
-        print(f"  {k:5s} n {len(d):3d}  median {np.median(d) * 1000:+5.1f}  p90 |d| {np.percentile(a, 90) * 1000:5.1f}  within 5 ms {np.mean(a <= 0.005) * 100:3.0f}%")
+        print(f"  {k:5s} n {len(d):3d}  median {np.median(d) * 1000:+5.1f}  p90 |d| {np.percentile(a, 90) * 1000:5.1f}  " +
+              f"within 5 ms {np.mean(a <= 0.005) * 100:3.0f}%")
 
 
 if __name__ == "__main__":

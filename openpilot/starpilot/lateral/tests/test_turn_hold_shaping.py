@@ -25,7 +25,7 @@ def test_standstill_prewind_ramps_with_shaping_and_steps_without():
   assert hold > 0.02 and plain.turn_hold_curvature == pytest.approx(hold)
   assert step[0] == pytest.approx(hold)                     # the Ioniq 6 port arms in one frame
   assert ramp[0] == pytest.approx(hold * TURN_SHAPING_ALPHA)  # shaped: 0.25 s low-pass
-  assert all(b >= a for a, b in zip(ramp, ramp[1:])) and ramp[-1] == pytest.approx(hold, rel=0.01)
+  assert all(b >= a for a, b in zip(ramp, ramp[1:], strict=False)) and ramp[-1] == pytest.approx(hold, rel=0.01)
 
 
 def test_driver_confirmed_capture_snaps():

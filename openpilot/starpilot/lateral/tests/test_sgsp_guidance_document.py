@@ -48,8 +48,8 @@ def test_a_night_star7_version_6_document_reads_force_turn_desires_and_ignores_g
 
 
 def test_a_version_6_document_is_never_written():
-  assert to_value(decode(json.dumps(night_star7()).encode()))["version"] == 5
-  assert to_value(decode(json.dumps(night_star7(turn=False, speed=LaneChangePolicy().turn_desire_speed_mps)).encode()))["version"] == 4
+  assert to_value(decode(json.dumps(night_star7()).encode()))["version"] == 5  # ty: ignore[invalid-argument-type]
+  assert to_value(decode(json.dumps(night_star7(turn=False, speed=LaneChangePolicy().turn_desire_speed_mps)).encode()))["version"] == 4  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("shape", (sgsp, ours, night_star7))

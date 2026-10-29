@@ -1,7 +1,7 @@
 """The Nidec interceptor Clarity's longitudinal path is untouched by the Bosch-A / Civic Bosch work (Trung's Honda set).
 
 The shared piece is BoschLearningParams, which also loads the interceptor learner's factors. Its new one-time reset
-keys off `learner_version`, which only the Civic Bosch learner sets. These tests pin the Clarity's behaviour to the
+keys off `learner_version`, which only the Civic Bosch learner sets. These tests pin the Clarity's behavior to the
 pre-merge code (8226ca24c6), reproduced below as `reference_factors`.
 """
 
@@ -124,6 +124,5 @@ def test_a_bosch_a_toggle_left_on_still_shows_so_it_can_be_turned_off():
 
 def test_the_bosch_a_toggles_show_on_a_verified_bosch_a_civic():
   cp = CarInterface.get_params(CAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), [], True, False, False)
-  if not vehicle_supported(cp):
-    pytest.skip("this Civic Bosch build has no openpilot longitudinal")
+  assert vehicle_supported(cp), "the Civic Bosch must have openpilot longitudinal for this test"
   assert set(bosch_a_rows(cp)) == {STOCK_BRAKE_FEEL_KEY, HUMAN_FOLLOWING_KEY}
