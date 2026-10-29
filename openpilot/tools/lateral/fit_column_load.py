@@ -123,7 +123,7 @@ def main():
   best = None
   for shift in range(5):
     X, y = map(np.concatenate, zip(*[rows(d, y, ok, a.source, a.max_torque, shift) for d, y, ok in data], strict=True))
-    coef = np.linalg.lstsq(X, y, rcond=None)[0]
+    coef = np.linalg.lstsq(X, y, rcond=None)[0]  # ty: ignore[no-matching-overload]
     if best is None or r2(X, y, coef) > best[1]:
       best = (shift, r2(X, y, coef), coef, len(y))
   shift, fit_r2, coef, n = best
@@ -137,8 +137,9 @@ def main():
     for i in range(len(data)):
       tr = [rows(d, y, ok, a.source, a.max_torque, shift) for j, (d, y, ok) in enumerate(data) if j != i]
       Xtr, ytr = map(np.concatenate, zip(*tr, strict=True))
-      ci = np.linalg.lstsq(Xtr, ytr, rcond=None)[0]
-      Xte, yte = rows(*data[i], a.source, a.max_torque, shift)
+      ci = np.linalg.lstsq(Xtr, ytr, rcond=None)[0]  # ty: ignore[no-matching-overload]
+      d, y, ok = data[i]
+      Xte, yte = rows(d, y, ok, a.source, a.max_torque, shift)
       shipped = np.array([load.k0, load.k1, load.c, load.friction, 0.0, load.bias, load.kroll]) if load is not None else None
       print(f'  route {i}: {r2(Xte, yte, ci):.3f}' + (f' / {r2(Xte, yte, shipped):.3f}' if shipped is not None else ''))
 

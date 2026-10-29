@@ -424,7 +424,7 @@ class LongitudinalPlanner:
                    accel_coast, self.allow_throttle, cruise_profile, slc_floor)
     cruise_kwargs = {'base_brake_floor': global_floor, 'selected_acceleration_max': selected_acceleration,
                      'faster_takeoffs': faster_takeoffs, 'a_target_prev': self.output_a_target}
-    self.a_cruise = get_cruise_accel(*cruise_args, **cruise_kwargs)
+    self.a_cruise = get_cruise_accel(*cruise_args, **cruise_kwargs)  # ty: ignore[invalid-argument-type]
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
     encouraged_model = self.encouragement.update(

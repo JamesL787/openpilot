@@ -254,7 +254,7 @@ def test_a_calibration_can_carry_its_own_friction_knee():
     ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal)
     for k in range(100):
       ff.update(2.0 * k * DT_CTRL, 30.0, 0.0)
-    loads.append(ff.load - eps_ff.column_load(ff.prev_angle + eps_ff.LEAD_S * ff.rate, ff.rate, 30.0, 0.0, cal.load, 1e9))
+    loads.append(ff.load - eps_ff.column_load(ff.prev_angle + eps_ff.LEAD_S * ff.rate, ff.rate, 30.0, 0.0, cal.load, 1e9))  # ty: ignore[unsupported-operator]
   assert loads[0] / loads[1] == pytest.approx(math.tanh(2.0 / 15.0) / math.tanh(2.0 / 5.0), rel=0.05)
 
 
@@ -271,7 +271,7 @@ def test_friction_knee_is_wide_in_the_city_and_sharp_at_speed():
 
 def test_without_the_feedforward_the_core_is_the_banded_pid():
   core = _core()
-  eps_ff.FF_JOIN_ERROR_DEG, saved = -1.0, eps_ff.FF_JOIN_ERROR_DEG
+  eps_ff.FF_JOIN_ERROR_DEG, saved = -1.0, eps_ff.FF_JOIN_ERROR_DEG  # ty: ignore[invalid-assignment]
   try:
     out = core.update(10.0, 0.0, 5.0, 15.0, 0.0, False, False)
   finally:
@@ -598,7 +598,7 @@ def test_clarity_trw_a020_profile_is_the_validated_build():
   cal = eps_cal.CLARITY_TRW_A020
   assert cal.kp_v == (117, 148, 184, 220, 245, 257, 263, 265, 265) and cal.r5_per_key == 18.04
   assert cal.r6_per_deg_s == eps_cal.CLARITY_TRW_A020_R6_CENTRE == -122.0 and cal.scale_q8 == 256.0
-  assert cal.r6_angle_bp is not None and cal.r6_angle_gain[0] == 1.0 and cal.r6_angle_gain[-1] > 1.15
+  assert cal.r6_angle_bp is not None and cal.r6_angle_gain[0] == 1.0 and cal.r6_angle_gain[-1] > 1.15  # ty: ignore[not-subscriptable]
   assert cal.load == eps_cal.CLARITY_TRW_A020_LOAD and cal.e4_per_output == 3840.0
   assert (cal.p_scale, cal.i_scale) == ((1.25, 1.00, 1.25), (0.70, 0.95, 0.35))
 
@@ -838,7 +838,7 @@ def test_rack_map_reaches_lock_past_table_a(v):
   # the Insight's Table A ends at 430.5 deg, its lock is 457 deg: past the last knot the firmware holds its last
   # divisor, so the map keeps going (it used to clamp at 430.5, so no curvature could ask for more)
   inv = get_honda_vgr_inverse(HondaFlags.VGR_INSIGHT_TXM_A040)
-  rack_map = rack.HondaEpsRackMap(2.7, inv, eps_cal.INSIGHT_TXM_A040.rack)
+  rack_map = rack.HondaEpsRackMap(2.7, inv, eps_cal.INSIGHT_TXM_A040.rack)  # ty: ignore[invalid-argument-type]
   end = inv[1][-1]
   for angle in (440.0, 457.0, -457.0):
     assert rack_map.angle_from_curvature(rack_map.curvature_from_angle(angle, v, 0.0), v, 0.0) == pytest.approx(angle, abs=1e-6)
@@ -939,7 +939,7 @@ def test_computed_r6_matches_unrailed_telemetry(name):
 def test_every_calibration_takes_its_a_tables_computed_r6(name, profile):
   cal = next(c for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
   centre, bp, gain = eps_ff.computed_r6(profile)
-  assert (cal.r6_per_deg_s, tuple(cal.r6_angle_bp), tuple(cal.r6_angle_gain)) == (centre, bp, gain)
+  assert (cal.r6_per_deg_s, tuple(cal.r6_angle_bp), tuple(cal.r6_angle_gain)) == (centre, bp, gain)  # ty: ignore[invalid-argument-type]
   assert centre == pytest.approx(-122.0 * HONDA_VGR_CENTRE_DIVISOR_BY_PROFILE[profile] / 16384, abs=0.01)
 
 
@@ -992,7 +992,7 @@ def test_teg_rev_b_asks_the_clarity_r5_and_kp(u):
   assert eps_ff.firmware_kp(r5_teg, teg) == pytest.approx(eps_ff.firmware_kp(r5_cla, clarity), rel=.005)
 
 
-REV_B = {  # each calibration's modelled row in the corrected PTM build (KB PTM_FIX_FAMILY_20261016/out/<car>/plan.json)
+REV_B = {  # each calibration's modeled row in the corrected PTM build (KB PTM_FIX_FAMILY_20261016/out/<car>/plan.json)
   "civic_tba_a030": ((0, 222, 333, 495, 656, 887, 1108, 1552, 1774), (0, 4000, 6000, 8937, 11838, 16000, 20000, 28000, 32000)),
   "civic_tba_c120": ((0, 103, 263, 459, 660, 861, 1111, 1549, 1774), (0, 1856, 4739, 8288, 11910, 15532, 20054, 27946, 32000)),
   "civic_tgg_a120": ((0, 103, 263, 459, 660, 862, 1111, 1549, 1774), (0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002)),
@@ -1046,7 +1046,7 @@ def test_model_action_ramps_across_the_frame():
   assert ramp.update(0.01, True, True) == 0.0         # a new frame starts from where the output is
   outputs = [ramp.update(0.01, False, True) for _ in range(round(DT_MDL / DT_CTRL) + 2)]
   assert outputs[0] == pytest.approx(0.01 * DT_CTRL / DT_MDL)
-  assert all(b >= a for a, b in zip(outputs, outputs[1:])) and outputs[-1] == pytest.approx(0.01)
+  assert all(b >= a for a, b in zip(outputs, outputs[1:], strict=False)) and outputs[-1] == pytest.approx(0.01)
   ramp.update(0.005, False, True)                     # between frames the held target doesn't move
   assert ramp.output == pytest.approx(0.01)
   for _ in range(2):

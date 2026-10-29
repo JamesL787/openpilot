@@ -388,7 +388,8 @@ class Ioniq6HostTests(unittest.TestCase):
         axis.sourceCarStateMonoTime = stamp
         axis.observedMonoTime = stamp
         axis.validUntilMonoTime = stamp + 30_000_000
-        model_msg = messaging.new_message('modelV2', valid=True)   # Night Star port: controlsd steers only while a driving model is publishing (stopped-model guard)
+        # Night Star port: controlsd steers only while a driving model is publishing (stopped-model guard)
+        model_msg = messaging.new_message('modelV2', valid=True)
         model_msg.logMonoTime = stamp
         events = [car_msg, drive_msg, axis_msg, model_msg]
         if native_receipt:

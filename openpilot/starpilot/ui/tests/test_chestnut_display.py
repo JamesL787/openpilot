@@ -428,12 +428,12 @@ def test_model_source_box_sits_under_the_wheel_glyph_and_follows_the_layout():
   state = SimpleNamespace(customization={})
   content = rl.Rectangle(0, 0, 2160, 1080)
   with patch.object(widgets, 'offset', return_value=(0, 0)), patch.object(widgets, 'widget_size', return_value=(192, 192)):
-    wheel = widgets.wheel_box(content, state)
-    box = widgets.model_source_box(content, state)
+    wheel = widgets.wheel_box(content, state)  # ty: ignore[invalid-argument-type]
+    box = widgets.model_source_box(content, state)  # ty: ignore[invalid-argument-type]
   assert (wheel.x, wheel.y, wheel.width) == (2160 - 146 - 96, 45, 192)
   assert (box.x, box.y, box.width, box.height) == (wheel.x + 24, 45 + 192 + 24, 144, 144)
   with patch.object(widgets, 'offset', return_value=(-40, 10)), patch.object(widgets, 'widget_size', return_value=(160, 160)):
-    moved = widgets.model_source_box(content, state)
+    moved = widgets.model_source_box(content, state)  # ty: ignore[invalid-argument-type]
   assert (moved.x, moved.y, moved.width) == (2160 - 146 - 96 - 40 + 20, 55 + 160 + 24, 120)
 @pytest.mark.parametrize('phase,started,expected', [
   ('connecting', False, ChestnutState.LOADING),

@@ -20,7 +20,7 @@ import numpy as np
 #
 # The <= 70 degree section is the sample-weighted, non-increasing fit of the measured
 # 5 degree bins. The noisy 5-10 degree rise is capped at the 0-5 degree median, and every
-# later upward violation is pooled with its neighbour(s) instead of being allowed to create
+# later upward violation is pooled with its neighbor(s) instead of being allowed to create
 # an unphysical ratio increase. A smoothstep-sampled 70-90 degree handoff rejoins the
 # previous road-proven curve at exactly its existing 90 degree value; 90 degrees onward is
 # unchanged except for the corrected Honda end-to-end specification of 12.72 at 450 degrees.
@@ -144,7 +144,7 @@ HONDA_SR_CURVE_INVERSE_BY_FP = {
 # flipping the turn-in/unwind branches of the output scale on alternate frames. A flat deg/s
 # ceiling is the constraint that is physical for an angle-space controller, and since
 # clip_curvature is already tighter than this above ~16 mph, it can only bind at low speed:
-# highway behaviour is unchanged by construction.
+# highway behavior is unchanged by construction.
 #
 # This is a slew clip, NOT a filter. Sustained target motion passes through untouched, so it
 # costs no phase lag on a real maneuver -- only the per-frame excursions are removed.

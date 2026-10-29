@@ -20,7 +20,7 @@ from openpilot.starpilot.flm.tests.test_state_aligned_encoder import captured_ev
 from openpilot.starpilot.flm.tests.test_steering_projection import make_interface, control, apply, settle, install_observer
 
 PLATFORMS = (TOYOTA.TOYOTA_COROLLA_TSS2, GM.GMC_ACADIA, HYUNDAI.HYUNDAI_SONATA,
-             HYUNDAI.HYUNDAI_IONIQ_6, HONDA.HONDA_CIVIC, HONDA.HONDA_CIVIC_BOSCH)
+             HYUNDAI.HYUNDAI_IONIQ_6, HONDA.HONDA_CIVIC)  # Night Star port: FLM is off on modified-EPS Hondas
 
 
 def first_emission(ci, request):
@@ -33,8 +33,6 @@ def first_emission(ci, request):
 
 def crossing(platform):
   modified = platform == HONDA.HONDA_CIVIC_BOSCH
-  if modified:
-    pytest.skip('Night Star port: FLM does not run on modified-EPS Hondas')
   honda = platform in (HONDA.HONDA_CIVIC, HONDA.HONDA_CIVIC_BOSCH)
   firmware = (structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps, address=0x18DA30F1, subAddress=0,
     fwVersion=b'39990-TGG,A020\x00\x00', brand='honda'),) if modified else ()
@@ -116,18 +114,6 @@ def test_exact_local_metadata_enable_direction_and_one_sided_equality_negatives(
       replace(event, witness=witness._replace(steer_requested=False)), 2 / witness.effective_max)
 
 
-def test_honda_paired_override_remains_before_local_equality():
-  event = captured_event(HONDA.HONDA_CIVIC_BOSCH, modified=True)
-  witness = event.witness._replace(shape=tuple(event.witness.shape[:4]) + (18., True, -1.))
-  branch = EncoderBranch(quality_contract=EXACT_EMISSION_QUALITY)
-  branch.previous = witness.previous_torque
-  branch.civic = (1., -.2, .095, False)
-  before = branch.previous, branch.civic, branch.last_frame, branch.last_apply_ns
-  with pytest.raises(ValueError, match='driver override'):
-    branch.step(replace(event, witness=witness), -.2)
-  assert (branch.previous, branch.civic, branch.last_frame, branch.last_apply_ns) == before
-
-
 def test_new_exact_policy_model_binding_and_matching_identification_are_required():
   payload = {'event_version': 3, 'event_clipping_quality': EXACT_EMISSION_QUALITY,
     'event_identification_policy': NATIVE_SHADOW_IDENTIFICATION}
@@ -144,38 +130,3 @@ def test_new_exact_policy_model_binding_and_matching_identification_are_required
   assert not activation_matches_model(old, bound)
   assert not activation_matches_model(plan, bind_activation_model(model, old))
 
-
-def test_honda_same_integer_does_not_collapse_continuous_or_civic_state():
-  from opendbc.car import DT_CTRL, rate_limit
-  from opendbc.car.steering_projection import _shaped_input, float32, normalized_applied_command
-  original, _, event, proposed = crossing(HONDA.HONDA_CIVIC_BOSCH)
-  witness = event.witness
-  branch = EncoderBranch(quality_contract=EXACT_EMISSION_QUALITY)
-  # A fixed dyadic state difference lies within this real lookup's integer bin;
-  # equality is still exact, never an epsilon comparison or a searched outcome.
-  branch.previous = witness.previous_torque + 1 / 2**20
-  branch.civic = (witness.shape[0] + 1 / 2**20,) + tuple(witness.shape[1:4])
-  shape = branch.civic + tuple(witness.shape[4:])
-  params = dict(witness.limits)
-  expected = rate_limit(_shaped_input(witness, float32(proposed), shape), branch.previous,
-    -params['STEER_DELTA_DOWN'] * DT_CTRL, params['STEER_DELTA_UP'] * DT_CTRL)
-  recorded = rate_limit(witness.codec_input_torque, witness.previous_torque,
-    -params['STEER_DELTA_DOWN'] * DT_CTRL, params['STEER_DELTA_UP'] * DT_CTRL)
-  assert expected != recorded
-  assert branch.step(event, proposed) == normalized_applied_command(witness)
-  assert branch.previous == expected and branch.previous != recorded
-  assert branch.civic[0] == _shaped_input(witness, float32(proposed), shape)
-  assert branch.civic[1] == float32(proposed)
-  # Continue the REAL original native clock. Prior local equality grants no
-  # future exemption: persistent outward demand must encounter a strict veto.
-  for index in range(256):
-    _, future_witness = first_emission(original, witness.requested_torque)
-    stamp = event.apply_ns + (index + 1) * 100_000_000
-    limited = future_witness.unlimited_raw is None or future_witness.unlimited_raw != future_witness.final_raw
-    future = replace(event, witness=future_witness, control_ns=stamp, state_ns=stamp, apply_ns=stamp + 1, limited=limited)
-    try:
-      branch.step(future, 1.)
-    except ValueError as error:
-      assert 'clipping regression' in str(error) or 'limiter/support' in str(error)
-      return
-  raise AssertionError('local packet identity bypassed future strict native quality')

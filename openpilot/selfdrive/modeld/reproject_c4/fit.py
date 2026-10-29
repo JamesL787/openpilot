@@ -76,7 +76,7 @@ def match_rays(narrow_y, wide_y, calib, dst_wh=(1344, 760), patch=96, stride=64,
       pb.append((x + patch / 2 + dx, y + patch / 2 + dy))
   if len(pa) < 4:
     return None
-  pa, pb = np.float32(pa), np.float32(pb)
+  pa, pb = np.asarray(pa, dtype=np.float32), np.asarray(pb, dtype=np.float32)
   rays_n = unproject_pinhole(pa, C4_NARROW_K[0, 0], C4_NARROW_K[0, 2], C4_NARROW_K[1, 2])
   xb = np.round(pb[:, 0] - 0.5).astype(int).clip(0, dw - 1)
   yb = np.round(pb[:, 1] - 0.5).astype(int).clip(0, dh - 1)

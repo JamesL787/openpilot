@@ -172,7 +172,7 @@ README; this is an open zero-configuration host dependency.
 
 ### Radar points in the debug viewer
 
-`ui.py`'s top-down map colours each published radar point by role (Night Star, for checking the Honda Bosch-A
+`ui.py`'s top-down map colors each published radar point by role (Night Star, for checking the Honda Bosch-A
 decoder): red holds `radarState.leadOne`, orange `leadTwo`, green is a measured point, grey a point the decoder
 coasted this sweep (`RadarPoint.deprecated.measured` false). The sidebar's RADAR line gives the point count, how many
 are measured, and the track ids holding each lead. It is diagnostic only; nothing here affects radar or control.

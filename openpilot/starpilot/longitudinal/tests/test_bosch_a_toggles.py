@@ -168,7 +168,7 @@ class TestCarGates(unittest.TestCase):
   def test_human_following_needs_toggle_and_bosch_a(self):
     self.assertFalse(human_following.enabled_for(BOSCH_A))
     self.assertFalse(human_following.enabled_for(BOSCH_A, False))
-    self.assertFalse(human_following.enabled_for(BOSCH_A, 1))  # only a real True arms it
+    self.assertFalse(human_following.enabled_for(BOSCH_A, 1))  # ty: ignore[invalid-argument-type]  # only a real True arms it
     self.assertTrue(human_following.enabled_for(BOSCH_A, True))
     self.assertTrue(human_following.enabled_for(car(radar_unavailable=True), True))  # vision-only shares it
     for cp in NOT_BOSCH_A:

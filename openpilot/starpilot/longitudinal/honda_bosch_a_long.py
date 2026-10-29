@@ -1,4 +1,4 @@
-"""Honda Bosch A Long Enhancement: longitudinal behaviour that is active whenever the Bosch-A radar is on.
+"""Honda Bosch A Long Enhancement: longitudinal behavior that is active whenever the Bosch-A radar is on.
 
 Ported from openpilot-radar (ns-bosch-radar-testing @ 567495f4ad + 6db22115e8, selfdrive/controls/lib/longitudinal_planner.py).
 Active only when `active_for(CP)`: a Honda in VERIFIED_BOSCH_A_CARS with openpilot longitudinal and the radar not
@@ -436,7 +436,7 @@ class BirthRail:
         return None
       return min(float(v_rel) - float(range_assist_correction), high_rail * frac)
     v_ego_aligned = v_lead - v_rel
-    if not BIRTH_RAIL_RAMP_LOW or v_ego_aligned < BIRTH_RAIL_LOW_MIN_V_EGO_MPS or \
+    if not BIRTH_RAIL_RAMP_LOW or v_ego_aligned < BIRTH_RAIL_LOW_MIN_V_EGO_MPS or vision_lead is None or \
        not birth_rail_vision_agrees(d_rel, y_rel, vision_lead):
       self.done = True
       return None

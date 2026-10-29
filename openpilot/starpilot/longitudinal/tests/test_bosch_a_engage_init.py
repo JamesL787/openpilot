@@ -30,7 +30,7 @@ class EngageInit:
   floor = -1.2  # A_CRUISE_MIN / the default cruise_min
 
   def reset_a_cruise(self, cp, toggles, a_ego, v_cruise_kph):
-    p = self.build(cp, toggles)
+    p = self.build(cp, toggles)  # ty: ignore[call-non-callable]
     p.update(engage_sm(a_ego, v_cruise_kph))
     return p.a_cruise
 
@@ -54,7 +54,7 @@ class EngageInit:
       self.assertEqual(self.reset_a_cruise(cp, ON, 1.5, 72.0), self.reset_a_cruise(cp, OFF, 1.5, 72.0), cp)
 
   def test_engaged_frames_do_not_reseed(self):
-    on, off = self.build(BOSCH_A, ON), self.build(BOSCH_A, OFF)
+    on, off = self.build(BOSCH_A, ON), self.build(BOSCH_A, OFF)  # ty: ignore[call-non-callable]
     for p in (on, off):
       p.update(engage_sm(-0.3, 120.0, frame=0))
       p.update(engage_sm(1.5, 72.0, frame=1))  # engaged (pid): only the normal jerk-limited path runs

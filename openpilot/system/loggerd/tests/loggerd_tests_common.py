@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 from openpilot.common.test import OpenpilotTestCase
+from openpilot.starpilot.connect.testing import use_comma_provider
 import openpilot.system.loggerd.deleter as deleter
 import openpilot.system.loggerd.uploader as uploader
 from openpilot.common.params import Params
@@ -67,6 +68,7 @@ class UploaderTestCase(OpenpilotTestCase):
     uploader.Api = MockApiIgnore  # ty: ignore[invalid-assignment]  # test double
 
   def setup_method(self):
+    use_comma_provider()
     uploader.Api = MockApi  # ty: ignore[invalid-assignment]  # test double
     uploader.fake_upload = True
     uploader.force_wifi = True

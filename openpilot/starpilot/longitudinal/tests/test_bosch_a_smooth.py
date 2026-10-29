@@ -60,7 +60,7 @@ class TestShaper(unittest.TestCase):
       prev = s.step(prev, target, reset=False)
       outs.append(prev)
     self.assertEqual(outs[:3], [-1.99, -1.99, -1.99])  # the first two rise requests are held
-    for a, b in zip([-1.0] + outs, outs):
+    for a, b in zip([-1.0] + outs, outs, strict=False):
       self.assertLessEqual(b - a, STEP + 1e-9)  # then it rises at most one slew step, not to -0.46
     # A sustained release: held two ticks, then rises at most STEP per tick, never past the request.
     s = bs.BoschASmooth(BOSCH_A)
@@ -70,7 +70,7 @@ class TestShaper(unittest.TestCase):
       prev = s.step(prev, 0.5, reset=False)
       outs.append(prev)
     self.assertEqual(outs[:2], [-2.0, -2.0])
-    for a, b in zip(outs, outs[1:]):
+    for a, b in zip(outs, outs[1:], strict=False):
       if a < 0.0:  # the limit applies only while braking; at zero the coast/gas request passes through
         self.assertLessEqual(b - a, STEP + 1e-9)
     self.assertEqual(outs[-1], 0.5)

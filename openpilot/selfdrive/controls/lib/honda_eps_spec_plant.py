@@ -2,7 +2,7 @@
 measured. Only numpy and the A tables here, so offline tools can use it.
 
 Measured cars keep their own fits; this is what an unmeasured car starts from, and every value carries its spread
-over the cars that were measured, held out one at a time (2026-10-18; the analysis is summarised below each constant).
+over the cars that were measured, held out one at a time (2026-10-18; the analysis is summarized below each constant).
 
 Geometry. Every yaw-fitted rack map (honda_eps_rack_map) is the firmware A table, then a tan, then ONE ratio per car:
   curvature * L * (1 - sf v^2) = tan(lin / R0),   lin = the A table's linear angle (radians)

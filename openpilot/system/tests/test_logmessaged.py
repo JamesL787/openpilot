@@ -3,6 +3,7 @@ import os
 import time
 
 from openpilot.common.test import OpenpilotTestCase
+from openpilot.starpilot.connect.testing import use_comma_provider
 import openpilot.cereal.messaging as messaging
 from openpilot.system.manager.process_config import managed_processes
 from openpilot.common.hardware.hw import Paths
@@ -11,6 +12,7 @@ from openpilot.common.swaglog import cloudlog, ipchandler
 
 class TestLogmessaged(OpenpilotTestCase):
   def setup_method(self):
+    use_comma_provider()
     # clear the IPC buffer in case some other tests used cloudlog and filled it
     ipchandler.close()
     ipchandler.connect()

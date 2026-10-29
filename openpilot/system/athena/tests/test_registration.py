@@ -3,6 +3,7 @@ from Crypto.PublicKey import RSA
 from pathlib import Path
 
 from openpilot.common.test import OpenpilotTestCase
+from openpilot.starpilot.connect.testing import use_comma_provider
 from openpilot.common.params import Params
 from openpilot.system.athena.registration import register, UNREGISTERED_DONGLE_ID
 from openpilot.system.athena.tests.helpers import MockResponse
@@ -12,6 +13,7 @@ from openpilot.common.hardware.hw import Paths
 class TestRegistration(OpenpilotTestCase):
 
   def setup_method(self):
+    use_comma_provider()
     # clear params and setup key paths
     self.params = Params()
 
