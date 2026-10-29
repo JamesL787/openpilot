@@ -5,11 +5,15 @@ on:
     branches:
       - master
       - Domathon
-      - SecretGoodStarPilot
       # Night Star branches: every push gets CI, not only PRs
       - night-star7
       - night-star7-clean
       - night-star7-vfn-personal-DONOTFLASH
+      # Honda-PTM branches (RiskyBiscuit-arc/openpilot)
+      - Honda-PTM-Stable
+      - Honda-PTM-Stage
+      - Honda-PTM-Testing
+      - Honda-PTM-Clean
   pull_request:
   workflow_dispatch:
   workflow_call:
