@@ -38,21 +38,21 @@ def dmonitoringd_thread():
 
   # 20Hz <- dmonitoringmodeld
   while True:
-    camera_less = camera_detector.update(sm)
-    sm.update(int(DT_DMON * 500) if camera_less else 100)
-
-    if camera_less:
-      # no driver camera, so no driverStateV2 to wait on: step and publish on a 20Hz timer instead
+    if camera_detector.update(sm):
+      # no driver camera, so no driverStateV2 to wait on: step and publish on a 20Hz timer instead.
+      # update once per step, since the SubMaster checks every input against the 20Hz rate of the poll service
       now = time.monotonic()
       if now < next_camera_less_step:
-        continue
-      next_camera_less_step = max(next_camera_less_step + DT_DMON, now - DT_DMON)
+        time.sleep(next_camera_less_step - now)
+      next_camera_less_step = max(next_camera_less_step + DT_DMON, time.monotonic() - DT_DMON)
+      sm.update(0)
       valid = sm.all_checks(camera_less_services)
       if valid:
         DM.run_step_without_camera(sm)
       pm.send('driverMonitoringState', DM.get_state_packet(valid=valid))
       continue
 
+    sm.update(100)
     if not sm.updated['driverStateV2']:
       # iterate when model has new output
       continue

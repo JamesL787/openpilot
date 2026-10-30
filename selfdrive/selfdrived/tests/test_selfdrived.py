@@ -13,7 +13,32 @@ from openpilot.selfdrive.selfdrived.selfdrived import (
   commanded_torque_at_max_for_saturation,
   controller_openpilot_event,
   evaluate_comm_issue,
+  read_personality,
 )
+
+
+
+class FakePersonalityParams:
+  def __init__(self, value):
+    self.value = value
+
+  def get(self, key, return_default=False):
+    return self.value
+
+  def put_nonblocking(self, key, value):
+    self.value = value
+
+
+def test_unknown_personality_falls_back_to_standard():
+  # another fork can leave LongitudinalPersonality at 3, which used to crash selfdrived with a KeyError
+  params = FakePersonalityParams(3)
+  assert read_personality(params, False) == log.LongitudinalPersonality.standard
+  assert params.value == log.LongitudinalPersonality.standard
+
+
+def test_known_personality_and_safe_mode():
+  assert read_personality(FakePersonalityParams(log.LongitudinalPersonality.aggressive), False) == log.LongitudinalPersonality.aggressive
+  assert read_personality(FakePersonalityParams(3), True) == log.LongitudinalPersonality.relaxed
 
 
 def test_valid_only_comm_issue_is_debounced():

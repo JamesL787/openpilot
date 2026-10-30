@@ -52,6 +52,17 @@ TESTING_CLOSET = "TESTING_CLOSET" in os.environ
 
 LONGITUDINAL_PERSONALITY_MAP = {v: k for k, v in log.LongitudinalPersonality.schema.enumerants.items()}
 
+
+def read_personality(params, safe_mode):
+  if safe_mode:
+    return log.LongitudinalPersonality.relaxed
+  personality = params.get("LongitudinalPersonality", return_default=True)
+  if personality not in LONGITUDINAL_PERSONALITY_MAP:
+    # another fork can leave behind a personality this one doesn't have
+    personality = log.LongitudinalPersonality.standard
+    params.put_nonblocking("LongitudinalPersonality", personality)
+  return personality
+
 ThermalStatus = log.DeviceState.ThermalStatus
 State = log.SelfdriveState.OpenpilotState
 PandaType = log.PandaState.PandaType
@@ -274,7 +285,7 @@ class SelfdriveD:
       self.CP.openpilotLongitudinalControl and self.CP.carFingerprint == NISSAN_CAR.NISSAN_LEAF
     )
     self.safe_mode = self.params.get_bool("SafeMode")
-    self.personality = log.LongitudinalPersonality.relaxed if self.safe_mode else self.params.get("LongitudinalPersonality", return_default=True)
+    self.personality = read_personality(self.params, self.safe_mode)
     self.recalibrating_seen = False
     self.dm_lockout_set = False
     self.dm_uncertain_alerted = False
@@ -1042,7 +1053,7 @@ class SelfdriveD:
         self.experimental_mode = False
       elif not self.starpilot_toggles.conditional_experimental_mode:
         self.experimental_mode = self.params.get_bool("ExperimentalMode") and experimental_mode_available(self.CP)
-      self.personality = log.LongitudinalPersonality.relaxed if self.safe_mode else self.params.get("LongitudinalPersonality", return_default=True)
+      self.personality = read_personality(self.params, self.safe_mode)
       time.sleep(0.1)
 
   def run(self):
