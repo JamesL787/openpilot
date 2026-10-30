@@ -176,6 +176,9 @@ class AolCardIntent:
     if self.allowed_latch:
       self.latch_clear_count += 1
       self.latch_clear_reason = reason
+      # Night Star: every AOL latch clear names its cause in the rlog
+      from openpilot.common.swaglog import cloudlog
+      cloudlog.event("aol.latchClear", reason=reason, count=self.latch_clear_count)
 
   def _perform(self, action: int) -> None:
     if action == AOL_TOGGLE and self.settings.enabled and not self.explicit_latch:

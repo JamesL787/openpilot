@@ -808,8 +808,8 @@ class TransportPauseFeedback:
         pending and any(event.userDisable for event in events)):
       return False
     temporary_event = any(event.name in temporary_names for event in events)
-    honda_override = honda_override_withdrawal(cp, cs, self, axis)
-    matched_withdrawal = bool((temporary_event or honda_override) and axis.faultEventMonoTime == event_ns <= stamp)
+    honda_drv = honda_override_withdrawal(cp, cs, self, axis)
+    matched_withdrawal = bool((temporary_event or honda_drv) and axis.faultEventMonoTime == event_ns <= stamp)
     original_active = bool(previous is not None and previous[0] == self.session and
       previous[7] == self.session and previous[5] == 'none' and
       previous[9] and previous[11] and previous[13] and previous[6] == event_ns and
@@ -853,7 +853,7 @@ class TransportPauseFeedback:
       all(not event.userDisable or event.name == log.OnroadEvent.EventName.pcmDisable and
           not event.softDisable and not event.immediateDisable for event in events))
     restricted_eps = bool((temporary_eps_restriction(cp, cs) or stock_ford_eps or stock_mazda_eps or stock_rivian_eps or
-                          stock_volkswagen_eps) and self.lateral_only_baseline and
+                          stock_volkswagen_eps or honda_drv) and self.lateral_only_baseline and
       not axis.desiredLongitudinal and not axis.longitudinalActive)
     native = _configured_transport_native(sm, cp, self.session, now_ns, allow_restricted_lateral=restricted_eps)
     if (native is None or not native.pandaInventory or
