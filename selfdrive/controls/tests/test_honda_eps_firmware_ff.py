@@ -693,16 +693,17 @@ def test_the_civics_hold_their_command_delay_on_the_highway():
     civic = cal.name.startswith("civic_")
     assert cal.cmd_delay_highway_s == (cal.cmd_delay_s if civic else highway.get(cal.name, 0.0)), cal.name
     if civic:
-      assert [eps_ff.command_delay(cal, v) for v in (0.0, 12.5, 15.0, 30.0)] == pytest.approx([0.15] * 4), cal.name
+      assert [eps_ff.command_delay(cal, v) for v in (0.0, 12.5, 15.0, 30.0)] == pytest.approx([cal.cmd_delay_s] * 4), cal.name
 
 
 def test_every_vehicle_has_its_own_command_delay():
   delays = {cal.name: cal.cmd_delay_s for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()}
   measured = {"clarity_trw_a020": 0.12, "civic_tba_c020": 0.15, "civic_teg_a010": 0.15}
-  same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15, "civic_tea_h020": 0.15}
+  same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15}
   inferred = {"insight_txm_a040": 0.15, "civic_tba_a030": 0.15}  # the A030: the TEG's (same Nidec image family)
+  provisional = {"civic_tea_h020": 0.27}  # the H020 ran 0.12 s early on the C020's 0.15
   for name, delay in delays.items():
-    assert delay == {**measured, **same_chassis_as_c020, **inferred}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
+    assert delay == {**measured, **same_chassis_as_c020, **inferred, **provisional}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
   # the default is the smaller measured value, so an unmeasured car cannot be pushed late
   assert eps_ff.CMD_DELAY_DEFAULT_S == min(measured.values())
 

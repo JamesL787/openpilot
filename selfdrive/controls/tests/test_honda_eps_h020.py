@@ -41,10 +41,10 @@ def test_stock_h020_is_not_a_ptm():
 def test_calibration_values():
   assert CAL.key_clamp == 1663 and CAL.e4_per_output == 3840.0
   assert (CAL.load.k0, CAL.load.friction) == (-7.8, -285.0)
-  assert CAL.cmd_delay_s == CAL.cmd_delay_highway_s == 0.15
+  assert CAL.cmd_delay_s == CAL.cmd_delay_highway_s == 0.27
   assert CAL.lat_delay_schedule == eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE
   prov = eps_cal.provenance(CAL)
-  assert prov["cmd_delay"].startswith("inferred") and prov["model_delay"].startswith("inferred")
+  assert prov["cmd_delay"].startswith("measured (provisional)") and prov["model_delay"].startswith("inferred")
 
 
 class _WritableParams(_Params):

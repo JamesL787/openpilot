@@ -269,7 +269,9 @@ CIVIC_TEA_H020 = EpsFirmwareCalibration(
   kp_key_bp=(0, 237, 473, 709, 946, 1182, 1419, 1655, 1892), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
   load=CIVIC_TEA_H020_LOAD, p_scale=(1.15, 1.25, 1.15), i_scale=(0.75, 0.95, 1.0),
-  cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # the C020's (same Civic Bosch chassis), inferred
+  # provisional: the C020's 0.15 ran 0.12-0.13 s early vs the plan on both owner routes (00000004, 00000022), flat by
+  # speed band; only 3 clean turns, below the timing standard, so re-measure on the next drive
+  cmd_delay_s=0.27, cmd_delay_highway_s=0.27,
   lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
   rack=CIVIC_TGG_A120_RACK,
   default_on=True,
@@ -520,7 +522,7 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table (the C020's and TGG's); not measured on the H020",
     "load": "measured: k0 and friction on one 3.7 min route of the owner (00000004--a8cb4760f4); the rest inferred from the TGG-A120",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the C020's (same chassis)",
+    "cmd_delay": "measured (provisional): the C020's 0.15 plus the 0.12 s early that plan_timing found on routes 00000004 / 00000022 (3 clean turns)",
     "model_delay": "inferred: the C020's (same chassis)",
     "rack": "inferred: the TGG-A120's yaw-fitted rack (same A table, gearing a donor assumption)",
   },
