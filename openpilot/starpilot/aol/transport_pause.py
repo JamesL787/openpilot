@@ -3,7 +3,7 @@ from openpilot.cereal import log
 from openpilot.starpilot.aol.panda_faults import blocking_fault_mask, blocking_fault_list
 from openpilot.starpilot.aol.runtime import AXIS_MAX_AGE_NS, SAFETY_MAX_AGE_NS, current_native, native_inventory_matches_cp
 from openpilot.starpilot.aol.wire import SafetyState, decode_intent
-from openpilot.starpilot.aol.honda_override import honda_override_withdrawal
+from openpilot.starpilot.aol.honda_override import honda_override_withdrawal, honda_override_hold
 
 
 def cp_identity(cp):
@@ -751,6 +751,8 @@ class TransportPauseFeedback:
 
   def _temporary_steering_intent_current(self, sm, cp, cs, axis, stamp, now_ns, *, latched, producer, signature):
     """Keep an existing armed intent during isolated temporary EPS withdrawal."""
+    if honda_override_hold(self, cp, cs, axis, latched):
+      return True
     if (not latched or self.failed or self.paused or self.retention_started_ns or
         not self.session or str(axis.sessionId) != self.session or not cs.steerFaultTemporary or
         cs.steerFaultPermanent or not cs.canValid or cs.canTimeout or
@@ -806,7 +808,7 @@ class TransportPauseFeedback:
         pending and any(event.userDisable for event in events)):
       return False
     temporary_event = any(event.name in temporary_names for event in events)
-    honda_override = honda_override_withdrawal(cp, cs)  # Night Star: the driver override is the cause
+    honda_override = honda_override_withdrawal(cp, cs, self, axis)
     matched_withdrawal = bool((temporary_event or honda_override) and axis.faultEventMonoTime == event_ns <= stamp)
     original_active = bool(previous is not None and previous[0] == self.session and
       previous[7] == self.session and previous[5] == 'none' and

@@ -67,8 +67,17 @@ class TestHondaCurrentCaller(unittest.TestCase):
   def test_classic_civic_temporary_eps_during_override(self):
     self.run_current_caller(candidate=CAR.HONDA_CIVIC_BOSCH, word=0, override=True)
 
+  # The EPS fault can clear for a few frames mid-override and rise again while the driver still steers. The second
+  # rise must keep the latch too (Clarity 00000060--8a732b781c seg 5 34.18/34.24 s, 0000005d--9880caa2c6 seg 13
+  # 0.33/0.39 s: the latch survived the first rise and cleared on the second).
+  def test_nidec_civic_temporary_eps_refault_during_override(self):
+    self.run_current_caller(candidate=CAR.HONDA_CIVIC, word=0, override=True, refault=True)
+
+  def test_classic_civic_temporary_eps_refault_during_override(self):
+    self.run_current_caller(candidate=CAR.HONDA_CIVIC_BOSCH, word=0, override=True, refault=True)
+
   def run_current_caller(self, *, candidate, word, fault=None, alternate_brake=False, alpha=False, speed_mps=12.5,
-                         pedal=False, host_scenario=None, serialized=False, override=False):
+                         pedal=False, host_scenario=None, serialized=False, override=False, refault=False):
     safety = libsafety_py.libsafety
     with (
       OpenpilotPrefix(),
@@ -155,6 +164,8 @@ class TestHondaCurrentCaller(unittest.TestCase):
       previous, driven, receipt = structs.CarControl(), {}, None
       controls_published, controls_latest, driven_new = {}, {}, {}
       base = time.monotonic_ns() + 100_000_000
+      def eps_fault(tick):   # refault: the fault clears for 50 ms mid-override, then rises again
+        return 80 <= tick < 95 and not (refault and 85 <= tick < 90)
       try:
         for tick in range(145):
           now = base + tick * 10_000_000
@@ -169,7 +180,7 @@ class TestHondaCurrentCaller(unittest.TestCase):
             cruise_button=3 if tick == 20 or host_scenario == 'long_reengage' and tick == 130 else 0,
             cruise=int(21 <= tick < 50 or reengage),
             brake=50 <= tick < 55,
-            eps=6 if 80 <= tick < 95 else 0,
+            eps=6 if eps_fault(tick) else 0,
             gear=2 if 110 <= tick < 125 else None,
             lkas=0, speed_kph=speed_mps * 3.6,
             steer_torque=3000 if override and 78 <= tick < 97 else 0,
@@ -263,7 +274,7 @@ class TestHondaCurrentCaller(unittest.TestCase):
           self.assertAlmostEqual(cs.vEgoRaw, speed_mps, places=5)
           self.assertFalse(cs.standstill or cs.seatbeltUnlatched)
           self.assertFalse(cs.steerFaultPermanent)
-          self.assertEqual(cs.steerFaultTemporary, 80 <= tick < 95)
+          self.assertEqual(cs.steerFaultTemporary, eps_fault(tick))
           self.assertEqual(cs.gearShifter, structs.CarState.GearShifter.reverse if 110 <= tick < 125 else structs.CarState.GearShifter.drive)
           self.assertEqual(cs.brakePressed, 50 <= tick < 55)
           self.assertTrue(cs.cruiseState.available)
@@ -363,7 +374,7 @@ class TestHondaCurrentCaller(unittest.TestCase):
             if address == steer_msg.address and bus == ci.CC.CAN.lkas:
               tx.update(torque=int(tx_parser.vl['STEERING_CONTROL']['STEER_TORQUE']), request=bool(tx_parser.vl['STEERING_CONTROL']['STEER_TORQUE_REQUEST']))
               if not accepted:
-                self.assertTrue(tick in (80, 110) or fault == "relay" and tick >= 110, row)
+                self.assertTrue(tick in (80, 110) or refault and tick == 90 or fault == "relay" and tick >= 110, row)
                 self.assertFalse(command.latActive, row)
                 if tick in (80, 110):
                   self.assertTrue(previous.latActive, row)
