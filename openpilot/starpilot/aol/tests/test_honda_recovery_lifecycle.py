@@ -88,6 +88,13 @@ class TestHondaCurrentCaller(unittest.TestCase):
   def test_classic_civic_temporary_eps_flapping_during_override(self):
     self.run_current_caller(candidate=CAR.HONDA_CIVIC_BOSCH, word=0, override=True, refault='flap')
 
+  # One fault frame, a 50 ms clear and a second rise while braking (Clarity 00000067--95d8a118bd seg 19 1152.3 s).
+  def test_nidec_civic_temporary_eps_blip_during_braking_override(self):
+    self.run_current_caller(candidate=CAR.HONDA_CIVIC, word=0, override=True, refault='blip', brake_override='moving')
+
+  def test_classic_civic_temporary_eps_blip_during_braking_override(self):
+    self.run_current_caller(candidate=CAR.HONDA_CIVIC_BOSCH, word=0, override=True, refault='blip', brake_override='moving')
+
   def run_current_caller(self, *, candidate, word, fault=None, alternate_brake=False, alpha=False, speed_mps=12.5,
                          pedal=False, host_scenario=None, serialized=False, override=False, refault=False, brake_override=None):
     safety = libsafety_py.libsafety
@@ -185,6 +192,8 @@ class TestHondaCurrentCaller(unittest.TestCase):
       def eps_fault(tick):   # refault: the fault clears for 50 ms mid-override, then rises again; flap: three times
         if refault == 'flap':
           return tick in (80, 81, 82, 83, 86, 87, 88, 89, 90, 92, 93, 94)
+        if refault == 'blip':   # one fault frame, 50 ms clear, then the rise
+          return tick == 80 or 86 <= tick < 95
         return 80 <= tick < 95 and not (refault and 85 <= tick < 90)
       try:
         for tick in range(145):
