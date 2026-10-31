@@ -127,3 +127,78 @@ def test_actual_configure_loads_typed_factors_without_startup_rewrite():
     learning.owner.set_factors(1.2, 0.9)
     learning.persist(18000)
     assert writes == [("HondaGasFactorParams", 1.2), ("HondaWindFactorParams", 0.9)]
+
+
+def test_civic_brake_request_starts_deeper_and_coasts_the_band_above():
+  controller = owner(CAR.HONDA_CIVIC_BOSCH)
+  cc, cs = inputs(speed=3.0)
+  assert not controller.update(cc, cs, -0.15)[3]
+  assert controller.update(cc, cs, -0.30)[3]
+
+
+def test_civic_brake_request_holds_at_least_its_minimum_unless_accel_is_asked():
+  from opendbc.car.honda.bosch_longitudinal import BOSCH_A_BRAKE_MIN_HOLD_S
+  controller = owner(CAR.HONDA_CIVIC_BOSCH)
+  cc, cs = inputs(speed=3.0)
+  assert controller.update(cc, cs, -0.4)[3]
+  frames = 0
+  while controller.update(cc, cs, 0.05)[3]:
+    frames += 1
+  assert frames * controller.brake_edge.dt == pytest.approx(BOSCH_A_BRAKE_MIN_HOLD_S, abs=0.03)
+  assert controller.update(cc, cs, -0.4)[3]
+  assert not controller.update(cc, cs, 0.5)[3]  # a clear accel request ends the hold at once
+
+
+def test_civic_gas_after_release_ramps_from_35_instead_of_jumping_to_the_cap():
+  from opendbc.car.honda.bosch_longitudinal import BOSCH_A_RELEASE_GAS_RAMP_S, BOSCH_A_RELEASE_GAS_START
+  controller = owner(CAR.HONDA_CIVIC_BOSCH)
+  cc, cs = inputs(speed=3.0)
+  for _ in range(100):
+    controller.update(cc, cs, -0.4)
+  gases = []
+  for _ in range(int(BOSCH_A_RELEASE_GAS_RAMP_S / controller.brake_edge.dt) + 20):
+    _, gas, _, braking = controller.update(cc, cs, 0.3)
+    assert not braking
+    gases.append(gas)
+  assert gases[0] <= BOSCH_A_RELEASE_GAS_START
+  assert all(b >= a - 1e-6 for a, b in zip(gases, gases[1:], strict=False))
+  assert max(b - a for a, b in zip(gases, gases[1:], strict=False)) < 10.0
+  free = owner(CAR.HONDA_CIVIC_BOSCH)
+  for _ in range(100):
+    target = free.update(cc, cs, 0.3)[1]
+  assert gases[-1] == pytest.approx(target, rel=0.05)
+
+
+def test_civic_brake_edge_keeps_stopping_and_long_drop_behavior():
+  controller = owner(CAR.HONDA_CIVIC_BOSCH)
+  cc, cs = inputs(speed=1.0, state="stopping")
+  assert controller.update(cc, cs, 0.1)[3]
+  cc.longActive = False
+  assert not controller.update(cc, cs, -1.0)[3]
+
+
+def test_brake_fixes_run_on_bosch_a_harness_cars_only():
+  for identity in (CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CRV_5G):
+    controller = owner(identity)
+    assert controller.brake_edge is not None and controller.brake_onset is not None
+  accord = owner(CAR.HONDA_ACCORD)
+  assert accord.brake_edge is None and accord.brake_onset is None
+  cp = CarInterface.get_params(CAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), [], True, False, False)
+  cp.radarUnavailable = True
+  no_radar = BoschLongitudinal(cp, CarControllerParams(cp))
+  assert no_radar.brake_edge is None and no_radar.brake_onset is None
+
+
+def test_crv_brake_edge_holds_the_request_and_ramps_gas_after_release():
+  from opendbc.car.honda.bosch_longitudinal import BOSCH_A_RELEASE_GAS_RAMP_S, BOSCH_A_RELEASE_GAS_START
+  controller = owner(CAR.HONDA_CRV_5G)
+  cc, cs = inputs(speed=3.0)
+  assert not controller.update(cc, cs, -0.15)[3]
+  for _ in range(100):
+    assert controller.update(cc, cs, -0.4)[3]
+  gases = []
+  for _ in range(int(BOSCH_A_RELEASE_GAS_RAMP_S / controller.brake_edge.dt) + 20):
+    _, gas, _, braking = controller.update(cc, cs, 0.3)
+    gases.append(gas)
+  assert not braking and gases[0] <= BOSCH_A_RELEASE_GAS_START
+  assert all(b >= a - 1e-6 for a, b in zip(gases, gases[1:], strict=False))
