@@ -39,7 +39,7 @@ class AA:
   def call(self, command, **kwargs):
     assert command == 'phone_window'
     self.calls.append(kwargs)
-    code, data, _ = self.http('/api/android-auto/source/' + kwargs['source'])  # ty: ignore[call-non-callable]  # set by the test
+    code, data, _ = self.http('/api/starport/source/' + kwargs['source'])  # ty: ignore[call-non-callable]  # set by the test
     assert code == 200 and data == {'valid': True}, 'Source proof was not live'
     if not self.window:
       return {'handled': False}
@@ -59,17 +59,17 @@ class ProjectionPhoneWindowHttpTest(unittest.TestCase):
     self.params = Params(root)
     self.access = GalaxyAccessOwner(root / 'access')
     self.assertTrue(self.access.configure('password123', lambda: True))
-    self.bluetooth, self.aa = Bluetooth(), AA()
+    self.bluetooth, self.starport = Bluetooth(), AA()
     self.spotify = SimpleNamespace(prepared=[], adopted=[])
     self.spotify.prepare_phone_pairing = lambda: self.spotify.prepared.append(True)
     self.spotify.adopt_phone = lambda *args: self.spotify.adopted.append(args)
     self.server = make_server(port=0, owner=self.access, parked=lambda: True,
-                              android_auto_setup=SimpleNamespace(enabled=lambda: self.params.enabled),
-                              android_auto_client=self.aa, bluetooth=self.bluetooth, spotify_setup=self.spotify)
+                              starport_setup=SimpleNamespace(enabled=lambda: self.params.enabled),
+                              starport_client=self.starport, bluetooth=self.bluetooth, spotify_setup=self.spotify)
     self.worker = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
     self.worker.start()
     self.addCleanup(self.stop)
-    self.aa.http = self.http
+    self.starport.http = self.http
     code, _, headers = self.http('/api/auth/login', {'password': 'password123'})
     self.assertEqual(code, 200)
     self.cookie = headers['Set-Cookie'].split(';', 1)[0]
@@ -95,7 +95,7 @@ class ProjectionPhoneWindowHttpTest(unittest.TestCase):
   def action(self, payload):
     return self.http('/api/bluetooth/action', payload)
 
-  def test_window_opens_answers_and_reports_through_android_auto_while_projecting(self):
+  def test_window_opens_answers_and_reports_through_starport_while_projecting(self):
     code, result, _ = self.action({'operation': 'accept_pair'})
     self.assertEqual(code, 200)
     self.assertTrue(result['pairing']['incoming'])
@@ -104,41 +104,41 @@ class ProjectionPhoneWindowHttpTest(unittest.TestCase):
     self.assertEqual(self.spotify.prepared, [True])
     code, status, _ = self.http('/api/bluetooth/status')
     self.assertEqual((code, status['pairing']['prompt']['value']), (200, '123456'))
-    self.aa.paired = {'address': PHONE, 'name': 'iPhone', 'uuids': ['0000110a-0000-1000-8000-00805f9b34fb']}
+    self.starport.paired = {'address': PHONE, 'name': 'iPhone', 'uuids': ['0000110a-0000-1000-8000-00805f9b34fb']}
     code, _, _ = self.action({'operation': 'pairing_response', 'promptId': PROMPT, 'accepted': True})
     self.assertEqual(code, 200)
     self.assertEqual(self.spotify.adopted, [(PHONE, 'iPhone', ('0000110a-0000-1000-8000-00805f9b34fb',))])
-    sources = {call['source'] for call in self.aa.calls}
+    sources = {call['source'] for call in self.starport.calls}
     self.assertEqual(len(sources), 1, 'every window request must reuse one source')
-    self.assertEqual(self.aa.calls[2]['prompt_id'], PROMPT)
+    self.assertEqual(self.starport.calls[2]['prompt_id'], PROMPT)
     self.assertEqual(self.bluetooth.calls, [])
 
   def test_without_projection_the_comma_owner_opens_the_window(self):
-    self.aa.window = False
+    self.starport.window = False
     code, _, _ = self.action({'operation': 'accept_pair'})
     self.assertEqual(code, 200)
     self.assertEqual(self.bluetooth.calls, ['accept_pair'])
-    self.aa.calls.clear()
+    self.starport.calls.clear()
     self.http('/api/bluetooth/status')
-    self.assertEqual(self.aa.calls, [], 'an unhandled window must not keep a source alive')
+    self.assertEqual(self.starport.calls, [], 'an unhandled window must not keep a source alive')
 
-  def test_android_auto_off_never_contacts_the_daemon(self):
+  def test_starport_off_never_contacts_the_daemon(self):
     self.params.enabled = False
     self.assertEqual(self.action({'operation': 'accept_pair'})[0], 200)
-    self.assertEqual(self.aa.calls, [])
+    self.assertEqual(self.starport.calls, [])
     self.assertEqual(self.bluetooth.calls, ['accept_pair'])
 
   def test_accessory_scan_pair_prompt_and_cancel_are_delegated(self):
     for operation in ('scan', 'stop_scan'):
       self.assertEqual(self.action({'operation': operation})[0], 200)
-      self.assertNotEqual(self.http('/api/android-auto/source/' + self.aa.calls[-1]['source'])[1], {'valid': True})
+      self.assertNotEqual(self.http('/api/starport/source/' + self.starport.calls[-1]['source'])[1], {'valid': True})
     self.assertEqual(self.action({'operation': 'pair', 'address': PHONE})[0], 200)
-    source = self.aa.calls[-1]['source']
-    self.assertEqual(self.aa.calls[-1]['address'], PHONE)
+    source = self.starport.calls[-1]['source']
+    self.assertEqual(self.starport.calls[-1]['address'], PHONE)
     self.assertEqual(self.http('/api/bluetooth/status')[0], 200)
     self.assertEqual(self.action({'operation': 'pairing_response', 'promptId': PROMPT, 'accepted': True})[0], 200)
     self.assertEqual(self.action({'operation': 'cancel_pair'})[0], 200)
-    self.assertEqual({c['source'] for c in self.aa.calls[-4:]}, {source})
+    self.assertEqual({c['source'] for c in self.starport.calls[-4:]}, {source})
     self.assertEqual(self.bluetooth.calls, [])
     self.assertEqual(self.spotify.prepared, [])
 

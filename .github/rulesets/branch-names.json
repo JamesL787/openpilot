@@ -1,0 +1,23 @@
+{
+  "name": "No tool or agent branch prefixes",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/claude/**",
+        "refs/heads/codex/**",
+        "refs/heads/copilot/**",
+        "refs/heads/cursor/**",
+        "refs/heads/gemini/**"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "creation"
+    }
+  ]
+}

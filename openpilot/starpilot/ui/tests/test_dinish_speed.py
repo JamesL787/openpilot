@@ -14,7 +14,7 @@ from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile, 
 from openpilot.starpilot.ui.onroad_customization import default_document, validate_document
 from openpilot.starpilot.ui.onroad_state import ObservationKind, slc_controls, speed_limit_bounds
 from openpilot.starpilot.ui.tests.test_speed_stack import road
-from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, validate_layout_for_viewport
+from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport, validate_layout_for_viewport
 
 
 def test_numeric_subset_is_pinned_and_has_real_tabular_glyphs():
@@ -185,7 +185,7 @@ def test_galaxy_card_pixels_align_without_reading_font_textures():
   from unittest.mock import patch
   from openpilot.starpilot.ui.layout_preview_renderer import _Canvas, sample_state
   from openpilot.starpilot.ui.onroad_large_widgets import UnifiedSpeedWidget
-  from openpilot.starpilot.system.android_auto.projection_layout import (
+  from openpilot.starpilot.system.starport.projection_layout import (
     default_layout_for_viewport, projection_customization, validate_layout_for_viewport)
 
   original_readback = rl.load_image_from_texture

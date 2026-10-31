@@ -211,6 +211,18 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/body_h7/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/body_h7/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/body_h7/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/bootstub.body_h7.bin": {
     "recipe": "panda/SConscript",
     "required_tracked": true
@@ -287,7 +299,31 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/panda/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/panda_can_ignition_only.bin.signed": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_can_ignition_only/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_can_ignition_only/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_can_ignition_only/main.elf": {
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
@@ -295,7 +331,31 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/panda_h7/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/panda_h7_can_ignition_only.bin.signed": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_can_ignition_only/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_can_ignition_only/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_can_ignition_only/main.elf": {
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
@@ -303,7 +363,31 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/panda_h7_hkg_remote/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_hkg_remote/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_hkg_remote/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/panda_h7_hkg_remote_can_ignition_only.bin.signed": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_hkg_remote_can_ignition_only/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_hkg_remote_can_ignition_only/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_hkg_remote_can_ignition_only/main.elf": {
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
@@ -311,7 +395,31 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/panda_h7_remote/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_remote/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_remote/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/panda_h7_remote_can_ignition_only.bin.signed": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_remote_can_ignition_only/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_remote_can_ignition_only/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_remote_can_ignition_only/main.elf": {
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
@@ -319,7 +427,31 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/panda_h7_tesla_wake/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_tesla_wake/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_tesla_wake/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/panda_h7_tesla_wake_can_ignition_only.bin.signed": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_tesla_wake_can_ignition_only/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_tesla_wake_can_ignition_only/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_h7_tesla_wake_can_ignition_only/main.elf": {
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
@@ -327,7 +459,31 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/panda_hkg_remote/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_hkg_remote/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_hkg_remote/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/panda_hkg_remote_can_ignition_only.bin.signed": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_hkg_remote_can_ignition_only/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_hkg_remote_can_ignition_only/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_hkg_remote_can_ignition_only/main.elf": {
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
@@ -335,7 +491,31 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/panda_remote/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_remote/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_remote/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/panda_remote_can_ignition_only.bin.signed": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_remote_can_ignition_only/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_remote_can_ignition_only/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_remote_can_ignition_only/main.elf": {
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
@@ -343,7 +523,31 @@
     "recipe": "panda/SConscript",
     "required_tracked": true
   },
+  "panda/board/obj/panda_tesla_wake/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_tesla_wake/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_tesla_wake/main.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
   "panda/board/obj/panda_tesla_wake_can_ignition_only.bin.signed": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_tesla_wake_can_ignition_only/bootstub.elf": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_tesla_wake_can_ignition_only/main.bin": {
+    "recipe": "panda/SConscript",
+    "required_tracked": true
+  },
+  "panda/board/obj/panda_tesla_wake_can_ignition_only/main.elf": {
     "recipe": "panda/SConscript",
     "required_tracked": true
   },

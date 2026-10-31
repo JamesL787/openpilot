@@ -111,7 +111,7 @@ def test_actual_ui_constructor_borrows_one_collector_for_both_runtimes():
   main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main')
   messages = Messages()
   layout = SimpleNamespace(star=SimpleNamespace(_favorite_actions=(),
-                           favorites_owner=SimpleNamespace(snapshot=Mock(), invoke=Mock())), close=Mock())
+                           favorites_owner=SimpleNamespace(snapshot=Mock(), invoke=Mock())), close=Mock(), poll_arabesque=Mock())
   created = []
 
   def runtime(*args, **kwargs):

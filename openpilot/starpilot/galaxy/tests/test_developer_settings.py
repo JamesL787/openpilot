@@ -7,7 +7,7 @@ from typing import cast
 import tempfile
 import unittest
 
-from openpilot.starpilot.galaxy.developer_settings import DRIVER_MONITORING_RESET, AA_WIFI_KEY, DeveloperSettingsOwner
+from openpilot.starpilot.galaxy.developer_settings import DRIVER_MONITORING_RESET, STARPORT_WIFI_KEY, DeveloperSettingsOwner
 from openpilot.starpilot.galaxy.settings import AuthorityContext, ContextSource, SettingsChanged, SettingsGateway
 from openpilot.starpilot.longitudinal.voacc import KEY, selected
 from openpilot.starpilot.ui.feature_settings_state import FeatureSettingsRequest
@@ -37,7 +37,7 @@ class FileParams:
     Path(self.get_param_path(key)).write_bytes(b"1" if value else b"0")
 
 
-class FakeAndroidAuto:
+class FakeStarPort:
   def __init__(self, enabled=False, running=True):
     self.enabled, self.running = enabled, running
 
@@ -136,25 +136,25 @@ class DeveloperSettingsTest(unittest.TestCase):
     with self.assertRaises(SettingsChanged):
       gateway.confirm(intent, token, generation, session_valid=lambda: False)
 
-  def test_android_auto_stay_on_wifi_toggle(self):
-    self.assertNotIn(AA_WIFI_KEY, [row.key for row in self.owner.snapshot().rows])
-    service = FakeAndroidAuto()
-    owner = DeveloperSettingsOwner(self.params, lambda: self.parked, android_auto=lambda: service)
-    row = next(row for row in owner.snapshot().rows if row.key == AA_WIFI_KEY)
+  def test_starport_stay_on_wifi_toggle(self):
+    self.assertNotIn(STARPORT_WIFI_KEY, [row.key for row in self.owner.snapshot().rows])
+    service = FakeStarPort()
+    owner = DeveloperSettingsOwner(self.params, lambda: self.parked, starport=lambda: service)
+    row = next(row for row in owner.snapshot().rows if row.key == STARPORT_WIFI_KEY)
     self.assertEqual((row.value, row.choices, row.available), ("Off", ("Off", "On"), True))
-    self.assertTrue(owner.apply(FeatureSettingsRequest(AA_WIFI_KEY, row.source, "On")))
+    self.assertTrue(owner.apply(FeatureSettingsRequest(STARPORT_WIFI_KEY, row.source, "On")))
     self.assertTrue(service.enabled)
-    self.assertFalse(owner.apply(FeatureSettingsRequest(AA_WIFI_KEY, row.source, "Off")))  # stale view
-    self.assertFalse(owner.apply(FeatureSettingsRequest(AA_WIFI_KEY, b"1", "maybe")))
+    self.assertFalse(owner.apply(FeatureSettingsRequest(STARPORT_WIFI_KEY, row.source, "Off")))  # stale view
+    self.assertFalse(owner.apply(FeatureSettingsRequest(STARPORT_WIFI_KEY, b"1", "maybe")))
     self.parked = False
-    self.assertFalse(next(row for row in owner.snapshot().rows if row.key == AA_WIFI_KEY).available)
-    self.assertFalse(owner.apply(FeatureSettingsRequest(AA_WIFI_KEY, b"1", "Off")))
+    self.assertFalse(next(row for row in owner.snapshot().rows if row.key == STARPORT_WIFI_KEY).available)
+    self.assertFalse(owner.apply(FeatureSettingsRequest(STARPORT_WIFI_KEY, b"1", "Off")))
     self.parked = True
-    self.assertTrue(owner.apply(FeatureSettingsRequest(AA_WIFI_KEY, b"1", "Off")))
+    self.assertTrue(owner.apply(FeatureSettingsRequest(STARPORT_WIFI_KEY, b"1", "Off")))
     self.assertFalse(service.enabled)
     service.running = False
-    self.assertNotIn(AA_WIFI_KEY, [row.key for row in owner.snapshot().rows])
-    self.assertFalse(owner.apply(FeatureSettingsRequest(AA_WIFI_KEY, b"0", "On")))
+    self.assertNotIn(STARPORT_WIFI_KEY, [row.key for row in owner.snapshot().rows])
+    self.assertFalse(owner.apply(FeatureSettingsRequest(STARPORT_WIFI_KEY, b"0", "On")))
 
   def test_driver_monitoring_reset_matches_native_semantics_and_guards_preview(self):
     self.params.put_bool("IsRhdDetected", True, block=True)

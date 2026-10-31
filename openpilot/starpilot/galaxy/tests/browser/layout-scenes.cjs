@@ -8,7 +8,7 @@ const web = path.resolve(__dirname, '../../web')
 const fixtures = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
 import json
 from openpilot.starpilot.ui.onroad_customization import default_document, customization_metadata
-from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, layout_metadata_for_viewport
+from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport, layout_metadata_for_viewport
 doc=default_document()
 for layout in doc['layouts'].values():
   for widget in layout.values(): widget['enabled']=True
@@ -35,7 +35,7 @@ print(json.dumps(dict(native=native,projection=projection)))
         const { profile, scene, art } = route.request().postDataJSON()
         return route.fulfill({ contentType: 'image/png', body: readFileSync(path.join(nativeArt, `${profile}-${scene}-${art === true ? 'art' : 'backdrop'}.png`)) })
       }
-      if (pathname.startsWith('/api/')) return route.fulfill({ json: pathname === '/api/android-auto/layout' ? fixtures.projection : fixtures.native })
+      if (pathname.startsWith('/api/')) return route.fulfill({ json: pathname === '/api/starport/layout' ? fixtures.projection : fixtures.native })
       if (pathname === '/') return route.fulfill({ contentType: 'text/html', body: `
         <meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/css/galaxy.css"><link rel="stylesheet" href="/css/settings.css">
         <main class="gx-content"><div id="app"></div></main><script type="module">
@@ -71,12 +71,12 @@ print(json.dumps(dict(native=native,projection=projection)))
           assert.equal(await page.getByRole('button', { name: `${name} is hidden in this scene. Choose General edit to arrange it.`, exact: true }).isDisabled(), true)
         }
         if (target !== 'large') assert.equal(state.visible.includes('stopped_timer'), ['general', 'stopped'].includes(scene.id))
-        if (scene.id === 'slc_pending') {
+        if (['slc_max', 'slc_retained'].includes(scene.id)) {
           assert.equal(state.visible.includes('speed_limit_actions'), true)
           const actions = page.locator('.gx-layout__widget[aria-label^="Speed limit actions"]')
           assert.equal(await actions.locator(`[data-preview-source="${nativeArt ? 'runtime' : 'placeholder'}"]`).count(), 1)
         } else if (scene.id !== 'general') {
-          assert.equal(await page.locator('.gx-layout-widget-art').getByText('Apply 54', { exact: true }).count(), 0)
+          assert.equal(state.visible.includes('speed_limit_actions'), false)
         }
         if (output) await page.locator('svg.gx-layout__preview').screenshot({ path: path.join(output, `${target}-${scene.id}.png`) })
       }

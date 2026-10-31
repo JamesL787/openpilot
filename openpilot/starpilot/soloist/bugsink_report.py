@@ -178,7 +178,7 @@ class Reporter:
     self._stop.set()
 
   def _run(self) -> None:
-    from openpilot.starpilot.system.android_auto.bugsink_transport import configured_sender
+    from openpilot.starpilot.system.starport.bugsink_transport import configured_sender
     while not self._stop.wait(self._interval):
       try:
         if self._parked():

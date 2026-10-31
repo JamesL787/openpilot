@@ -16,7 +16,7 @@ from opendbc.car.ford.generic_canfd_can import create_extended_canfd_msg
 from opendbc.car.ford.generic_canfd_lateral import (
   GenericCanfdLateralController, qualified as generic_canfd_qualified, bounded_command as generic_canfd_bounded_command,
 )
-from opendbc.car.ford.mache_lateral import MachELateralController, FordLateralResult, bounded_command, qualified as mache_qualified
+from opendbc.car.ford.mache_lateral import MachELateralController, FordLateralResult, bounded_command, path_speed_window_supported, qualified as mache_qualified
 from opendbc.car.ford.new_port_curvature import create_controller as create_new_port_curvature, bounded_command as new_port_bounded_command
 from opendbc.car.ford.values import CarControllerParams, FordFlags, FordSafetyFlags, CAR
 from opendbc.car.interfaces import CarControllerBase, V_CRUISE_MAX
@@ -165,7 +165,8 @@ class CarController(CarControllerBase):
       previous = self.mache_lateral.curvature_last
       previous_path_angle = self.mache_lateral.path_angle_last
       demanded = self.mache_lateral.update(CC, CS, actuators) if self.mache_extended_announced else FordLateralResult()
-      lateral = bounded_command(self.mache_lateral, demanded, previous, CS.out.vEgoRaw, previous_path_angle)
+      lateral = bounded_command(self.mache_lateral, demanded, previous, CS.out.vEgoRaw, previous_path_angle,
+                                getattr(CS, "bluepilot_speed_window", None) if path_speed_window_supported(self.CP) else None)
       self.mache_lateral_demand = demanded
       self.mache_ui_owned |= bool(lateral.active)
       self.apply_curvature_last = lateral.curvature

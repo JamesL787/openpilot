@@ -42,10 +42,10 @@ class SettingsGatewayTest(unittest.TestCase):
     self.params = Params(temporary.name)
     native = ToyotaInterface.get_non_essential_params(ToyotaCar.TOYOTA_COROLLA_TSS2)
     cp = SimpleNamespace(carFingerprint="TOYOTA_COROLLA_TSS2", openpilotLongitudinalControl=True,
-                         pcmCruise=False, notCar=False, dashcamOnly=False, passive=False,
-                         brand="toyota", steerControlType=native.steerControlType, carVin="",
-                         lateralTuning=native.lateralTuning, minSteerSpeed=native.minSteerSpeed, safetyConfigs=native.safetyConfigs,
-                         transmissionType=car.CarParams.TransmissionType.automatic)
+      pcmCruise=False, notCar=False, dashcamOnly=False, passive=False,
+      brand="toyota", steerControlType=native.steerControlType, carVin="",
+      lateralTuning=native.lateralTuning, minSteerSpeed=native.minSteerSpeed, safetyConfigs=native.safetyConfigs,
+      transmissionType=car.CarParams.TransmissionType.automatic)
     self.context = MutableContext(cp)
     self.gateway = SettingsGateway(self.params, self.context, clock=lambda: 100.0)
     self.session, self.generation = "local-session", b"generation"
@@ -257,9 +257,12 @@ class SettingsGatewayTest(unittest.TestCase):
     self.assertEqual(next(page for page in lateral["pages"] if page["id"] == "aol")["title"], self.page("aol")["title"])
     self.assertEqual([row["page"] for row in hub["rows"]],
                      ["curve", "slc", "lane", "lane_change", "profiles", "conditional", "torque", "aol", "wheel", "night_star",
-                      "vehicle", "aggressive", "standard", "relaxed", "traffic"])
+                      "vehicle", "personalities"])
+    self.assertEqual([row["page"] for row in self.page("personalities")["rows"]],
+                     ["aggressive", "standard", "relaxed", "traffic"])
     for page in ("slc", "lane", "lane_change", "profiles", "conditional", "conditional/cem", "conditional/ccm",
-                 "curve", "torque", "aol", "appearance", "display", "sounds", "pip", "sentry", "aggressive/following"):
+                 "curve", "torque", "aol", "appearance", "display", "sounds", "pip", "sentry", "personalities",
+                 "aggressive", "standard", "relaxed", "traffic", "aggressive/following"):
       with self.subTest(page=page):
         result = self.page(page)
         self.assertTrue(result["rows"])
@@ -277,7 +280,7 @@ class SettingsGatewayTest(unittest.TestCase):
     self.assertEqual([rows[label][1]["value"] for label in
                       ("Hide Personality Alerts", "Wheel brake and acceleration colors", "C4 amber signal border", "C4 red blind-spot border")],
                      ["Off", "Off", "Off", "On"])
-    # Layout owns widgets, stopped timer and Rainbow Road.
+    # Layout owns widgets/timer/Rainbow Road.
     self.assertFalse({"Stopped Timer", "Show Torque Bar", "Rainbow Road", "Hide Driver Monitoring Icon"} & rows.keys())
     self.assertFalse(rows["C4 amber signal border"][1]["confirm"])
     intent = self.gateway.preview(page["view"], rows["C4 amber signal border"][0], 1, self.session, self.generation)
@@ -450,7 +453,7 @@ class SettingsGatewayTest(unittest.TestCase):
     self.params.put('SLCPriority1', 'Dashboard', block=True)
     self.params.put('SLCPriority2', 'Dashboard', block=True)
     for replay, vision, available in (("0", "0", False), ("1", "0", False),
-                                      ("0", "1", False), ("1", "1", True)):
+      ("0", "1", False), ("1", "1", True)):
       with self.subTest(replay=replay, vision=vision), mock.patch.dict(
           os.environ, {"SLC_REPLAY_RUNTIME": replay, "SLC_VISION_DEVELOPMENT": vision}):
         self.assertEqual(diagnostic_choice_enabled(os.environ), available)
@@ -466,7 +469,7 @@ class SettingsGatewayTest(unittest.TestCase):
         self.assertIn("accepts", confirmation["reason"])
 
     with mock.patch.dict(os.environ, {"SLC_REPLAY_RUNTIME": "0", "SLC_VISION_DEVELOPMENT": "0"}):
-      # Finalized Vision needs no development/replay flags.
+      # Vision needs no dev/replay flags.
       page = self.page("slc")
       index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Primary source")
       intent = self.gateway.preview(page["view"], index, 1, self.session, self.generation)
@@ -492,7 +495,7 @@ class SettingsGatewayTest(unittest.TestCase):
             self.gateway.confirm(intent["intent"], self.session, self.generation)
           self.assertEqual(read_saved(self.params, "SLCPriority1", 128)[0], b"Dashboard")
 
-      # Stock-ACC display choice never grants LONG from a saved switch.
+      # Stock-ACC display cannot grant LONG.
       from openpilot.starpilot.feature_runtime import slc_runtime_settings, vision_control_enabled
       stock = HondaInterface.get_params(HondaCAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), [], False, False, False)
       self.assertFalse(stock.openpilotLongitudinalControl)
@@ -638,7 +641,7 @@ class SettingsGatewayTest(unittest.TestCase):
 
   def test_conditional_intent_can_save_during_drive_and_rechecks_source(self):
     from openpilot.starpilot.conditional_mode.preferences import decode_preferences
-    self.context.value.cp.pcmCruise = True  # Honda Nidec can still have native longitudinal control.
+    self.context.value.cp.pcmCruise = True  # Nidec still supports native long.
     page = self.page("conditional")
     self.assertEqual(page["rows"][0]["value"], "Conditional Experimental")
     intent = self.gateway.preview(page["view"], 0, 1, self.session, self.generation)
@@ -1030,7 +1033,7 @@ class SettingsGatewayTest(unittest.TestCase):
     def revoked():
       nonlocal checks
       checks += 1
-      return checks == 1  # Initial check passes; owner callback sees revoked credential.
+      return checks == 1  # Revoke before owner callback.
     self.assertFalse(self.gateway.confirm(intent["intent"], self.session, self.generation, session_valid=revoked))
     self.assertFalse(self.params.get_bool("LaneCentering"))
 
@@ -1123,10 +1126,10 @@ class SettingsGatewayTest(unittest.TestCase):
   def test_live_lane_keys_write_through_existing_owner(self):
     _, root = self._live_lane_context()
     for key, value, expected in (("LaneCentering", "On", b"1"),
-                                 ("LaneCenteringPauseOnSignal", "Off", b"0"),
-                                 ("LaneCenterOffset", 0.15, b"0.15"),
-                                 ("LaneCenteringE2EAuthority", 75, b"0.75"),
-                                 ("LaneCenteringStrength", 105, b"1.575")):
+      ("LaneCenteringPauseOnSignal", "Off", b"0"),
+      ("LaneCenterOffset", 0.15, b"0.15"),
+      ("LaneCenteringE2EAuthority", 75, b"0.75"),
+      ("LaneCenteringStrength", 105, b"1.575")):
       with self.subTest(key=key):
         page = self.page("lane")
         labels = {"LaneCentering": "Enable Lane Centering", "LaneCenteringPauseOnSignal": "Pause on signal",
@@ -1154,7 +1157,7 @@ class SettingsGatewayTest(unittest.TestCase):
       self.context.value = AuthorityContext(False, bad, bad.as_reader().as_builder().to_bytes())
       self.assertFalse(any(row["available"] for row in self.page("lane")["rows"]))
     self.context.value = AuthorityContext(False, SimpleNamespace(brand="unknown", carFingerprint="OTHER", notCar=False,
-                                        dashcamOnly=False, passive=False), b"other")
+      dashcamOnly=False, passive=False), b"other")
     page = self.page("lane")
     rows = page["rows"]
     self.assertFalse(next(row for row in rows if row["label"] == "Lane Centering Strength")["available"])
@@ -1212,7 +1215,7 @@ class SettingsGatewayTest(unittest.TestCase):
     self.assertIsNone(self.params.get("LaneCenteringE2EAuthority"))
 
   def test_uploads_missing_default_off_saved_values_and_vehicle_independence(self):
-    # Native keys are qualified separately.
+    # Native keys tested separately.
     root = Path(self.params.get_param_path("IsMetric")).parent
     class Files:
       def get_param_path(self, key):
@@ -1350,8 +1353,8 @@ class LiveContextTest(unittest.TestCase):
     self.assertTrue(self.source.sample().parked)
     self.messages.updated["deviceState"] = False
     self.boot += 1_600_000_000
-    self.assertFalse(self.source.sample().parked)  # Python mono stamp ages against boot after resume.
-    # Re-received pre-resume frames stay blocked.
+    self.assertFalse(self.source.sample().parked)  # Mono stamp ages against boot on resume.
+    # Pre-resume frames stay blocked.
     self.messages.updated["deviceState"] = True
     self.assertFalse(self.source.sample().parked)
     self.mono += 30_000_000
@@ -1365,7 +1368,7 @@ class LiveContextTest(unittest.TestCase):
     self.assertFalse(self.source.sample().parked)
 
   def test_startup_queued_frame_and_unbounded_clock_pair(self):
-    # Queued frames predate reconstruction.
+    # Queued frames predate this source.
     source = LiveContextSource(self.params, self.messages, mono_clock=lambda: self.mono,
                                boot_clock=lambda: self.boot, evidence_wait_ms=0)
     self.assertFalse(source.sample().parked)
@@ -1387,8 +1390,8 @@ class LiveContextTest(unittest.TestCase):
     self.assertFalse(self.source.sample().parked)
     self.params.put_bool("IsOffroad", True, block=True)
     self.messages.pandas[0].ignitionCan = True
-    self.assertTrue(self.source.sample().parked)  # Effective Offroad permits configuration with ignition on.
-    self.assertTrue(self.source.parked())       # Operations also follow the effective offroad state.
+    self.assertTrue(self.source.sample().parked)  # Offroad permits config with ignition.
+    self.assertTrue(self.source.parked())       # Operations use effective offroad.
     self.messages.pandas[0].ignitionCan = False
     self.messages.device.started = True
     self.assertFalse(self.source.sample().parked)
@@ -1421,8 +1424,8 @@ class LiveContextTest(unittest.TestCase):
       self.wait_now += timeout / 1000
     messages.update = mock.Mock(side_effect=wait_update)
     source = LiveContextSource(self.params, messages, mono_clock=lambda: self.mono,
-                               boot_clock=lambda: self.boot, evidence_wait_ms=20,
-                               wait_clock=lambda: self.wait_now)
+      boot_clock=lambda: self.boot, evidence_wait_ms=20,
+      wait_clock=lambda: self.wait_now)
     self.assertFalse(source.parked())
     self.assertEqual(messages.calls[2], 0)
     self.assertTrue(any(timeout > 0 for timeout in messages.calls[3:]))
@@ -1503,10 +1506,10 @@ class SettingsHttpTest(unittest.TestCase):
     self.params = Params(temporary.name)
     native = ToyotaInterface.get_non_essential_params(ToyotaCar.TOYOTA_COROLLA_TSS2)
     cp = SimpleNamespace(carFingerprint="TOYOTA_COROLLA_TSS2", openpilotLongitudinalControl=True,
-                         pcmCruise=False, notCar=False, dashcamOnly=False, passive=False,
-                         brand="toyota", steerControlType=native.steerControlType, carVin="",
-                         lateralTuning=native.lateralTuning, minSteerSpeed=native.minSteerSpeed, safetyConfigs=native.safetyConfigs,
-                         transmissionType=car.CarParams.TransmissionType.automatic)
+      pcmCruise=False, notCar=False, dashcamOnly=False, passive=False,
+      brand="toyota", steerControlType=native.steerControlType, carVin="",
+      lateralTuning=native.lateralTuning, minSteerSpeed=native.minSteerSpeed, safetyConfigs=native.safetyConfigs,
+      transmissionType=car.CarParams.TransmissionType.automatic)
     self.context = MutableContext(cp)
     self.gateway = SettingsGateway(self.params, self.context)
     self.access = GalaxyAccessOwner(Path(temporary.name) / "access")
@@ -1549,7 +1552,7 @@ class SettingsHttpTest(unittest.TestCase):
     index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Force Stop")
     self.assertTrue(page["rows"][index]["available"])
     status, intent, _ = self.request("/api/settings/preview", cookie=cookie,
-                                     payload={"view": page["view"], "row": index, "value": "Off"})
+      payload={"view": page["view"], "row": index, "value": "Off"})
     self.assertEqual(status, 200)
     self.assertEqual(self.request("/api/settings/confirm", cookie=cookie,
                                  payload={"intent": intent["intent"], "confirmed": True})[:2], (200, {"saved": True}))
@@ -1574,7 +1577,7 @@ class SettingsHttpTest(unittest.TestCase):
       index = next(i for i, row in enumerate(page['rows']) if row['label'] == 'Distance short press')
       self.assertTrue(page['rows'][index]['available'])
       status, intent, _ = self.request('/api/settings/preview', cookie=cookie,
-                                       payload={'view': page['view'], 'row': index, 'value': 'Traffic mode'})
+        payload={'view': page['view'], 'row': index, 'value': 'Traffic mode'})
       self.assertEqual(status, 200)
       return intent['intent']
     intent = preview()
@@ -1608,7 +1611,7 @@ class SettingsHttpTest(unittest.TestCase):
       self.assertEqual(status, 200)
       index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Selected Deceleration Profile")
       status, result, _ = self.request("/api/settings/preview", cookie=cookie,
-                                       payload={"view": page["view"], "row": index, "value": "Comfort"})
+        payload={"view": page["view"], "row": index, "value": "Comfort"})
       self.assertEqual(status, 200)
       return result["intent"]
 
@@ -1673,7 +1676,7 @@ class SettingsHttpTest(unittest.TestCase):
     self.assertEqual(status, 200)
     warning = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Immediate Warning")
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": warning, "direction": 1})
+      payload={"view": page["view"], "row": warning, "direction": 1})
     self.assertEqual(status, 200)
     self.assertEqual(preview["proposed"], "25%")
     self.assertIsNone(self.params.get("WarningImmediateVolume"))
@@ -1686,7 +1689,7 @@ class SettingsHttpTest(unittest.TestCase):
     self.assertEqual(status, 200)
     master = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Custom Display Settings")
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": master, "direction": 1})
+      payload={"view": page["view"], "row": master, "direction": 1})
     self.assertEqual(status, 200)
     self.context.value = AuthorityContext(False, None, None)
     self.assertEqual(self.request("/api/settings/confirm", cookie=cookie,
@@ -1705,7 +1708,7 @@ class SettingsHttpTest(unittest.TestCase):
     blindspot = next(i for i, row in enumerate(page["rows"]) if row["label"] == "C4 red blind-spot border")
     self.assertEqual([page["rows"][index]["value"] for index in (signal, blindspot)], ["Off", "On"])
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": signal, "direction": 1})
+      payload={"view": page["view"], "row": signal, "direction": 1})
     self.assertEqual(status, 200)
     self.assertIsNone(read_visibility(self.params, "SignalMetrics").raw)
     self.assertEqual(self.request("/api/settings/confirm", cookie=cookie,
@@ -1715,7 +1718,7 @@ class SettingsHttpTest(unittest.TestCase):
     page = self.request("/api/settings/pages/appearance", cookie=cookie)[1]
     blindspot = next(i for i, row in enumerate(page["rows"]) if row["label"] == "C4 red blind-spot border")
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": blindspot, "direction": -1})
+      payload={"view": page["view"], "row": blindspot, "direction": -1})
     self.assertEqual(status, 200)
     self.context.value = AuthorityContext(False, None, None)
     self.assertEqual(self.request("/api/settings/confirm", cookie=cookie,
@@ -1734,11 +1737,11 @@ class SettingsHttpTest(unittest.TestCase):
     index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Restore default camera crop")
     self.assertTrue(page["rows"][index]["confirm"])
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": index, "direction": 0})
+      payload={"view": page["view"], "row": index, "direction": 0})
     self.assertEqual(status, 200)
     self.assertIsNone(self.params.get(MASK))
     status, result, _ = self.request("/api/settings/confirm", cookie=cookie,
-                                     payload={"intent": preview["intent"], "confirmed": True})
+      payload={"intent": preview["intent"], "confirmed": True})
     self.assertEqual((status, result), (200, {"saved": True}))
     saved = read_pip(self.params)
     self.assertEqual((saved.mask.width, saved.mask.height), (1928, 1208))
@@ -1796,16 +1799,16 @@ class SettingsHttpTest(unittest.TestCase):
     self.assertEqual(status, 200)
     self.assertEqual(page["rows"][0]["value"], "Off")
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": 0, "direction": 1})
+      payload={"view": page["view"], "row": 0, "direction": 1})
     self.assertEqual(status, 200)
     self.assertFalse(Path(self.params.get_param_path(KEY)).exists())
     status, result, _ = self.request("/api/settings/confirm", cookie=cookie,
-                                     payload={"intent": preview["intent"], "confirmed": True})
+      payload={"intent": preview["intent"], "confirmed": True})
     self.assertEqual((status, result), (200, {"saved": True}))
     self.assertTrue(decode(Path(self.params.get_param_path(KEY)).read_bytes()).enabled)
     page = self.request("/api/settings/pages/sentry", cookie=cookie)[1]
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": 1, "direction": 1})
+      payload={"view": page["view"], "row": 1, "direction": 1})
     self.assertEqual(status, 200)
     self.assertEqual(self.request("/api/auth/logout", cookie=cookie, payload={})[0], 200)
     self.assertEqual(self.request("/api/settings/confirm", cookie=cookie,
@@ -1823,7 +1826,7 @@ class SettingsHttpTest(unittest.TestCase):
         self.assertEqual(status, 200)
         index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Show on turn signal")
         status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                          payload={"view": page["view"], "row": index, "direction": 1})
+          payload={"view": page["view"], "row": index, "direction": 1})
         self.assertEqual(status, 200)
         if failure == "native_change":
           Path(self.params.get_param_path(MASK)).write_bytes(encode_mask(starting_mask(1344, 760)))
@@ -1843,11 +1846,11 @@ class SettingsHttpTest(unittest.TestCase):
     self.assertEqual(status, 200)
     index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Curve Speed Controller")
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": index, "direction": 1})
+      payload={"view": page["view"], "row": index, "direction": 1})
     self.assertEqual(status, 200)
     self.assertFalse(self.params.get_bool("CurveSpeedController"))
     status, result, _ = self.request("/api/settings/confirm", cookie=cookie,
-                                     payload={"intent": preview["intent"], "confirmed": True})
+      payload={"intent": preview["intent"], "confirmed": True})
     self.assertEqual((status, result), (200, {"saved": True}))
     self.assertTrue(self.params.get_bool("CurveSpeedController"))
 
@@ -1859,12 +1862,12 @@ class SettingsHttpTest(unittest.TestCase):
     self.assertEqual(status, 200)
     self.assertEqual(page["rows"][0]["value"], "Conditional Experimental")
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": 0, "direction": 1})
+      payload={"view": page["view"], "row": 0, "direction": 1})
     self.assertEqual(status, 200)
     self.assertIsNone(self.params.get("ConditionalModeConfig"))
     self.context.value = AuthorityContext(False, self.context.value.cp, self.context.value.cp_raw)
     status, result, _ = self.request("/api/settings/confirm", cookie=cookie,
-                                     payload={"intent": preview["intent"], "confirmed": True})
+      payload={"intent": preview["intent"], "confirmed": True})
     self.assertEqual((status, result), (200, {"saved": True}))
     saved = Path(self.params.get_param_path("ConditionalModeConfig")).read_bytes()
     self.assertEqual(decode_preferences(saved).mode.value, "conditional_chill")
@@ -1879,10 +1882,10 @@ class SettingsHttpTest(unittest.TestCase):
     self.assertEqual(status, 200)
     index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Remember manual choice")
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": index, "direction": 1})
+      payload={"view": page["view"], "row": index, "direction": 1})
     self.assertEqual(status, 200)
     status, result, _ = self.request("/api/settings/confirm", cookie=cookie,
-                                     payload={"intent": preview["intent"], "confirmed": True})
+      payload={"intent": preview["intent"], "confirmed": True})
     self.assertEqual((status, result), (200, {"saved": True}))
     self.assertEqual(decode(manual.read_bytes()), SavedCodes(cem=0, ccm=1))
     self.assertTrue(decode_preferences(Path(self.params.get_param_path("ConditionalModeConfig")).read_bytes()).cem.persist_manual)
@@ -1897,11 +1900,11 @@ class SettingsHttpTest(unittest.TestCase):
     index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Reset Saved Curve Learning")
     self.assertTrue(page["rows"][index]["confirm"])
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": index, "direction": 0})
+      payload={"view": page["view"], "row": index, "direction": 0})
     self.assertEqual(status, 200)
     self.assertEqual(Path(self.params.get_param_path("CurveComfortData")).read_bytes(), b"{")
     status, result, _ = self.request("/api/settings/confirm", cookie=cookie,
-                                     payload={"intent": preview["intent"], "confirmed": True})
+      payload={"intent": preview["intent"], "confirmed": True})
     self.assertEqual((status, result), (200, {"saved": True}))
     self.assertEqual(Path(self.params.get_param_path("CurveComfortData")).read_bytes(), b'{"version":1,"buckets":{}}')
     self.assertEqual(legacy.read_bytes(), b'{}')
@@ -1925,7 +1928,7 @@ class SettingsHttpTest(unittest.TestCase):
     self.assertEqual(self.request("/api/settings/pages/aggressive%2Ffollowing", cookie=cookie)[0], 200)
     index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Enable Lane Centering")
     status, preview, _ = self.request("/api/settings/preview", cookie=cookie,
-                                      payload={"view": page["view"], "row": index, "direction": 1})
+      payload={"view": page["view"], "row": index, "direction": 1})
     self.assertEqual(status, 200)
     self.assertFalse(self.params.get_bool("LaneCentering"))
     status, saved, _ = self.request("/api/settings/confirm", cookie=cookie,
@@ -1965,8 +1968,8 @@ class SettingsHttpTest(unittest.TestCase):
                                   payload={"intent": "invented", "confirmed": True})[0], 409)
     self.assertFalse(self.params.get_bool("LaneCentering"))
     self.assertEqual(self.request("/api/settings/preview", cookie=cookie,
-                                  payload={"view": page["view"], "row": index, "direction": 1},
-                                  origin="http://malicious.local")[0], 403)
+      payload={"view": page["view"], "row": index, "direction": 1},
+      origin="http://malicious.local")[0], 403)
     self.assertFalse(self.params.get_bool("LaneCentering"))
 
   def test_confirm_finishes_before_acknowledged_logout(self):

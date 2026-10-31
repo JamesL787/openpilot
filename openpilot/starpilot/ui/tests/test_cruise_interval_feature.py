@@ -54,20 +54,29 @@ class CruiseIntervalFeatureTests(unittest.TestCase):
     self.assertTrue(rows["Hold"][1]["available"])
     intent = self.gateway.preview(page["view"], rows["Short press"][0], 1, "session", b"generation")
     self.assertTrue(self.gateway.confirm(intent["intent"], "session", b"generation"))
-    self.assertEqual(read_cruise_intervals(self.params, pcm_cruise=False), CruiseIntervals(6, 1))
+    self.assertEqual(read_cruise_intervals(self.params, self.cp), CruiseIntervals(6, 1))
     self.assertIsNone(self.params.get("QOLLongitudinal"))
     with self.assertRaises(SettingsChanged):
       self.gateway.preview(page["view"], rows["Short press"][0], 1, "session", b"generation")
 
-  def test_pcm_and_changed_vehicle_block_direct_intervals(self):
+  def test_pcm_system_longitudinal_allows_intervals_and_rejects_stale_requests(self):
     child = self.change(self.rows()["CustomCruise"])
     self.cp.pcmCruise = True
     self.assertFalse(self.owner.apply(child))
-    self.assertFalse(any(row.available for row in self.rows().values()))
+    self.assertTrue(all(row.available for row in self.rows().values()))
+    self.assertTrue(self.owner.apply(self.change(self.rows()["CustomCruise"])))
+    child = self.change(self.rows()["CustomCruise"])
     self.cp.pcmCruise = False
     self.cp.carFingerprint = "changed"
     self.assertFalse(self.owner.apply(child))
-    self.assertEqual(read_cruise_intervals(self.params, pcm_cruise=True), CruiseIntervals())
+    self.assertEqual(read_cruise_intervals(self.params, self.cp), CruiseIntervals(2, 5))
+
+  def test_pcm_stock_longitudinal_does_not_allow_interval_edits(self):
+    child = self.change(self.rows()["CustomCruise"])
+    self.cp.pcmCruise = True
+    self.cp.openpilotLongitudinalControl = False
+    self.assertFalse(self.owner.apply(child))
+    self.assertFalse(any(row.available for row in self.rows().values()))
 
   def test_stale_units_source_and_parked_rejected(self):
     short = self.change(self.rows()["CustomCruise"])
@@ -87,4 +96,4 @@ class CruiseIntervalFeatureTests(unittest.TestCase):
     short = self.change(self.rows()["CustomCruise"])
     self.assertFalse(self.owner.apply(replace(short, value="151")))
     self.assertFalse(self.owner.apply(replace(short, value="nan")))
-    self.assertEqual(read_cruise_intervals(self.params, pcm_cruise=False), CruiseIntervals())
+    self.assertEqual(read_cruise_intervals(self.params, self.cp), CruiseIntervals())

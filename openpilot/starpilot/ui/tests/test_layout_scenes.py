@@ -9,7 +9,7 @@ from typing import NoReturn, cast
 
 import pytest
 
-from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, projection_customization
+from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport, projection_customization
 from openpilot.starpilot.ui.layout_preview_renderer import sample_state
 from openpilot.starpilot.ui.layout_preview_transport import SCENES
 from openpilot.starpilot.ui.onroad import axis_status_color, driving_mode_description

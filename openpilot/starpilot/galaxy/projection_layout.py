@@ -7,10 +7,10 @@ from pathlib import Path
 from openpilot.starpilot.galaxy.onroad_layout import LayoutChanged
 from openpilot.starpilot.saved_document import commit_exact
 from openpilot.starpilot.saved_source import read_saved
-from openpilot.starpilot.system.android_auto.display_profile import (
+from openpilot.starpilot.system.starport.display_profile import (
   SCREEN_PATH, MAX_BYTES as SCREEN_MAX_BYTES, record_screen, validate_screen,
 )
-from openpilot.starpilot.system.android_auto.projection_layout import (
+from openpilot.starpilot.system.starport.projection_layout import (
   DOCUMENT_KEY, JETLINK_WIDGET, MAX_BYTES, ProjectionLayoutSource, comma_display, decode_layout, default_layout, layout_metadata, validate_layout,
 )
 from openpilot.starpilot.ui.appearance_preferences import onroad_appearance
@@ -48,7 +48,8 @@ class ProjectionLayoutOwner:
     self.screen_source = _ScreenSource(screen_path if screen_path is not None else SCREEN_PATH)
 
   def _enabled(self):
-    return not self.require_enabled or self.params.get_bool('AndroidAutoEnabled')
+    from openpilot.starpilot.system.starport.settings import enabled
+    return not self.require_enabled or enabled(self.params)
 
   def _screen(self):
     raw, readable = read_saved(self.screen_source, 'screen', SCREEN_MAX_BYTES)
@@ -77,8 +78,8 @@ class ProjectionLayoutOwner:
         pass
     enabled = self._enabled()
     available = bool(enabled and screen is not None and screen_readable and readable)
-    reason = ('Enable Android Auto to edit its layout' if not enabled else
-              'Connect Android Auto once to obtain the actual screen' if screen is None else
+    reason = ('Enable StarPort to edit its layout' if not enabled else
+              'Connect StarPort once to obtain the actual screen' if screen is None else
               'Saved projection layout is unavailable' if not readable else None)
     base = read_customization(self.params)
     metadata = layout_metadata(screen) if screen is not None else None
@@ -157,7 +158,7 @@ def host_owner(params, parked, root=None, environ=os.environ):
   if environ.get('SP_HOST_RUNTIME') != '1':
     return None
   if root is None:
-    from openpilot.starpilot.system.android_auto.identity import DATA_DIR
+    from openpilot.starpilot.system.starport.identity import DATA_DIR
     root = DATA_DIR
   root = Path(root)
   screen_path = root / 'screen.json'

@@ -1,13 +1,13 @@
 export const ONROAD_LAYOUT_TEMPLATE = `
     <section class="gx-settings gx-layout" aria-label="Colors and layout" :aria-busy="busy || undefined">
-      <div class="gx-settings__header gx-page-header"><div><h2>{{ projection ? 'Android Auto Layout' : 'Colors & Layout' }}</h2></div>
+      <div class="gx-settings__header gx-page-header"><div><h2>{{ projection ? 'StarPort Layout' : 'Colors & Layout' }}</h2></div>
         <button class="gx-icon-btn gx-layout__info" type="button" :aria-expanded="state.aboutOpen" aria-controls="gx-layout-about" aria-label="About this editor" title="About this editor" @click="state.aboutOpen = !state.aboutOpen"><i class="bi bi-info-circle" aria-hidden="true"></i></button>
       </div>
       <GxNotice v-if="mode === 'local' && state.data && !state.data.editable && !(projection && state.data.reason)" tone="warn">Park the vehicle and reload to edit. If it stays unavailable, reload saved settings.</GxNotice>
       <div class="gx-layout__targets">
         <nav class="gx-layout__tabs gx-layout__segment" aria-label="Layout target">
           <button class="gx-btn gx-btn--tonal" :aria-pressed="!projection" :disabled="!!state.drag" @click="$emit('target', 'device')">Comma</button>
-          <button class="gx-btn gx-btn--tonal" :aria-pressed="projection" :disabled="!!state.drag" @click="$emit('target', 'projection')">Android Auto</button>
+          <button class="gx-btn gx-btn--tonal" :aria-pressed="projection" :disabled="!!state.drag" @click="$emit('target', 'projection')">StarPort</button>
         </nav>
         <div v-if="mode === 'local' && state.data && state.draft && !projection && availableProfiles.length" class="gx-layout__tabs gx-layout__segment" role="group" aria-label="Layout size">
           <button v-for="tab in [{id:'large',label:'Big'}, {id:'compact',label:'Small'}].filter(tab => availableProfiles.includes(tab.id))" :key="tab.id" class="gx-btn gx-btn--tonal" type="button"
@@ -15,7 +15,7 @@ export const ONROAD_LAYOUT_TEMPLATE = `
         </div>
       </div>
       <div v-show="state.aboutOpen" id="gx-layout-about" class="gx-layout__about">
-        <p v-if="!projection" class="gx-note">Choose a widget to move it or change its colors. Edit the layout available on this comma.</p><p v-else class="gx-note">Move widgets for the last connected Android Auto screen. The comma layout stays separate. Colors follow the comma theme. Changes apply on the next connection.</p>
+        <p v-if="!projection" class="gx-note">Choose a widget to move it or change its colors. Edit the layout available on this comma.</p><p v-else class="gx-note">Move widgets for the last connected StarPort screen. The comma layout stays separate. Colors follow the comma theme. Changes apply on the next connection.</p>
         <p v-if="projection && state.data?.screen" class="gx-note">Last usable screen: {{ state.data.screen.width - state.data.screen.margin_width }} × {{ state.data.screen.height - state.data.screen.margin_height }} pixels.</p>
       </div>
       <p v-if="projection && state.data?.reason" class="gx-note">{{ state.data.reason }}</p>
@@ -46,7 +46,7 @@ export const ONROAD_LAYOUT_TEMPLATE = `
         </div>
         <GxNotice tone="danger" v-if="state.error">{{ state.error }}</GxNotice>
         <template v-if="state.data && state.draft">
-          <p v-if="!state.data.valid" class="gx-note" role="status">{{ projection ? 'Default Android Auto positions are shown. Save to keep your separate layout.' : 'The saved customization is invalid. Default colors and positions are shown; save your edits to replace it.' }}</p>
+          <p v-if="!state.data.valid" class="gx-note" role="status">{{ projection ? 'Default StarPort positions are shown. Save to keep your separate layout.' : 'The saved customization is invalid. Default colors and positions are shown; save your edits to replace it.' }}</p>
           <div class="gx-layout__workspace" :inert="busy">
             <section ref="pinned" class="gx-card gx-layout__preview-card" :class="{'is-stuck': state.stuck.pinned}" aria-label="Driving screen preview" :style="{'--layout-ratio': profile.width / profile.height}">
               <div class="gx-layout__subhead"><strong>Layout preview</strong><span>{{ state.layerDrag ? "Adjusting " + selectedWidget.label : state.art.status === 'updating' || state.backdrop.status === 'updating' ? 'Updating preview…' : profile.width + " × " + profile.height }}</span></div>
@@ -69,7 +69,7 @@ export const ONROAD_LAYOUT_TEMPLATE = `
               <span v-if="!projection && state.showFavoriteZones && state.showEditingAids && state.profile !== 'compact'" class="gx-layout__stage-chip" aria-hidden="true"><i class="bi bi-grid-3x3-gap"></i>Tap areas</span>
               <svg ref="preview" class="gx-layout__preview" :style="{'--layout-glow': state.profile === 'compact' ? '4px' : '14px'}" :viewBox="'0 0 ' + profile.width + ' ' + profile.height" :width="profile.width" :height="profile.height"
                 @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="cancelDrag" @lostpointercapture="cancelDrag"
-                role="group" :aria-label="projection ? 'Android Auto layout preview' : (state.profile === 'large' ? 'Big' : 'Small') + ' layout preview'">
+                role="group" :aria-label="projection ? 'StarPort layout preview' : (state.profile === 'large' ? 'Big' : 'Small') + ' layout preview'">
                 <image v-if="nativeBackdropReady" :href="state.backdrop.url" :width="profile.width" :height="profile.height" preserveAspectRatio="none" data-preview-source="device-backdrop" />
                 <template v-else>
                 <rect width="100%" height="100%" fill="#252b32" />
@@ -330,9 +330,9 @@ export const ONROAD_LAYOUT_TEMPLATE = `
                 </div></div>
                 <GxNotice tone="danger" v-if="state.colorError">{{ state.colorError }}</GxNotice>
               </section>
-            <section v-if="projection" v-show="state.inspectorPanel === 'display'" class="gx-layout__colors gx-layout__display" aria-label="Android Auto screen options">
-              <div class="gx-layout__subhead"><h4>Android Auto screen options</h4></div>
-              <p class="gx-note">Only the Android Auto screen uses these. The comma screen has its own options on the Comma tab. Save to apply.</p>
+            <section v-if="projection" v-show="state.inspectorPanel === 'display'" class="gx-layout__colors gx-layout__display" aria-label="StarPort screen options">
+              <div class="gx-layout__subhead"><h4>StarPort screen options</h4></div>
+              <p class="gx-note">Only the StarPort screen uses these. The comma screen has its own options on the Comma tab. Save to apply.</p>
               <h5 class="gx-layout__display-group">Alerts and borders</h5>
               <GalaxySettingRow feedback="draft" :row="switchRow('Hide Personality Alerts', state.draft.hidePersonalityAlerts === true)" :index="0"
                 :disabled="!editable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setProjectionDisplay('hidePersonalityAlerts', value)" />
@@ -351,11 +351,11 @@ export const ONROAD_LAYOUT_TEMPLATE = `
               <p v-if="!projectionHasPipWidget" class="gx-note">Add a left or right blind-spot camera widget to enable this option.</p>
               <GalaxySettingRow feedback="draft" :row="switchRow('Large UI Gamma Effect', state.draft.largeUiGammaTrial)" :index="1"
                 :disabled="!editable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setLargeUiGammaTrial(value)" />
-              <p class="gx-note">The large UI road-camera color effect on Android Auto (not shown in the preview).</p>
+              <p class="gx-note">The large UI road-camera color effect on StarPort (not shown in the preview).</p>
             </section>
               <section v-if="!projection && displayGroups.length" v-show="state.inspectorPanel === 'display'" class="gx-layout__colors gx-layout__display" aria-label="Comma screen options">
                 <div class="gx-layout__subhead"><h4>Comma screen options</h4></div>
-                <p class="gx-note">Only the comma screen uses these, in both the Big and Small layouts unless marked. Android Auto has its own options on the Android Auto tab. Save to apply.</p>
+                <p class="gx-note">Only the comma screen uses these, in both the Big and Small layouts unless marked. StarPort has its own options on the StarPort tab. Save to apply.</p>
                 <template v-for="group in displayGroups" :key="group.name">
                   <h5 class="gx-layout__display-group">{{ group.name }}</h5>
                   <GalaxySettingRow feedback="draft" v-for="(row, index) in group.rows" :key="row.key" :row="displaySettingRow(row)" :index="index"
@@ -368,7 +368,7 @@ export const ONROAD_LAYOUT_TEMPLATE = `
       </template>
       <GxDialog v-if="state.removeConfirm && profile" labelledby="gx-layout-remove-title" describedby="gx-layout-remove-body" alert @close="cancelRemove">
         <div><h3 id="gx-layout-remove-title">Remove {{ profile.widgets[state.removeConfirm]?.label }}?</h3>
-          <p id="gx-layout-remove-body">Remove this widget from the {{ projection ? 'Android Auto' : state.profile === 'large' ? 'Big' : 'Small' }} layout? You can add it again from Inactive Widgets.</p></div>
+          <p id="gx-layout-remove-body">Remove this widget from the {{ projection ? 'StarPort' : state.profile === 'large' ? 'Big' : 'Small' }} layout? You can add it again from Inactive Widgets.</p></div>
         <div class="gx-settings__controls gx-actions">
           <button type="button" class="gx-btn gx-btn--tonal" @click="cancelRemove">Cancel</button>
           <button type="button" class="gx-btn gx-btn--danger" @click="confirmRemove">Remove widget</button>
@@ -376,7 +376,7 @@ export const ONROAD_LAYOUT_TEMPLATE = `
       </GxDialog>
       <GxDialog v-if="modalLeavePrompt" class="gx-layout__leave-dialog" :inert="busy" labelledby="gx-layout-leave-title" describedby="gx-layout-leave-body" alert @close="cancelLeave">
         <div class="gx-layout__leave-copy"><h3 id="gx-layout-leave-title">Leave without saving your changes?</h3>
-          <p id="gx-layout-leave-body">Save your {{ projection ? 'Android Auto' : 'comma' }} layout before leaving, keep editing, or discard this draft.</p></div>
+          <p id="gx-layout-leave-body">Save your {{ projection ? 'StarPort' : 'comma' }} layout before leaving, keep editing, or discard this draft.</p></div>
         <GxNotice v-if="state.error" tone="danger">{{ state.error }}</GxNotice>
         <div class="gx-layout__leave-actions">
           <button type="button" class="gx-btn gx-btn--tonal" @click="cancelLeave">Keep editing</button>

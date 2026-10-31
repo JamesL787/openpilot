@@ -15,7 +15,8 @@ contract. Only a `VALID` context may enter `overrides.step(domain=...)`.
 
 A finite negative offset that would make the target nonpositive in cluster or
 planner coordinates is ignored for that limit. The unadjusted accepted limit
-continues to supply the ceiling; malformed schedules still fail validation.
+is used instead; the result stays within the ordinary cruise-speed bounds.
+Malformed schedules still fail validation.
 
 Call order is acceptance, domain resolution, override reduction, then
 `to_planner_coordinate(context, contribution_raw_mps, basis)`. The reducer
@@ -26,18 +27,14 @@ The conversion adds the *current qualified selected cluster delta* to that
 retained raw speed. A current pedal contribution uses the current ego cluster
 delta. The larger of limit plus offset and override is converted to planner
 coordinates by subtracting the ego cluster delta exactly once. A nonpositive
-result gives no cap. The host may then build the optional
-`CruiseCeiling(speed_mps, authority)`; the native planner still owns its driver
-ceiling and lead, e2e, force-deceleration and acceleration arbitration.
+result gives no coordinate. The coordinate validates the composition; it is not
+a separate live planner ceiling. Runtime commands use the accepted adjusted
+cluster target to update Card's SET speed. See the [controller contract](README.md).
 
-This is a pure integration contract. No caller activates it, and it has no
-Params access, UI action, stock setpoint command, source TTL, lead relaxation
-or vehicle output. Stock bidirectional selection needs a separate owner and
-output domain. The frozen implementation compared raw ego speed with an
-offset-adjusted threshold, then used cluster ego speed as the override. This
-unit deliberately compares both values in the same cluster coordinate. It
-prevents a pedal override from arming when raw ego speed crosses one coordinate
-while the effective cluster threshold is in another.
+These helpers are pure; the live composition supplies the qualified inputs.
+They have no Params access, source freshness policy or vehicle output. Current
+SLC overrides come from qualified SET changes. Accelerator use does not create
+an SLC override; ordinary actuator gating owns the temporary pedal override.
 
 The tests compose actual acceptance and causal override decisions, including
 retained raw intent with a changed current selected value, offset changes,

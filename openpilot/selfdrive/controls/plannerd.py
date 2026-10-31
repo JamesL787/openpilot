@@ -20,6 +20,7 @@ from openpilot.starpilot.longitudinal.lane_change_gap import LaneGapPreferences
 from openpilot.starpilot.longitudinal.experimental_release import ConditionalHandoff
 from openpilot.starpilot.longitudinal.lead_approach import LeadApproachKey
 from openpilot.starpilot.longitudinal.lead_takeoff_preferences import TakeoffPreferences
+from openpilot.starpilot.longitudinal.encouragement import NudgePreferences
 from openpilot.starpilot.longitudinal.force_stop_runtime import ForceStopRuntime
 from openpilot.starpilot.longitudinal.stop_resume import collect_resume
 from openpilot.starpilot.longitudinal.lead_approach_runtime import LeadApproachPreferences
@@ -196,34 +197,52 @@ def conditional_handoff_for_frame(host: ConditionalPlannerHost | None, sm, CP, n
 
 
 def apply_conditional_stop_hold(host, planner, sm, CP, now_ns: int, drive_id: int, *, now_boot_ns: int | None = None, sample_skew_ns: int = 0) -> bool:
+  def unavailable():
+    owner = getattr(host, 'ford_stopped_lead_release', None)
+    if owner is not None:
+      owner.reset()
+    return False
+
   if (host is None or not CP.openpilotLongitudinalControl or CP.passive or CP.dashcamOnly or
       not 0 < drive_id <= now_ns or host.mode.drive_id != drive_id or
       not host.mode.projector.stop_detector.standstill_committed):
-    return False
+    return unavailable()
   settings = host.settings.verdict(host.settings.current, now_mono_ns=now_ns, drive_id=drive_id)
   if settings.safe_mode is True:
     host.mode.projector.stop_detector.reset()
   if settings.status != 'ready' or settings.safe_mode is not False:
-    return False
+    return unavailable()
   if not all(host._fresh_service(sm, name, drive_id, now_ns)
              for name in ('carState', 'carControl', 'selfdriveState')):
-    return False
+    return unavailable()
   state, control, vehicle = sm['selfdriveState'], sm['carControl'], sm['carState']
   if not vehicle.canValid or vehicle.canTimeout:
-    return False
+    return unavailable()
   if not state.enabled or not control.enabled or not control.longActive or vehicle.brakePressed or vehicle.gasPressed:
     host.mode.projector.stop_detector.reset()
-    return False
+    return unavailable()
   if not host._fresh_service(sm, 'modelV2', drive_id, now_ns):
-    return False
+    return unavailable()
   if (type(now_boot_ns) is not int or type(sample_skew_ns) is not int or
       now_boot_ns <= 0 or not 0 <= sample_skew_ns <= 1_000_000 or
       now_boot_ns < now_ns - sample_skew_ns // 2 or not sm.all_checks(NATIVE_PLAN_INPUTS) or
       not 0 < sm['modelV2'].timestampEof <= now_boot_ns or
       now_boot_ns - sm['modelV2'].timestampEof > 150_000_000):
-    return False
+    return unavailable()
   if (now_ns - sm.logMonoTime['modelV2'] > 150_000_000 or
       now_ns - int(sm.recv_time['modelV2'] * 1e9) > 150_000_000):
+    return unavailable()
+  from openpilot.starpilot.car.ford.stop_release import owner_for
+  owner = getattr(host, 'ford_stopped_lead_release', None)
+  if owner is None:
+    owner = owner_for(CP)
+    if owner is not None:
+      host.ford_stopped_lead_release = owner
+  if owner is not None and owner.sample(sm, CP, planner, host.mode.projector.stop_detector, now_ns=now_ns, drive_id=drive_id):
+    detector = host.mode.projector.stop_detector
+    detector.committed = detector.standstill_committed = False
+    detector.commit_clear_since_s = None
+    detector._reset_light()
     return False
   planner.output_should_stop = True
   planner.output_a_target = min(planner.output_a_target, 0.)
@@ -250,14 +269,14 @@ def update_curve_frame(planner: LongitudinalPlanner, sm, CP, now_ns: int, *, hos
                        event: CurveDriverEvent | None = None, lane_change_policy=None,
                        global_braking_response: str | None = None, selected_profiles=None, conditional_handoff: ConditionalHandoff | None = None,
                        lead_approach_key: LeadApproachKey | None = None, force_stop_provider=None,
-                       faster_lead_takeoff: bool = False, wheel_coast=None):
+                       faster_lead_takeoff: bool = False, wheel_coast=None, experimental_speed_nudge: bool = True):
   """One model cycle: MPC chooses follow time, then Curve samples and receives winner feedback."""
   if host is None:
     planner.update(sm, cruise_ceiling=cruise_ceiling, profile_tuning=profile_tuning, traffic_mode=traffic_mode,
                    lane_change_policy=lane_change_policy, global_braking_response=global_braking_response, selected_profiles=selected_profiles,
                    conditional_handoff=conditional_handoff, lead_approach_key=lead_approach_key,
                    force_stop_provider=force_stop_provider, faster_lead_takeoff=faster_lead_takeoff, wheel_coast=wheel_coast,
-                   takeoff_drive_id=drive_id, now_ns=now_ns, drive_id=drive_id)
+                   takeoff_drive_id=drive_id, now_ns=now_ns, drive_id=drive_id, experimental_speed_nudge=experimental_speed_nudge)
     return None
   results = []
   def provider(follow_time_s: float | None):
@@ -269,7 +288,7 @@ def update_curve_frame(planner: LongitudinalPlanner, sm, CP, now_ns: int, *, hos
                  curve_provider=provider, traffic_mode=traffic_mode, lane_change_policy=lane_change_policy,
                  global_braking_response=global_braking_response, selected_profiles=selected_profiles, conditional_handoff=conditional_handoff,
                  lead_approach_key=lead_approach_key, force_stop_provider=force_stop_provider, faster_lead_takeoff=faster_lead_takeoff, wheel_coast=wheel_coast,
-                   takeoff_drive_id=drive_id, now_ns=now_ns, drive_id=drive_id)
+                   takeoff_drive_id=drive_id, now_ns=now_ns, drive_id=drive_id, experimental_speed_nudge=experimental_speed_nudge)
   confirm_curve_frame(host, planner, now_ns)
   return results[0] if results else None
 
@@ -355,6 +374,7 @@ def starpilot_main():
   ldw = LaneDepartureWarning()
   # Bosch-A owner toggles (Stock Brake Feel, Human Following): read once here, like the planner selection.
   longitudinal_planner = LongitudinalPlanner(CP, bosch_a=read_bosch_a_toggles(params))
+  nudge_preferences = NudgePreferences(params)
   # Saved-on features start only for a finalized, supported driving owner. Their
   # current-source and longitudinal authority checks still run every frame.
   slc_replay = feature_enabled(params, CP, 'slc', os.environ)
@@ -594,7 +614,8 @@ def starpilot_main():
                                           conditional_handoff=conditional_handoff,
                                           lead_approach_key=lead_approach_key, force_stop_provider=force_stop_provider,
                                           drive_id=current_start_ns, event=curve_event,
-                                          faster_lead_takeoff=faster_lead_takeoff, wheel_coast=(wheel_coast, params))
+                                          faster_lead_takeoff=faster_lead_takeoff, wheel_coast=(wheel_coast, params),
+                                          experimental_speed_nudge=nudge_preferences.sample(now_ns))
         if curve_preferences is not None and curve_host is not None and curve_result is not None:
           curve_preferences.persist(curve_host, curve_result, now_ns)
           assert curve_status is not None

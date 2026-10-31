@@ -280,7 +280,7 @@ class SelfdriveD:
     return update_big_model_status(self)
 
   def _update_steering_authority(self, CS):
-    if not monitored_profile(self.CP):
+    if self.CP.brand != 'gm' or not monitored_profile(self.CP):
       self.steering_authority_unavailable = False
       return
     companion = getattr(self, 'steering_companion', None)
@@ -820,16 +820,24 @@ class SelfdriveD:
 
     return CS
 
+  def ford_source_deadline_supported(self):
+    from opendbc.car.ford.aol import qualified
+    from opendbc.car.ford.values import CAR
+    return (qualified(self.CP, marked_only=True) and
+            self.CP.carFingerprint == CAR.FORD_MUSTANG_MACH_E_MK1 and
+            len(self.CP.safetyConfigs) == 1 and self.CP.safetyConfigs[0].safetyParam == 19)
+
   def source_deadline_deferral_supported(self):
     from openpilot.starpilot.car.hyundai.aol import source_deadline_supported
     from openpilot.starpilot.car.toyota.aol import qualified as qualified_toyota
     return (qualified_ioniq6(self.CP) or qualified_gm(self.CP) or source_deadline_supported(self.CP) or
-            qualified_toyota(self.CP, marked_only=True))
+            qualified_toyota(self.CP, marked_only=True) or self.ford_source_deadline_supported())
 
   def held_axis_override_wait(self, CS, proof, now_ns, *, fresh_successor=False):
     """Recognize an already applied override; never admit a new physical edge."""
     if (proof is None or not (qualified_ioniq6(self.CP) or qualified_gm(self.CP) or
-        (self.CP.brand == 'hyundai' and self.source_deadline_deferral_supported())) or not self.sm.seen['carControl'] or
+        (self.CP.brand == 'hyundai' and self.source_deadline_deferral_supported()) or
+        self.ford_source_deadline_supported()) or not self.sm.seen['carControl'] or
         not self.sm.valid['carControl'] or self.sm['carControl'].longActive or
         not 0 < int(self.sm.logMonoTime['carControl']) <= now_ns or
         not fresh_successor and now_ns - int(self.sm.logMonoTime['carControl']) > INTENT_MAX_AGE_NS):
@@ -837,7 +845,7 @@ class SelfdriveD:
     previous = self.CS_prev
     # A missed socket read may retain only the original healthy receipt. This
     # recognizes an already-held override; the caller still checks its expiry.
-    retained_valid = bool(self.CP.brand == 'hyundai' and
+    retained_valid = bool((self.CP.brand == 'hyundai' or self.ford_source_deadline_supported()) and
       getattr(self, 'aol_expired_healthy_source', False) and not getattr(self, 'car_state_queue_invalid', False) and
       getattr(self, 'car_state_retained_valid', False) and getattr(self, 'car_state_retained_source_ns', 0) == proof[1])
     samples = getattr(self, 'car_state_samples', ()) or ((CS, self.conditional_car_state_valid or retained_valid),)
@@ -877,6 +885,7 @@ class SelfdriveD:
     stock_cruise_off = bool(proof is not None and proof[8] and not proof[9] and
       not self.enabled and not self.active and not CS.cruiseState.enabled and
       (qualified_stock_hkg(self.CP, marked_only=True) or
+       (self.ford_source_deadline_supported() and held_brake) or
        qualified_angle_aol(self.CP, marked_only=True) and self.CP.pcmCruise and not self.CP.openpilotLongitudinalControl) and
       EventName.pcmDisable in self.events_prev and self.events.names == self.events_prev)
     user_disable = any(event.userDisable and
@@ -1011,7 +1020,8 @@ class SelfdriveD:
     source_valid = self.conditional_car_state_valid
     from openpilot.starpilot.car.hyundai.aol import source_deadline_supported
     from openpilot.starpilot.car.toyota.aol import qualified as qualified_toyota
-    if ((source_deadline_supported(self.CP) or qualified_toyota(self.CP, marked_only=True)) and
+    if ((source_deadline_supported(self.CP) or qualified_toyota(self.CP, marked_only=True) or
+         self.ford_source_deadline_supported()) and
         source == 0 and not source_valid and
         getattr(self, 'aol_expired_healthy_source', False) and
         not getattr(self, 'car_state_samples', ()) and not getattr(self, 'car_state_queue_invalid', False) and
@@ -1392,8 +1402,9 @@ class SelfdriveD:
       # A fresh same-owner source can establish its own LAT permission after
       # an old output expires. Held-brake continuity does not renew that output;
       # the current native proof below still has to grant the new decision.
-      stock_already_off = bool(fresh_successor and qualified_gm(self.CP) and self.CP.pcmCruise and
-        not self.CP.openpilotLongitudinalControl and not CS.cruiseState.enabled and
+      stock_already_off = bool(fresh_successor and
+        ((qualified_gm(self.CP) and self.CP.pcmCruise and not self.CP.openpilotLongitudinalControl) or
+         self.ford_source_deadline_supported()) and not CS.cruiseState.enabled and
         not self.CS_prev.cruiseState.enabled and all(valid and not sample.cruiseState.enabled
           for sample, valid in getattr(self, 'car_state_samples', ())))
       user_disable = any(event.userDisable and event.name != EventName.pedalPressed and not
@@ -1766,6 +1777,13 @@ class SelfdriveD:
     mismatch counter retain their original fault ownership.
     """
     from openpilot.starpilot.aol.transport_pause import independent_lateral_health
+    from opendbc.car.ford.values import CAR as FORD_CAR
+    from openpilot.starpilot.car.ford.aol import native_accepts_cp as ford_native_accepts_cp
+    # Established ordinary Mach-E cruise does not require an independent AOL latch.
+    # Its native LONG pedal withdrawal may precede Card; the original combined
+    # publication, live LAT grant and every health/deadline check below still apply.
+    ordinary_ford = bool(self.CP.carFingerprint == FORD_CAR.FORD_MUSTANG_MACH_E_MK1 and
+                         ford_native_accepts_cp(self.CP, int(car.CarParams.SafetyModel.ford), 19))
     proof = getattr(self, 'aol_published_input_proof', None)
     prior = getattr(self, 'aol_published_input_native', None)
     anchor = getattr(self, 'aol_ordinary_source_anchor', None)
@@ -1779,7 +1797,7 @@ class SelfdriveD:
         anchor[3] != cp_identity(self.CP) or proof[0] != self.aol_session_id or
         not proof[8] or not proof[9] or not 0 < proof[2] <= now_ns <= proof[3] or
         intent is None or companion is None or proof[4] != intent.producerSessionId or
-        proof[5] != companion.integrity_epoch or not intent.allowedLatch or not intent.lateralArmed or
+        proof[5] != companion.integrity_epoch or not ((intent.allowedLatch and intent.lateralArmed) or ordinary_ford) or
         not native.requestedLateral or not native.lateralAllowed or
         not native.requestedLongitudinal or native.longitudinalAllowed or not native.pandaInventory or
         CS.brakePressed or CS.regenBraking or CS.gasPressed or CS.steeringPressed or
@@ -1813,7 +1831,7 @@ class SelfdriveD:
     # Retain only its already granted LAT; all proof, health and LONG withdrawal gates remain.
     # The exact vehicle policies and all proof/health checks above remain required.
     from openpilot.starpilot.car.ford.aol import early_native_long_withdrawal_supported as ford_early_long
-    return bool(gm_native_accepts_cp(self.CP, native.safetyModel, native.safetyParam) or
+    return bool(ordinary_ford or gm_native_accepts_cp(self.CP, native.safetyModel, native.safetyParam) or
                 early_native_long_withdrawal_supported(self.CP) or ford_early_long(self.CP) or
                 toyota_aol_qualified(self.CP, marked_only=True) or
                 not native.pandaInventory[owners[0]].controlsAllowed and

@@ -312,7 +312,8 @@ def main(exit_event: threading.Event | None = None) -> None:
       continue
 
     # Android Auto shares the little cores with this process: while it is on and driving, scan gently.
-    quiet = not offroad and params.get_bool("AndroidAutoEnabled")
+    from openpilot.starpilot.system.starport.settings import enabled as starport_enabled
+    quiet = not offroad and starport_enabled(params)
     uploader.scan_pause = 0.01 if quiet else 0.0
     success = uploader.step(sm['deviceState'].networkType.raw, sm['deviceState'].networkMetered and not always_allow_uploads)
     if success is None:

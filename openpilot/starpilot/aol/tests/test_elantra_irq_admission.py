@@ -1,4 +1,4 @@
-"""Elantra CAN interrupt faults block steering regardless of otherwise valid authority."""
+"""Exact stock-SCC Elantra IRQ diagnostics retain native authority vetoes."""
 from contextlib import ExitStack
 from dataclasses import replace
 from unittest import mock
@@ -32,8 +32,7 @@ def recorded_cp():
 @pytest.mark.parametrize('fault_source', ['none', 'panda', 'native', 'both'])
 @pytest.mark.parametrize('full', [False, True])
 @pytest.mark.parametrize('fault', ['none', 'rx', 'relay', 'denied', 'request', 'expired-wire'])
-def test_recorded_irq_through_selfdrived_and_controls_blocks_faulted_steering(full, fault, fault_source):
-  irq = fault_source != 'none'
+def test_recorded_irq_through_selfdrived_and_controls_keeps_native_vetoes(full, fault, fault_source):
   cp = recorded_cp()
   before = cp.to_dict()
   case = fixture.IoniqAvailabilityTests(methodName='runTest')
@@ -70,20 +69,16 @@ def test_recorded_irq_through_selfdrived_and_controls_blocks_faulted_steering(fu
       if fault == 'request':
         options.update(native_request_lat=False, native_request_long=False)
       axis, state, command = drive(tick, **options)
-    if fault == 'none' and not irq:
+    if fault == 'none':
       assert axis.lateralActive and command.latActive, 'HEALTHY_ELANTRA_AUTHORITY_REJECTED'
       assert log.OnroadEvent.EventName.controlsMismatch not in sd.events.names
       native = current_native(sd.sm, sd.CP, now_ns=stamp, axis_session_id=sd.aol_session_id)
-      assert native is not None and native.pandaInventory[0].faults == 0
-      assert list(sd.sm['pandaStates'][0].faults) == []
+      assert native is not None and native.pandaInventory[0].faults == (4 if fault_source in ('native', 'both') else 0)
+      assert list(sd.sm['pandaStates'][0].faults) == ([log.PandaState.FaultType.interruptRateCan1] if fault_source in ('panda', 'both') else [])
       assert not axis.longitudinalActive and not command.longActive
       assert state.enabled == full
     else:
       assert not axis.lateralActive and not command.latActive, 'ELANTRA_HARDWARE_FAULT_MUST_BLOCK'
-      if irq and fault == 'none':
-        assert log.OnroadEvent.EventName.controlsMismatch in sd.events.names
-        expected_faults = [log.PandaState.FaultType.interruptRateCan1] if fault_source in ('panda', 'both') else []
-        assert list(sd.sm['pandaStates'][0].faults) == expected_faults
       assert not axis.longitudinalActive and not command.longActive
     assert cp.to_dict() == before
 
@@ -91,7 +86,7 @@ def test_recorded_irq_through_selfdrived_and_controls_blocks_faulted_steering(fu
 @pytest.mark.parametrize('name,value', tuple(log.PandaState.FaultType.schema.enumerants.items()))
 def test_other_and_mixed_faults_still_block(name, value):
   cp = recorded_cp()
-  expected = True
+  expected = name != 'interruptRateCan1'
   assert blocking_fault_mask(1 << value, cp) == expected
   assert blocking_fault_mask((1 << value) | 4, cp) == expected
   assert blocking_fault_list([value], cp) == expected

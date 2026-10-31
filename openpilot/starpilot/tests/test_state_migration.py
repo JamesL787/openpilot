@@ -401,6 +401,7 @@ class TestStateMigration(unittest.TestCase):
     )
     prepare_manager_start(self.params, self.storage)  # Current epoch before newly saved driver choice.
     self.params.put_bool('OpenpilotEnabledToggle', False, block=True)
+    self.raw('AndroidAutoEnabled', b'1')
     with patch.dict(os.environ), \
          patch.object(manager, 'Params', return_value=self.params), \
          patch.object(manager, 'starpilot_storage_root', return_value=self.storage), \
@@ -414,6 +415,8 @@ class TestStateMigration(unittest.TestCase):
       manager.manager_init()
       self.assertTrue(self.params.get_bool('AlwaysOnLateral'))
       self.assertFalse(self.params.get_bool('OpenpilotEnabledToggle'))
+      self.assertTrue(self.params.get_bool('StarPortEnabled'))
+      self.assertFalse(Path(self.params.get_param_path('AndroidAutoEnabled')).exists())
       self.params.put_bool('AlwaysOnLateral', True, block=True)
       corrupt = {'SLCFallback': b'broken', 'Offset3': b'',
                  'LongitudinalPersonalityProfiles': b'{broken', 'LaneCenterOffset': b'bad'}

@@ -16,7 +16,7 @@ const BLUETOOTH_ERRORS = {
   radio_preference_unavailable: "The Bluetooth power setting could not be read. Try again after restarting the device.",
   busy: "Bluetooth is being used by another operation. Finish pairing or stop searching, then try again.",
   park_required: "Park before changing Bluetooth connections.",
-  projection_active: "Android Auto is using this device. Stop Android Auto, then try again.",
+  projection_active: "StarPort is using this device. Stop StarPort, then try again.",
   session_expired: "The pairing session expired. Refresh and start pairing again.",
   changed: "The Bluetooth device or pairing request changed. Refresh and try again.",
 }
@@ -218,7 +218,7 @@ export const BluetoothPage = {
         <GxNotice tone="danger" v-if="error">{{ error }}</GxNotice>
         <GxState v-if="!status && !error" loading>Checking Bluetooth…</GxState>
         <template v-else-if="status">
-          <GxNotice tone="info">Using a wireless Android Auto adapter? Pair the adapter on the <a class="gx-link" href="#/android-auto">Android Auto page</a>, then pair and connect your car here.</GxNotice>
+          <GxNotice tone="info">Using a wireless Android Auto adapter? Set up StarPort on the <a class="gx-link" href="#/starport">StarPort page</a>, then pair and connect your car here.</GxNotice>
           <section class="gx-card"><div class="gx-section__header"><i class="bi bi-bluetooth" aria-hidden="true"></i><span class="gx-section__title">Adapter</span></div>
             <div class="gx-panel gx-stack">
               <GxNotice v-if="status.errorCode" tone="danger">{{ bluetoothError(status.errorCode) }}</GxNotice>

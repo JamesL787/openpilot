@@ -505,7 +505,8 @@ class RuntimeReplayTests(unittest.TestCase):
     self.assertTrue(first.message.slcState.hasPending)
     self.sm.advance(2_010_000_000)
     first = runtime.step(self.sm, self.cp, now_ns=2_010_000_000,
-                         request=Action(runtime.session_id, 1, first.message.slcState.decisionId, 0, 'accept'))
+                         request=Action(runtime.session_id, 1, first.message.slcState.decisionId,
+                                        first.message.slcState.presentationId, 'accept'))
     self.assertTrue(first.message.slcState.hasAccepted)
     source = self.sm['slcDashboardObservation']
     source.speedMps = 15.0
@@ -1310,7 +1311,7 @@ class RuntimeReplayTests(unittest.TestCase):
     pending = runtime.step(self.sm, self.cp, now_ns=2_050_000_000)
     self.assertTrue(pending.message.slcState.hasPending)
     self.sm.advance(2_100_000_000)
-    request = Action(runtime.session_id, 17, pending.message.slcState.decisionId, 0, 'reject')
+    request = Action(runtime.session_id, 17, pending.message.slcState.decisionId, pending.message.slcState.presentationId, 'reject')
     rejected = runtime.step(self.sm, self.cp, now_ns=2_100_000_000, request=request)
     self.assertEqual(rejected.action_result.status, 'resolved')
     self.assertEqual(rejected.message.slcState.actionSequenceId, 17)

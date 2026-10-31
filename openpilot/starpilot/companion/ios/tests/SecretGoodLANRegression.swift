@@ -90,22 +90,22 @@ import Foundation
         try uploader.configure(address: "192.168.1.89")
         _ = await uploader.probe()
         let package = Data(repeating: 0x5a, count: 48 * 1024 * 1024)
-        let header = Data("POST /api/android-auto/upload HTTP/1.1\r\nContent-Length: \(package.count)\r\nContent-Type: application/octet-stream\r\n\r\n".utf8)
+        let header = Data("POST /api/starport/upload HTTP/1.1\r\nContent-Length: \(package.count)\r\nContent-Type: application/octet-stream\r\n\r\n".utf8)
         let partial = try LocalRequest.parse(header)
         precondition(partial == nil)
         let parsed = try LocalRequest.parse(header + package)
         precondition(parsed?.body == package)
-        _ = try await uploader.request(path: "/api/android-auto/upload", method: "POST", headers: ["content-type": "application/octet-stream"], body: package)
+        _ = try await uploader.request(path: "/api/starport/upload", method: "POST", headers: ["content-type": "application/octet-stream"], body: package)
         let uploaded = uploadServer.calls.last!
         precondition(uploaded.httpBody == package)
         precondition(uploaded.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
         precondition(uploaded.value(forHTTPHeaderField: "Origin") == "http://192.168.1.89:8082")
         precondition(uploaded.timeoutInterval == 120)
-        for target in ["/api/settings/confirm", "/api/android-auto/upload/extra", "/api/android-auto/upload?x=1"] {
+        for target in ["/api/settings/confirm", "/api/starport/upload/extra", "/api/starport/upload?x=1"] {
             let oversized = Data("POST \(target) HTTP/1.1\r\nContent-Length: 50331648\r\n\r\n".utf8)
             do { _ = try LocalRequest.parse(oversized); preconditionFailure("Ordinary requests must remain bounded") } catch {}
         }
-        let tooLarge = Data("POST /api/android-auto/upload HTTP/1.1\r\nContent-Length: 268435457\r\n\r\n".utf8)
+        let tooLarge = Data("POST /api/starport/upload HTTP/1.1\r\nContent-Length: 268435457\r\n\r\n".utf8)
         do { _ = try LocalRequest.parse(tooLarge); preconditionFailure("Package limit must hold") } catch {}
         let discoveryServer = Server()
         var probed: [String] = []

@@ -162,7 +162,7 @@ class TestBluetoothLarge(unittest.TestCase):
     self.panel.hide_event()
     self.assertEqual(executor.jobs[-1][1], self.panel.owner.close)
 
-  def test_opening_the_page_never_scans_through_android_auto(self):
+  def test_opening_the_page_never_scans_through_starport(self):
     from openpilot.starpilot.bluetooth.native_owner import NativeBluetoothOwner
     from openpilot.starpilot.bluetooth.owner import AdapterBusyElsewhere, BluetoothOwner
     owner = NativeBluetoothOwner(lambda: True)

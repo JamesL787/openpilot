@@ -63,8 +63,8 @@ class JetlinkSettings:
   def _wired_session_running():
     """Wired Android Auto holds the comma's USB-C port while a session runs."""
     try:
-      from openpilot.starpilot.system.android_auto.protocol import AndroidAutoClient
-      status = AndroidAutoClient().status()
+      from openpilot.starpilot.system.starport.protocol import StarPortClient
+      status = StarPortClient().status()
       return status.get("connection") == "wired" and bool(status.get("running"))
     except Exception:
       return False

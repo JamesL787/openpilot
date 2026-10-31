@@ -25,7 +25,7 @@ def process_health(processes):
   return drive
 
 
-@pytest.mark.parametrize('name', ['android_autod', 'galaxy_hotspot', 'jetlinkd'])
+@pytest.mark.parametrize('name', ['starportd', 'galaxy_hotspot', 'jetlinkd'])
 @pytest.mark.parametrize('running,requested', [(False, False), (False, True), (True, True)])
 def test_optional_lifecycle_does_not_block_engagement(name, running, requested):
   drive = process_health([(name, running, requested)])
@@ -42,7 +42,7 @@ def test_optional_lifecycle_does_not_block_engagement(name, running, requested):
 
 @pytest.mark.parametrize('critical', ['controlsd', 'pandad', 'modeld', 'card', 'unknown_service'])
 def test_projection_failure_does_not_hide_critical_process_failure(critical):
-  drive = process_health([('android_autod', False, True), (critical, False, True)])
+  drive = process_health([('starportd', False, True), (critical, False, True)])
   assert drive.update_process_health()
   assert drive.not_running_prev == {critical}
   assert drive.events.contains(ET.NO_ENTRY)
@@ -54,7 +54,7 @@ def test_projection_failure_does_not_hide_critical_process_failure(critical):
 
 
 def test_optional_failure_does_not_soft_disable_existing_drive():
-  drive = process_health([('android_autod', False, True)])
+  drive = process_health([('starportd', False, True)])
   assert not drive.update_process_health()
   state = StateMachine()
   state.state = log.SelfdriveState.OpenpilotState.enabled
@@ -62,7 +62,7 @@ def test_optional_failure_does_not_soft_disable_existing_drive():
   assert state.state == log.SelfdriveState.OpenpilotState.enabled
 
 
-def test_missing_android_auto_service_does_not_block_engagement():
+def test_missing_starport_service_does_not_block_engagement():
   drive = process_health([])
   assert not drive.update_process_health()
   drive.events.add(EventName.buttonEnable)

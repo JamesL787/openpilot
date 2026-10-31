@@ -956,6 +956,78 @@
       "producing_source_snapshot": "5fc5709e4d54f31dd575e66333271dbb260d5e9b",
       "intentional_change_commit": "c6f00f7a4d1f60734897c12f160715a6a49775f2",
       "hosted_evidence_run": 40521627641
+    },
+    {
+      "segment": "regenAA0FC4ED71E|2025-04-08--22-57-50--0",
+      "process": "dmonitoringd",
+      "file": "regenAA0FC4ED71E_2025-04-08--22-57-50--0_dmonitoringd.zst",
+      "bytes": 3243,
+      "sha256": "7f550662274b7a2b3d0bd61b84e5313e07c776f0053e647fbc19dfaba51cfd94",
+      "input_sha256": "0b6734026f7c775f7fd648ef76130f9b9a672c5236c6a328eff31ec9cc3c5343",
+      "input_bytes": 11873030,
+      "official_baseline_commit": "ec95db3f1fa19f76940497fedfdb62e09ea19912",
+      "official_artifact_commit": "9ae451c262c7402c9623f3baa1580c6242d6777b",
+      "official_baseline_url": "https://raw.githubusercontent.com/commaai/ci-artifacts/9ae451c262c7402c9623f3baa1580c6242d6777b/regenAA0FC4ED71E_2025-04-08--22-57-50--0_dmonitoringd_ec95db3f1fa19f76940497fedfdb62e09ea19912.zst",
+      "official_baseline_bytes": 3322,
+      "official_baseline_sha256": "ee9d6ad021d2fb2fb1f00592ab8dc6420b2fb91ca7756536b6ef2692d4fb8843",
+      "config_sha256": "125182e544b12d878ed847c0d17beee6e4eef8c5e11eef388b1b99093f518cb3",
+      "car_fingerprint": "HYUNDAI_SONATA",
+      "contract": "Deliberate Night Star 24 h driver-monitoring timing (policy.py night_star_timing): awareness does not drain and no alert levels are raised. Owner-confirmed. Not on Honda-PTM-Clean, which keeps stock DM timing and drops this entry.",
+      "producing_source_snapshot": "honda-ptm-89363c45-ci"
+    },
+    {
+      "segment": "regen218A4DCFAA1|2025-04-08--22-57-51--0",
+      "process": "dmonitoringd",
+      "file": "regen218A4DCFAA1_2025-04-08--22-57-51--0_dmonitoringd.zst",
+      "bytes": 3259,
+      "sha256": "4450ae01e21d79bd74067d172da7277294c96b24075d3b942b39a89548217e81",
+      "input_sha256": "6c028c0d40328fc00fa12acf91dba30d9f152e89d99a7089aadac62f6c7d5d64",
+      "input_bytes": 10846201,
+      "official_baseline_commit": "ec95db3f1fa19f76940497fedfdb62e09ea19912",
+      "official_artifact_commit": "9ae451c262c7402c9623f3baa1580c6242d6777b",
+      "official_baseline_url": "https://raw.githubusercontent.com/commaai/ci-artifacts/9ae451c262c7402c9623f3baa1580c6242d6777b/regen218A4DCFAA1_2025-04-08--22-57-51--0_dmonitoringd_ec95db3f1fa19f76940497fedfdb62e09ea19912.zst",
+      "official_baseline_bytes": 3332,
+      "official_baseline_sha256": "0bdff092474cf3208b705e982aa2d9df5c6ff8e66bb35fdd93926a90dfd4c09a",
+      "config_sha256": "125182e544b12d878ed847c0d17beee6e4eef8c5e11eef388b1b99093f518cb3",
+      "car_fingerprint": "TOYOTA_PRIUS",
+      "contract": "Deliberate Night Star 24 h driver-monitoring timing (policy.py night_star_timing): awareness does not drain and no alert levels are raised. Owner-confirmed. Not on Honda-PTM-Clean, which keeps stock DM timing and drops this entry.",
+      "producing_source_snapshot": "honda-ptm-89363c45-ci"
+    },
+    {
+      "segment": "regenB328FF8BA0A|2025-04-08--22-57-45--0",
+      "process": "card",
+      "file": "regenB328FF8BA0A_2025-04-08--22-57-45--0_card.zst",
+      "bytes": 305631,
+      "sha256": "59bd2dee5ed50efca833797b6c68eedbad700f85706c561156de22bad03e79a7",
+      "input_sha256": "8ea4ab5412a99bfc65fbe95cd169a54edb6bcb68f6fa20c97f2bc58ed4bba538",
+      "input_bytes": 10090147,
+      "official_baseline_commit": "ec95db3f1fa19f76940497fedfdb62e09ea19912",
+      "official_artifact_commit": "9ae451c262c7402c9623f3baa1580c6242d6777b",
+      "official_baseline_url": "https://raw.githubusercontent.com/commaai/ci-artifacts/9ae451c262c7402c9623f3baa1580c6242d6777b/regenB328FF8BA0A_2025-04-08--22-57-45--0_card_ec95db3f1fa19f76940497fedfdb62e09ea19912.zst",
+      "official_baseline_bytes": 305603,
+      "official_baseline_sha256": "9f6932a3371a59a890ee0a5a94a0a6ef1970021559ef8d83c85545f69ef365de",
+      "config_sha256": "560c1060f4d2e43810e7bbd55d5f361a828bdb027d60f308b2e1d614222a2078",
+      "car_fingerprint": "HONDA_CIVIC",
+      "contract": "CarParams.flags gains VGR_CIVIC_TBA_C120 from EPS firmware 39990-TBA-C120: it names the steering-ratio table, is read only by the modified-EPS controllers, and is never safety; controlsd output for this stock Civic is unchanged.",
+      "producing_source_snapshot": "honda-ptm-89363c45-ci"
+    },
+    {
+      "segment": "aebd8f1d4ea16066|000002d8--5850d3ea5c--2",
+      "process": "controlsd",
+      "file": "aebd8f1d4ea16066_000002d8--5850d3ea5c--2_controlsd.zst",
+      "bytes": 155734,
+      "sha256": "fdea80de4ecfbace37a115a97ff6157c9d5079afebb77d4a65b2a986e69359f7",
+      "input_sha256": "1770f70d8f8053e5b1984ed4f9d704be8d58f6d55b59cafd6aa11109aaf777c1",
+      "input_bytes": 12375667,
+      "official_baseline_commit": "ec95db3f1fa19f76940497fedfdb62e09ea19912",
+      "official_artifact_commit": "9ae451c262c7402c9623f3baa1580c6242d6777b",
+      "official_baseline_url": "https://raw.githubusercontent.com/commaai/ci-artifacts/9ae451c262c7402c9623f3baa1580c6242d6777b/aebd8f1d4ea16066_000002d8--5850d3ea5c--2_controlsd_ec95db3f1fa19f76940497fedfdb62e09ea19912.zst",
+      "official_baseline_bytes": 155707,
+      "official_baseline_sha256": "31de3704eb69513e792a0843a3ac91b7792982e3de8326f23418b45ae8ac58c2",
+      "config_sha256": "132acceff1ba3e33c903694e42a6442e42bbf71319bcf4e0de1b020cbfc97111",
+      "car_fingerprint": "TESLA_MODEL_Y",
+      "contract": "Stopped-model guard: lateral is inactive while modelV2 is not alive (no message within 0.5 s), so latActive and the angle target stay off for 3 frames where the recording has a model gap. Fail-closed by design.",
+      "producing_source_snapshot": "honda-ptm-89363c45-ci"
     }
   ],
   "source_snapshots": {
@@ -1128,6 +1200,23 @@
         "tools/ci/replay-fixture-cache.json": "99fd6ddc839ae2f779c4e3ef0f529359cd6e19fc20f953da1c591b3af8456e15"
       },
       "verification": "Completed hosted process replay reused verbatim. Pure decoding/comparison of all19127 output messages finds exactly two CarParams.flags deltas141->8333; clearing only SMOOTHING_BOUND restores zero differences using unchanged Card ignores/tolerance. No local native replay or source overlay."
+    },
+    "honda-ptm-89363c45-ci": {
+      "revision": "89363c45bdb2039a1f9b1459b639a2eb2c8a9139",
+      "sha256": {
+        "openpilot/selfdrive/monitoring/policy.py": "ff1decb72a4329a1832bb354ed506cf02739ab5f4771a67226c248dcc9ed48f4",
+        "openpilot/selfdrive/monitoring/dmonitoringd.py": "440b515464818d73bda3cfed51f62f58225e9732c9be91060f8c1d9241834a1d",
+        "openpilot/selfdrive/car/card.py": "e65d03f36dd9da2107819e525eb12723c5cc69e804b9e29585d0ffea2618406f",
+        "openpilot/selfdrive/controls/controlsd.py": "0b4d31e245a4b4bfab07653a0b4e93403b9b1f791898cf7fd02c8645a5ef3aae",
+        "opendbc_repo/opendbc/car/honda/steer_ratio.py": "dd01814ed436661c078d53f6997e1115793703a2be39ff810c9a4b303a5c9599",
+        "opendbc_repo/opendbc/car/honda/stock_aol.py": "b31f01d69e9a39b17d10b6d67c36bb4e71d96248d5d0ac4ac27ebce2c5348a54",
+        "opendbc_repo/opendbc/car/honda/interface.py": "a5066d01aab649bc168f8bd7430ed7516c5e6efa628a67e78d982ab7dfbfb707",
+        "openpilot/selfdrive/test/process_replay/process_replay.py": "383b877fe764441d9efa0ae651f919da3532151047bedc99a2826a35bc9669b5",
+        "openpilot/selfdrive/test/process_replay/compare_logs.py": "fb923cff883974dcdf2d701a0b8484c9d3c4d2192b018ef2d17aeac39dd24202",
+        "tools/ci/replay_references.py": "75267bb70fc6391bb3a1bc2c9f36af2807cf838b2ffcd72c522ae861fd431832",
+        "tools/ci/replay_fixture_cache.py": "f165d1d228f5e4600760ea41996b923c095964550b3ced6c3135a59ec7625821"
+      },
+      "verification": "Hosted CI (tests run 40807124035, merge commit 7281a0d595 of PR #12 into Honda-PTM-Testing) replayed this revision with the unchanged production-default command; references are its process-replay-outputs artifact, byte for byte. Honda-PTM-Testing gained only CI tooling between that run and these entries."
     }
   }
 }

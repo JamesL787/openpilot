@@ -1,0 +1,37 @@
+name: branch guard
+
+# The Honda-PTM branch flow (docs/BRANCH_WORKFLOW.md). The rulesets require this job on every long-lived branch.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+  push:
+    branches: [Honda-PTM-Clean]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: branch-guard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  branch_guard:
+    name: branch guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    - name: Check where the pull request comes from
+      if: github.event_name == 'pull_request'
+      env:
+        BASE: ${{ github.base_ref }}
+        HEAD: ${{ github.head_ref }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        REPO: ${{ github.repository }}
+      run: python3 tools/ci/branch_guard.py "$BASE" "$HEAD" "$HEAD_REPO" "$REPO"
+    - name: Check Honda-PTM-Clean is Honda-PTM-Stable plus exactly the clean changes
+      if: (github.event_name == 'pull_request' && github.base_ref == 'Honda-PTM-Clean') || github.ref == 'refs/heads/Honda-PTM-Clean'
+      run: python3 tools/night_star_port/check_clean_branch.py origin/Honda-PTM-Stable HEAD

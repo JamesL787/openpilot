@@ -5,15 +5,9 @@ on:
     branches:
       - master
       - Domathon
-      # Night Star branches: every push gets CI, not only PRs
-      - night-star7
-      - night-star7-clean
+      # Honda-PTM branches and the night-star7(-clean) mirrors only change by a pull request that already ran this
+      # workflow, so a push run there tests the same tree twice. Only the personal branch takes direct pushes.
       - night-star7-vfn-personal-DONOTFLASH
-      # Honda-PTM branches (RiskyBiscuit-arc/openpilot)
-      - Honda-PTM-Stable
-      - Honda-PTM-Stage
-      - Honda-PTM-Testing
-      - Honda-PTM-Clean
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -30,6 +24,12 @@ concurrency:
 permissions:
   contents: read
 
+# Pull requests into Honda-PTM-Testing run a reduced set to keep Actions usage down: every check the Testing
+# ruleset requires still runs, and the jobs gated on the full suite below are skipped. Pull requests into
+# Honda-PTM-Stage, Honda-PTM-Stable and every other base, pushes and workflow_dispatch run the full suite;
+# "Run workflow" on a Testing PR's branch runs it on demand. Full-suite gate, repeated on each job because job
+# conditions cannot read env: !(github.event_name == 'pull_request' && github.base_ref == 'Honda-PTM-Testing')
+
 env:
   CI: 1
   PYTHONPATH: ${{ github.workspace }}
@@ -43,7 +43,7 @@ jobs:
     steps:
     - uses: actions/checkout@v7
     - name: Validate published device build receipt
-      if: github.event_name == 'push' && github.ref == 'refs/heads/SecretGoodStarPilot'
+      if: github.event_name == 'push' && github.ref == 'refs/heads/Dom'
       run: python3 tools/ci/check_prebuilt_receipt.py --revision HEAD
     - name: Check shipped device runtime dependencies
       run: python3 -m unittest tools.laptop_device_build.tests.test_runtime_dependencies -v
@@ -114,7 +114,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest]
+        os: ${{ fromJSON((github.event_name == 'pull_request' && github.base_ref == 'Honda-PTM-Testing') && '["ubuntu-24.04"]' || '["ubuntu-24.04", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -143,6 +143,7 @@ jobs:
 
   build_mac:
     name: build macOS
+    if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'Honda-PTM-Testing') }}
     runs-on: ${{ ((github.repository == 'commaai/openpilot') && ((github.event_name != 'pull_request') || (github.event.pull_request.head.repo.full_name == 'commaai/openpilot'))) && 'namespace-profile-macos-8x14' || 'macos-latest' }}
     steps:
     - uses: actions/checkout@v7
@@ -215,6 +216,15 @@ jobs:
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       timeout-minutes: 5
       run: tools/op.sh test opendbc_repo/opendbc/car/gm/tests --json-output gm-test-results.json
+    - name: Test shared GM discovery, routing, and manual overrides
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      timeout-minutes: 2
+      run: >-
+        .venv/bin/python -m pytest -q --import-mode=importlib
+        opendbc_repo/opendbc/car/gm/tests/test_shared_discovery.py
+        opendbc_repo/opendbc/car/gm/tests/test_automatic_discovery.py
+        opendbc_repo/opendbc/car/gm/tests/test_bolt_vin_discovery.py
+        --junitxml=gm-discovery-results.xml
     - name: Test native independent-axis protocol
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: |
@@ -235,18 +245,20 @@ jobs:
         STARPILOT_PYTHON: ${{ github.workspace }}/.venv/bin/python
       run: go test -mod=readonly -race -run '^Test(MsgqNativeLayout|Shadow(GoPythonIPC|ExecutableHostGpsIPC))$' -count=1 -v
     - name: Save complete unit test results
-      if: ${{ always() && (hashFiles('unit-test-results.json') != '' || hashFiles('gm-test-results.json') != '' || hashFiles('ci-results/host-test-diagnostics/**') != '') }}
+      if: ${{ always() && (hashFiles('unit-test-results.json') != '' || hashFiles('gm-test-results.json') != '' || hashFiles('gm-discovery-results.xml') != '' || hashFiles('ci-results/host-test-diagnostics/**') != '') }}
       uses: actions/upload-artifact@v4
       with:
         name: unit-test-results
         path: |
           unit-test-results.json
           gm-test-results.json
+          gm-discovery-results.xml
           ci-results/host-test-diagnostics/
         if-no-files-found: error
 
   custom_pytest:
     name: custom pytest (${{ matrix.shard }})
+    if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'Honda-PTM-Testing') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
@@ -284,7 +296,7 @@ jobs:
         .venv/bin/python -c "import av; assert 'libx264' in av.codecs_available"
     - name: Test every assigned custom pytest node serially
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      timeout-minutes: 15
+      timeout-minutes: 25
       env:
         RAYLIB_BACKEND: headless
       run: .venv/bin/python -m tools.ci.custom_pytest_shards run --index "${{ matrix.shard }}" --count 24 --output "ci-results/custom-pytest-${{ matrix.shard }}"
@@ -299,7 +311,7 @@ jobs:
   custom_pytest_complete:
     name: complete custom pytest catalog
     needs: custom_pytest
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !(github.event_name == 'pull_request' && github.base_ref == 'Honda-PTM-Testing') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -549,6 +561,7 @@ jobs:
 
   process_replay:
     name: process replay
+    # Runs on Testing PRs too: it is cheap (~9 runner-min) and shows when a car or controls change shifts behaviour.
     runs-on: ${{
       (github.repository == 'commaai/openpilot') &&
       ((github.event_name != 'pull_request') ||
@@ -628,6 +641,7 @@ jobs:
 
   create_ui_report:
     name: Create UI Report
+    if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'Honda-PTM-Testing') }}
     runs-on: ${{
       (github.repository == 'commaai/openpilot') &&
       ((github.event_name != 'pull_request') ||

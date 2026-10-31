@@ -50,7 +50,7 @@ enum SecretGoodGalaxy {
     static func needsWiFi(_ path: String) -> Bool {
         let path = URLComponents(string: path)?.path ?? path
         return ["/api/recordings/", "/api/replay/", "/api/cameras/", "/api/maps/tiles/",
-                "/api/android-auto/upload", "/api/android-auto/apk", "/api/phone-internet/", "/api/spotify/upload"].contains(where: { path.hasPrefix($0) })
+                "/api/starport/upload", "/api/starport/apk", "/api/phone-internet/", "/api/spotify/upload"].contains(where: { path.hasPrefix($0) })
             || ["/api/auth/login", "/api/auth/logout"].contains(path)
     }
 }

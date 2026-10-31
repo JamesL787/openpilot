@@ -213,6 +213,20 @@ class SlcOffsetFeatureTests(unittest.TestCase):
     self.params.put_bool("IsMetric", True, block=True)
     self.assertFalse(owner.apply(request))
 
+  def test_global_units_do_not_require_openpilot_longitudinal_or_a_fingerprint(self):
+    for cp in (None, NS(carFingerprint="STOCK_CRUISE", openpilotLongitudinalControl=False,
+                       notCar=False, dashcamOnly=False, passive=False)):
+      with self.subTest(vehicle=cp):
+        self.cp = cp
+        self.params.remove(DOCUMENT_KEY)
+        self.params.put_bool("IsMetric", False, block=True)
+        self.params.put("Offset1", 5.0, block=True)
+        self.assertTrue(self.units.change_units(True, b"0"))
+        document = od.decode(self.raw(DOCUMENT_KEY))
+        self.assertEqual(document, od.adopt_legacy(False, (5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)))
+        self.assertEqual(self.raw("IsMetric"), b"1")
+        self.assertEqual(self.raw("Offset1"), b"5.0")
+
   def test_off_and_display_only_corrupt_legacy_allow_unit_change(self):
     Path(self.params.get_param_path("Offset1")).write_bytes(b"nan")
     Path(self.params.get_param_path("IsMetric")).write_bytes(b"bad")
@@ -381,6 +395,8 @@ class SlcOffsetFeatureTests(unittest.TestCase):
     from openpilot.selfdrive.ui.layouts.settings.toggles import TogglesLayout
     from openpilot.selfdrive.ui.mici.layouts.settings import toggles as compact
 
+    self.cp = None
+    self.params.put("Offset1", 5.0, block=True)
     large = TogglesLayout.__new__(TogglesLayout)
     large._params = self.params
     large._slc_offsets = self.units

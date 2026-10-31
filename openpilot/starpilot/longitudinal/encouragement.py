@@ -2,6 +2,10 @@
 
 import math
 
+from openpilot.starpilot.saved_source import read_saved
+
+KEY = "ExperimentalSpeedNudge"
+
 SOURCES = ('carState', 'carControl', 'controlsState', 'selfdriveState', 'radarState', 'modelV2')
 MAX_SOURCE_AGE_NS = 250_000_000
 MAX_BOOST = .6
@@ -10,6 +14,7 @@ SETTLE_SECONDS = 3.
 MIN_HESITATION_GAP = 1.
 HESITATION_ACCEL = .15
 RECOVERY_ACCEL = .3
+HESITATION_FILTER_SECONDS = .5
 
 
 class Encouragement:
@@ -18,6 +23,7 @@ class Encouragement:
     self.boost = 0.
     self.drive_id = None
     self.last_model_ns = 0
+    self.hesitation_accel: float | None = None
 
   def update(self, sm, cp, *, now_ns, drive_id, dt, target_speed, model_accel, mpc_accel, cruise_accel,
              lateral_accel, blocked):
@@ -52,8 +58,14 @@ class Encouragement:
     self.last_model_ns = model_ns
     if not eligible:
       self.clear_seconds = self.boost = 0.
+      self.hesitation_accel = None
       return model_accel
-    if self.boost == 0. and (target_speed - car.vEgo < MIN_HESITATION_GAP or car.aEgo > HESITATION_ACCEL):
+    if self.hesitation_accel is None:
+      self.hesitation_accel = car.aEgo
+    else:
+      self.hesitation_accel += dt / (HESITATION_FILTER_SECONDS + dt) * (car.aEgo - self.hesitation_accel)
+    if self.boost == 0. and (target_speed - car.vEgo < MIN_HESITATION_GAP or
+                            car.aEgo >= RECOVERY_ACCEL or self.hesitation_accel > HESITATION_ACCEL):
       self.clear_seconds = 0.
       return model_accel
     self.clear_seconds += dt
@@ -61,3 +73,24 @@ class Encouragement:
       self.boost = min(MAX_BOOST, self.boost + BOOST_RATE * dt)
     gap_scale = min(1., max(0., (target_speed - car.vEgo - .2) / 1.8))
     return min(max(model_accel, self.boost * gap_scale), mpc_accel, cruise_accel)
+
+
+class NudgePreferences:
+  def __init__(self, params):
+    self.params = params
+    self.enabled = False
+    self.next_ns = 0
+    self.last_ns = 0
+
+  def sample(self, now_ns):
+    if now_ns < self.last_ns:
+      self.next_ns = 0
+    self.last_ns = now_ns
+    if now_ns >= self.next_ns:
+      self.next_ns = now_ns + 1_000_000_000
+      try:
+        raw, readable = read_saved(self.params, KEY, 16)
+        self.enabled = readable and raw in (None, b'1')
+      except (OSError, RuntimeError, TypeError, ValueError):
+        self.enabled = False
+    return self.enabled

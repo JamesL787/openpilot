@@ -11,7 +11,7 @@ soundd and the warning speaker are untouched. Outputs:
 - bluetooth: the comma's existing BlueALSA A2DP source, through a process-local ALSA configuration.
   That approach is adapted from firestar5683's RoadScore Bluetooth output
   (firestar5683/StarPilot@249eb88b3a397db847e4a595d7e23b7e85d329e5, roadscore/prototype/bluetooth_output.py).
-- android_auto: a real-time pipe of 48 kHz stereo PCM that android_autod sends on the car's media channel.
+- starport: a real-time pipe of 48 kHz stereo PCM that starportd sends on the car's media channel.
 - test: a null sink, to check Spotify without a speaker.
 """
 from __future__ import annotations
@@ -68,18 +68,18 @@ class Launch:
 def runtime_paths(layout: Layout) -> dict[str, Path]:
   run = layout.runtime
   return {'run': run, 'home': run / 'home', 'pulse': run / 'pulse', 'socket': run / 'pulse' / 'native', 'alsa': run / 'alsa.conf',
-          'android_auto': run / 'android-auto.pcm'}
+          'starport': run / 'starport.pcm'}
 
 
-def android_auto_pipe(layout: Layout | None = None) -> Path:
-  return runtime_paths(layout or Layout.default())['android_auto']
+def starport_pipe(layout: Layout | None = None) -> Path:
+  return runtime_paths(layout or Layout.default())['starport']
 
 
 def _sink(output: str, paths: dict[str, Path]) -> tuple[str, str]:
   if output == 'bluetooth':
     return 'module-alsa-sink', f'device={PCM_NAME} sink_name={SINK_NAME} channels=2 tsched=0'
-  if output == 'android_auto':
-    return 'module-pipe-sink', (f'file={paths["android_auto"]} sink_name={SINK_NAME} format=s16le rate={PIPE_RATE} ' +
+  if output == 'starport':
+    return 'module-pipe-sink', (f'file={paths["starport"]} sink_name={SINK_NAME} format=s16le rate={PIPE_RATE} ' +
                                 f'channels={PIPE_CHANNELS} use_system_clock_for_timing=yes')
   return 'module-null-sink', f'sink_name={SILENT_SINK if output == "silent" else SINK_NAME}'
 
@@ -100,8 +100,8 @@ def server_launch(layout: Layout, prefs: Preferences, *, silent: bool = False, a
     paths['alsa'].write_text(alsa_config(prefs.output_address, alsa_base))
     os.chmod(paths['alsa'], 0o600)
     env['ALSA_CONFIG_PATH'] = str(paths['alsa'])
-  elif prefs.output == 'android_auto':
-    paths['android_auto'].unlink(missing_ok=True)
+  elif prefs.output == 'starport':
+    paths['starport'].unlink(missing_ok=True)
   sink = ' '.join(_sink('silent' if silent else prefs.output, paths))
   argv = [str(root / 'bin' / 'pulseaudio'), '--daemonize=no', '--system=no', '--use-pid-file=no', '-n',
           '--exit-idle-time=-1', '--realtime=no', '--high-priority=no', '--disallow-exit', '--log-target=stderr',

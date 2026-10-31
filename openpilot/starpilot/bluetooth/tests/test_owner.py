@@ -95,7 +95,7 @@ class BluetoothOwnerTest(unittest.TestCase):
     self.owner = BluetoothOwner(lambda: self.parked[0], bluez_factory=FakeBlueZ, radio_helper=self.helper,
                                 systemctl=self.systemctl, radio_preference=self.preference,
                                 timer_factory=FakeTimer, admission_lock=Path(self.temp.name) / 'adapter.lock')
-    forget_car = patch.object(BluetoothOwner, '_forget_android_auto_car')
+    forget_car = patch.object(BluetoothOwner, '_forget_starport_car')
     self.forgotten_cars = forget_car.start()
     self.addCleanup(forget_car.stop)
 
@@ -213,11 +213,11 @@ class BluetoothOwnerTest(unittest.TestCase):
     with self.assertRaises(BluetoothUnavailable):
       self.owner.request('power', enabled=True)
 
-  def test_android_auto_can_power_on_onroad_with_a_valid_session(self):
+  def test_starport_can_power_on_onroad_with_a_valid_session(self):
     self.parked[0] = False
     session = ('android-auto-session',)
     self.owner.session_valid = lambda identity: identity == session
-    result = self.owner.request('power', enabled=True, session=session, power_on_for_android_auto=True)
+    result = self.owner.request('power', enabled=True, session=session, power_on_for_starport=True)
     self.assertTrue(result['powered'])
     self.assertFalse(result['parked'])
     self.assertEqual(self.preference.path.read_bytes(), b'1')
@@ -225,9 +225,9 @@ class BluetoothOwnerTest(unittest.TestCase):
       self.owner.request('power', enabled=False, session=session)
     for operation, enabled, identity in [('power', False, session), ('power', True, None), ('scan', None, session)]:
       with self.subTest(operation=operation, enabled=enabled), self.assertRaises(ValueError):
-        self.owner.request(operation, enabled=enabled, session=identity, power_on_for_android_auto=True)
+        self.owner.request(operation, enabled=enabled, session=identity, power_on_for_starport=True)
 
-  def test_android_auto_power_on_rechecks_session_and_rolls_back(self):
+  def test_starport_power_on_rechecks_session_and_rolls_back(self):
     self.parked[0] = False
     valid = [True]
     self.owner.session_valid = lambda _identity: valid[0]
@@ -238,7 +238,7 @@ class BluetoothOwnerTest(unittest.TestCase):
       return result
     self.owner.systemctl = revoke_start
     with self.assertRaises(BluetoothRejected) as rejected:
-      self.owner.request('power', enabled=True, session=('android-auto-session',), power_on_for_android_auto=True)
+      self.owner.request('power', enabled=True, session=('android-auto-session',), power_on_for_starport=True)
     self.assertEqual(rejected.exception.code, 'session_expired')
     self.assertFalse(FakeBlueZ.powered)
     self.assertFalse(self.preference.path.exists())

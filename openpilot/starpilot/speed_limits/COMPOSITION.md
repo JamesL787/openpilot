@@ -11,6 +11,5 @@ adoption and expected set speed remain current. `Result.ceiling` is always `None
 not compose another speed ceiling with the driver's set speed. The planner uses
 card's published set speed and its ordinary selected braking profile.
 
-The former lead-relaxation helper is not applied to SLC output. Lead following,
-curves, stopping and actuator restrictions retain their independent planner paths.
+Lead following, curves, stopping and actuator restrictions retain their independent planner paths.
 See the [current controller contract](README.md).

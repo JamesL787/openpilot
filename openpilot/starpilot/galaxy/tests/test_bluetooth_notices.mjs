@@ -7,7 +7,7 @@ import { PipPage } from '../web/js/pip.js'
 import { VasmPage } from '../web/js/vasm.js'
 import { NavigationPage } from '../web/js/navigation.js'
 import { OfflineRoadMapsPanel } from '../web/js/offline-road-maps.js'
-import { AndroidAutoPage } from '../web/js/android-auto.js'
+import { StarPortPage } from '../web/js/starport.js'
 import { GalaxyCompanion } from '../web/js/companion.js'
 
 globalThis.window = {}
@@ -101,9 +101,9 @@ try {
 OfflineRoadMapsPanel.methods.ensureMap.call({ bluetooth: true, $refs: { canvas: {} }, hasKey: true })
 let uploaded = 0
 const aa = { bluetooth: true, packageFile: {}, busy: false, feed: { upload() { uploaded++ } } }
-aa.uploadReason = AndroidAutoPage.computed.uploadReason.call(aa)
+aa.uploadReason = StarPortPage.computed.uploadReason.call(aa)
 assert.match(aa.uploadReason, /not available over Bluetooth/)
-await AndroidAutoPage.methods.upload.call(aa)
+await StarPortPage.methods.upload.call(aa)
 assert.equal(uploaded, 0)
 await GalaxyCompanion.methods.toggle.call({ bluetooth: true })
 assert.equal(requests, 0)

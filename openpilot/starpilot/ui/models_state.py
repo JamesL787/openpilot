@@ -96,8 +96,17 @@ def model_catalog_rows(data: dict, sort_mode: str = "date", profile: str = "", i
 
 def model_profile_choices(data: dict, profile: str) -> tuple[tuple[str, str], ...]:
   rows = model_catalog_rows(data, "name", profile, installed_only=True)
-  choices = tuple((m.get("label", m["value"]), m["value"]) for m in rows)
-  return (("None — always use Active Small", ""),) + choices if profile == "big" else choices
+  choices = tuple((model_display_text(m.get("label", m["value"])), m["value"]) for m in rows)
+  return (("None – always use Active Small", ""),) + choices if profile == "big" else choices
+
+
+def model_download_choices(data: dict) -> tuple[tuple[str, str], ...]:
+  # A model still being hash-checked reports installed False; it is not a download candidate.
+  rows = [m for m in model_catalog_rows(data, "name") if model_action_allowed(data, "download", m) and not m.get("checking") and
+          (m.get("requiresGpu") is not True or m.get("gpuAvailable") is True)]
+  labels = [model_display_text(f"{m.get('label', m['value'])} ({'Big' if m.get('requiresGpu') else 'Small'})") for m in rows]
+  # The dialog keys choices by label, so a repeated catalog name carries its id.
+  return tuple((f"{label} [{m['value']}]" if labels.count(label) > 1 else label, m["value"]) for label, m in zip(labels, rows, strict=True))
 
 
 def model_profile_request(data: dict, profile: str, model_id: str) -> dict | None:
@@ -109,15 +118,38 @@ def model_profile_request(data: dict, profile: str, model_id: str) -> dict | Non
 
 def model_manager_rows(data: dict) -> tuple[FeatureRow, ...]:
   summary = data.get("summary", {})
-  rows = [FeatureRow("", "Model catalog", f"{summary.get('installed', 0)} installed / {summary.get('total', 0)} total")]
+  last = "" if data.get("downloading") else data.get("progress", "")
+  rows = [FeatureRow("", "Model catalog", f"{summary.get('installed', 0)} installed / {summary.get('total', 0)} in catalog",
+                     reason=f"Last job: {last}" if last else "Only installed models can be selected")]
   for profile, field in (("small", "activeSmallModel"), ("big", "activeBigModel")):
     mid = data.get(field, "")
     label = next((m.get("label", mid) for m in data.get("models", ()) if m.get("value") == mid), mid or "None — always use Active Small")
     available = (data.get("capabilities", {}).get("select") is True and data.get("isOnroad") is False and
                  not data.get("downloading") and not data.get("randomizer"))
-    rows.append(FeatureRow("", f"Active {profile.title()}", label, source=mid.encode(), available=available,
+    rows.append(FeatureRow("", f"Active {profile.title()}", model_display_text(label), source=mid.encode(), available=available,
                            reason="Randomizer selects at the next start" if data.get("randomizer") else
-                           "Change for next start" if available else "Turn the vehicle off to change models", page=f"models:{profile}"))
+                           "Change for next start" if available else
+                           "Wait for the download to finish" if data.get("downloading") and data.get("isOnroad") is False else
+                           "Turn the vehicle off to change models", page=f"models:{profile}"))
+  parked = data.get("isOnroad") is False
+  downloads = model_download_choices(data)
+  rows.append(FeatureRow("", "Download a model", f"{len(downloads)} ready" if downloads else "None to download", available=bool(downloads),
+                         reason="Downloading does not activate the model" if downloads else "Turn the vehicle off to download" if not parked else
+                         "A download is running" if data.get("downloading") else "Every model this device can run is installed",
+                         page="models:download"))
+  if data.get("downloading"):
+    rows.append(FeatureRow("", "Cancel download", data.get("progress") or "Downloading", available=model_action_allowed(data, "cancel"),
+                           reason="Stops the running download", page="models:cancel"))
+  else:
+    # The owner skips GPU-only models on a device without a GPU, so "all" means the same set the dialog offers.
+    allowed = model_action_allowed(data, "download_all") and bool(downloads)
+    rows.append(FeatureRow("", "Download all missing", f"{len(downloads)} models" if downloads else "None", available=allowed,
+                           reason="Skips GPU-only models" if allowed else
+                           "Turn the vehicle off to download" if not parked else "Nothing left to download", page="models:download_all"))
+  rows.append(FeatureRow("", "Refresh catalog", "Check for new models", available=model_action_allowed(data, "refresh_manifest"),
+                         reason="Turn the vehicle off to refresh" if not parked else "A download is running" if data.get("downloading") else
+                         "Updates the list; downloads nothing",
+                         page="models:refresh_manifest"))
   return tuple(rows)
 
 

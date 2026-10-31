@@ -4,7 +4,7 @@ import time
 import pyray as rl
 
 from openpilot.starpilot.soloist.now_playing import elapsed_ms
-from openpilot.starpilot.system.android_auto.projection_layout import NOW_PLAYING_SIZE, NOW_PLAYING_WIDGET
+from openpilot.starpilot.system.starport.projection_layout import NOW_PLAYING_SIZE, NOW_PLAYING_WIDGET
 from openpilot.starpilot.ui.presentation import FontRole
 
 ACCENT = rl.Color(199, 174, 247, 255)

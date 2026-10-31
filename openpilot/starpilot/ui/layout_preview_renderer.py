@@ -217,9 +217,9 @@ class _Canvas:
       if viewport is None:
         self.view = OnroadView(self.fonts, ASSET_DIRECTORY, background_layer=layers['background_layer'])
       else:
-        from openpilot.starpilot.system.android_auto.projection_onroad import ProjectionOnroad
+        from openpilot.starpilot.system.starport.projection_onroad import ProjectionOnroad
         self.view = ProjectionOnroad.create_view(OnroadView, self.fonts, viewport=viewport, **layers)
-        from openpilot.starpilot.system.android_auto.projection_exit import ProjectionExit
+        from openpilot.starpilot.system.starport.projection_exit import ProjectionExit
         self.view.projection_exit_layer = ProjectionExit(rl).render
         self.view.now_playing.track = {'source': 'spotify', 'status': 'playing', 'title': 'Midnight City', 'artist': 'M83', 'album': '',
                                        'durationMs': 243000, 'position': {'ms': 92000, 'at': 0, 'speed': 0.0}}
@@ -461,7 +461,7 @@ class LayoutPreviewRenderer:
       raise ValueError("Invalid widget art request")
     viewport = None
     if payload['profile'] == 'projection':
-      from openpilot.starpilot.system.android_auto.projection_layout import projection_customization
+      from openpilot.starpilot.system.starport.projection_layout import projection_customization
       layout = payload['document']['layout']
       viewport = (layout['canvas']['width'], layout['canvas']['height'])
       document = projection_customization(layout, validate_document(payload['document']['base']))

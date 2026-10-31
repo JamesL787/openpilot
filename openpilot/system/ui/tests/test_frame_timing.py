@@ -182,7 +182,7 @@ def test_projection_bookmark_is_saved_once_without_rendering_starpilot(frame, mo
   import time
   from pathlib import Path
   from openpilot.selfdrive.ui import ui
-  from openpilot.starpilot.system.android_auto.projection_bookmark import BookmarkReceiver, BookmarkSender
+  from openpilot.starpilot.system.starport.projection_bookmark import BookmarkReceiver, BookmarkSender
 
   app, _, _, _ = frame
   app._should_render = awake

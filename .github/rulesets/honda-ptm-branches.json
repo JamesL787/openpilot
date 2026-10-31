@@ -1,0 +1,127 @@
+{
+  "name": "Honda-PTM promotion branches",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/Honda-PTM-Stable",
+        "refs/heads/Honda-PTM-Stage",
+        "refs/heads/Honda-PTM-Clean"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": true,
+        "required_review_thread_resolution": true,
+        "allowed_merge_methods": [
+          "merge"
+        ],
+        "required_reviewers": []
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "branch guard",
+            "integration_id": 15368
+          },
+          {
+            "context": "source integrity",
+            "integration_id": 15368
+          },
+          {
+            "context": "build release",
+            "integration_id": 15368
+          },
+          {
+            "context": "static analysis",
+            "integration_id": 15368
+          },
+          {
+            "context": "unit tests",
+            "integration_id": 15368
+          },
+          {
+            "context": "developer commands (ubuntu-24.04)",
+            "integration_id": 15368
+          },
+          {
+            "context": "map provider",
+            "integration_id": 15368
+          },
+          {
+            "context": "complete AOL lifecycle catalog",
+            "integration_id": 15368
+          },
+          {
+            "context": "complete RELEASE vehicle catalog",
+            "integration_id": 15368
+          },
+          {
+            "context": "vehicle contracts (interfaces)",
+            "integration_id": 15368
+          },
+          {
+            "context": "vehicle contracts (safety-debug)",
+            "integration_id": 15368
+          },
+          {
+            "context": "recorded vehicles (debug)",
+            "integration_id": 15368
+          },
+          {
+            "context": "recorded vehicles (release)",
+            "integration_id": 15368
+          },
+          {
+            "context": "Panda compile (debug)",
+            "integration_id": 15368
+          },
+          {
+            "context": "Panda compile (release)",
+            "integration_id": 15368
+          },
+          {
+            "context": "coverage",
+            "integration_id": 15368
+          },
+          {
+            "context": "opendbc-misra",
+            "integration_id": 15368
+          },
+          {
+            "context": "panda-misra",
+            "integration_id": 15368
+          },
+          {
+            "context": "panda-host",
+            "integration_id": 15368
+          },
+          {
+            "context": "build docs",
+            "integration_id": 15368
+          }
+        ]
+      }
+    }
+  ]
+}

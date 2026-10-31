@@ -148,9 +148,9 @@ def test_dom_stop_road_has_fill_chevrons_line_and_pulsing_light():
 
 
 def test_projection_saved_gauge_migration_keeps_native_layout_and_exit_layer():
-  from openpilot.starpilot.system.android_auto.projection_layout import (CAR_EXIT, default_layout, projection_customization,
+  from openpilot.starpilot.system.starport.projection_layout import (CAR_EXIT, default_layout, projection_customization,
                                                                       validate_layout)
-  from openpilot.starpilot.system.android_auto.tests.test_projection_layout import SCREEN
+  from openpilot.starpilot.system.starport.tests.test_projection_layout import SCREEN
   document = default_layout(SCREEN)
   document['widgets'].pop(CEM_GAUGE_WIDGET)
   document['widgetOrder'] = [key for key in document.get('widgetOrder', []) if key != CEM_GAUGE_WIDGET]
@@ -208,7 +208,7 @@ def test_text_cradle_uses_profile_measurement_and_keeps_shadow_geometry():
 
 @pytest.mark.parametrize('projection', [False, True])
 def test_numeric_caption_declared_footprint_fits_actual_bottom_content_edge(projection):
-  from openpilot.starpilot.system.android_auto.projection_layout import (default_layout_for_viewport, layout_metadata_for_viewport,
+  from openpilot.starpilot.system.starport.projection_layout import (default_layout_for_viewport, layout_metadata_for_viewport,
                                                                       projection_customization, validate_layout_for_viewport)
   from openpilot.starpilot.ui.onroad_customization import customization_metadata
   from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
@@ -255,7 +255,7 @@ def test_numeric_caption_declared_footprint_fits_actual_bottom_content_edge(proj
                                 'manual_experimental', 'unknown_wire_reason', 'cem_signal', 'cem_speed',
                                 'cem_stop', 'cem_lead', 'cem_curve', 'curve_control'])
 def test_gauge_draws_only_for_visible_reasons(projection, kind):
-  from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, projection_customization
+  from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport, projection_customization
   from openpilot.starpilot.ui.tests.test_speed_stack import road
 
   document = default_document()
@@ -277,7 +277,7 @@ def test_gauge_draws_only_for_visible_reasons(projection, kind):
 
 
 def test_gauge_box_shrinks_to_its_content_and_saved_positions_keep_the_drawing_in_place():
-  from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, validate_layout_for_viewport
+  from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport, validate_layout_for_viewport
   from openpilot.starpilot.ui.onroad_customization import CEM_GAUGE_FRAME, CEM_GAUGE_INSET, CEM_GAUGE_SIZE, customization_metadata
   widget = customization_metadata()['profiles']['large']['widgets'][CEM_GAUGE_WIDGET]
   assert (widget['width'], widget['height']) == CEM_GAUGE_SIZE == (256, 276)
@@ -311,7 +311,7 @@ def test_gauge_box_shrinks_to_its_content_and_saved_positions_keep_the_drawing_i
 
 @pytest.mark.parametrize('projection', [False, True])
 def test_default_cem_gauge_is_in_left_column_centered_above_driver_monitor(projection):
-  from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, layout_metadata_for_viewport
+  from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport, layout_metadata_for_viewport
   from openpilot.starpilot.ui.onroad_customization import customization_metadata
 
   if projection:

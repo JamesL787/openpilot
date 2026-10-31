@@ -464,7 +464,7 @@ def test_engine_starts_before_renderer_and_closes_if_renderer_fails(tmp_path, mo
 
 @pytest.mark.parametrize('profile', ('large', 'compact'))
 def test_web_media_uses_owned_ram_namespace(tmp_path, monkeypatch, profile):
-  from openpilot.starpilot.system.android_auto import hw_encoder
+  from openpilot.starpilot.system.starport import hw_encoder
 
   session = tmp_path / uuid.uuid4().hex
   session.mkdir(mode=0o700)
@@ -1019,7 +1019,7 @@ def test_web_delivery_times_packets_and_flushes_pause_end_and_stall(tmp_path, mo
   monkeypatch.setattr(render, 'Compositor', lambda *args, **kwargs: core)
   encoder = Mock(supports_nv12=True)
   encoder.encode_nv12.side_effect = lambda pixels, keyframe: (b'packet', keyframe)
-  monkeypatch.setattr('openpilot.starpilot.system.android_auto.hw_encoder.HardwareH264Encoder', lambda *args, **kwargs: encoder)
+  monkeypatch.setattr('openpilot.starpilot.system.starport.hw_encoder.HardwareH264Encoder', lambda *args, **kwargs: encoder)
   muxes = []
   def new_mux(*args):
     mux = Mock(codec='avc1.42c01f', init=b'init')

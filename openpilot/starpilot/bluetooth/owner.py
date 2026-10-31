@@ -801,7 +801,7 @@ class BluetoothOwner:
         self.pairing.cancel()
 
   @staticmethod
-  def _forget_android_auto_car(address: str) -> None:
+  def _forget_starport_car(address: str) -> None:
     """A deleted pairing also stops being Android Auto's car or companion, so it leaves the car pickers.
 
     Runs in the background: clearing may first stop a running projection (whose daemon may be the
@@ -809,7 +809,7 @@ class BluetoothOwner:
     """
     def worker():
       try:
-        from openpilot.starpilot.system.android_auto.protocol import forget_car
+        from openpilot.starpilot.system.starport.protocol import forget_car
         forget_car(address)
       except Exception as error:
         try:
@@ -818,13 +818,13 @@ class BluetoothOwner:
         except Exception:
           pass
 
-    threading.Thread(target=worker, name='android_auto_forget_car', daemon=True).start()
+    threading.Thread(target=worker, name='starport_forget_car', daemon=True).start()
 
   def request(self, operation: str, *, address: str | None = None, enabled: bool | None = None,
               session: tuple | None = None, prompt_id: str | None = None, accepted: bool | None = None,
-              value: str = '', power_on_for_android_auto: bool = False) -> dict:
+              value: str = '', power_on_for_starport: bool = False) -> dict:
     # Only the confirmed Android Auto enable flow may power the radio on in either road state.
-    if type(power_on_for_android_auto) is not bool or power_on_for_android_auto and \
+    if type(power_on_for_starport) is not bool or power_on_for_starport and \
        (operation != 'power' or enabled is not True or session is None):
       raise ValueError('Android Auto Bluetooth startup requires an authenticated power-on request')
     if operation not in self.OPERATIONS:
@@ -849,7 +849,7 @@ class BluetoothOwner:
         return
       if session is not None and not self.session_valid(session):
         raise BluetoothRejected('Bluetooth session expired', code='session_expired')
-      if not power_on_for_android_auto and not self.parked():
+      if not power_on_for_starport and not self.parked():
         raise BluetoothRejected('Bluetooth radio restart requires Park', code='park_required')
     if not self.lock.acquire(blocking=False):
       raise BluetoothRejected('Bluetooth is busy', code='busy')
@@ -939,7 +939,7 @@ class BluetoothOwner:
         self._client().operation(operation, address)
         if operation == 'forget':
           assert address is not None
-          self._forget_android_auto_car(address)
+          self._forget_starport_car(address)
       if operation == 'power' and not enabled:
         self.systemctl(['sudo', '-n', 'systemctl', 'stop', RADIO_UNIT], check=True, timeout=15)
         self.close()

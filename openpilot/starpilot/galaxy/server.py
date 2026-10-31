@@ -95,9 +95,9 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                 sentry_events=None, notifications=None, training_results=None, bluetooth=None, vehicle_selection=None,
                 model_manager=None, layouts=None, favorites=None,
                 sounds=None, software_operations=None, drive_stats=None, layout_preview_socket=None, controllers_socket=None,
-                remote_pairing=None, parked=None, camera_snapshot=None, clock=time.monotonic, android_auto_setup=None,
-                android_auto_client=None, navigation=None, offline_maps=None, drive_state=None, cloud_provider=None, cloud_offroad=None, projection_layout=None,
-                local_access=None, tmux_live=None, android_auto_logs=None, hotspot=None, toyota_tools=None, replay_client=None, replay_root=None,
+                remote_pairing=None, parked=None, camera_snapshot=None, clock=time.monotonic, starport_setup=None,
+                starport_client=None, navigation=None, offline_maps=None, drive_state=None, cloud_provider=None, cloud_offroad=None, projection_layout=None,
+                local_access=None, tmux_live=None, starport_logs=None, hotspot=None, toyota_tools=None, replay_client=None, replay_root=None,
                 spotify_setup=None, companion=None, phone_location=None):
   from openpilot.starpilot.galaxy.companion import CompanionRegistry, APK_PATH
   from openpilot.starpilot.gps.phone import PhoneGpsPublisher
@@ -129,14 +129,14 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
   monitor_source = monitor if monitor is not None else SystemMonitor()
   reports = crashes if crashes is not None else CrashReports()
   crash_reports_lock = threading.Lock()
-  aa_logs_source = android_auto_logs
+  starport_logs_source = starport_logs
 
-  def aa_logs():
-    nonlocal aa_logs_source
-    if aa_logs_source is None:
-      from openpilot.starpilot.galaxy.android_auto_logs import AndroidAutoLogs
-      aa_logs_source = AndroidAutoLogs()
-    return aa_logs_source
+  def starport_logs():
+    nonlocal starport_logs_source
+    if starport_logs_source is None:
+      from openpilot.starpilot.galaxy.starport_logs import StarPortLogs
+      starport_logs_source = StarPortLogs()
+    return starport_logs_source
   software_source = software
   software_operations_source = software_operations
   software_lock = threading.Lock()
@@ -211,11 +211,11 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
   plots_lock = threading.Lock()
   bluetooth_lock = threading.Lock()
   bluetooth_source = bluetooth
-  aa_setup_source = android_auto_setup
+  starport_setup_source = starport_setup
   spotify_setup_source = spotify_setup
-  aa_client_source = android_auto_client
-  aa_source_lock = threading.Lock()
-  aa_registry_source = None
+  starport_client_source = starport_client
+  starport_source_lock = threading.Lock()
+  starport_registry_source = None
   projection_layout_source = projection_layout
   layout_source = layouts
   layout_lock = threading.Lock()
@@ -358,33 +358,34 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         server.bluetooth_source = bluetooth_source
     return bluetooth_source
 
-  def aa_setup_owner():
-    nonlocal aa_setup_source
+  def starport_setup_owner():
+    nonlocal starport_setup_source
     with bluetooth_lock:
-      if aa_setup_source is None:
+      if starport_setup_source is None:
         from openpilot.common.params import Params
-        from openpilot.starpilot.galaxy.android_auto_setup import AndroidAutoSetup
+        from openpilot.starpilot.galaxy.starport_setup import StarPortSetup
+        from openpilot.starpilot.system.starport.settings import enabled as starport_enabled, set_enabled as set_starport_enabled
         def bluetooth_ready():
           snapshot = bluetooth_owner().snapshot()
           return bool(snapshot['available'] and snapshot['powered'] and snapshot['errorCode'] is None)
         def install_ready():
-          runtime = Path(__file__).resolve().parents[1] / 'system/android_auto'
-          return ((runtime / 'hw/libaa_encoder.so').is_file() and (runtime / 'current_car_ui.py').is_file() and
+          runtime = Path(__file__).resolve().parents[1] / 'system/starport'
+          return ((runtime / 'hw/libstarport_encoder.so').is_file() and (runtime / 'current_car_ui.py').is_file() and
                   Path('/dev/dri/renderD128').exists())
         def service_ready():
           try:
-            return bool(aa_client().call('status')['status'])
+            return bool(starport_client_owner().call('status')['status'])
           except (OSError, RuntimeError, KeyError, TypeError):
             return False
         def enable_bluetooth(identity):
-          bluetooth_owner().request('power', enabled=True, session=identity, power_on_for_android_auto=True)
-        aa_setup_source = AndroidAutoSetup(parked=configuration_allowed, enabled=lambda: Params().get_bool('AndroidAutoEnabled'),
+          bluetooth_owner().request('power', enabled=True, session=identity, power_on_for_starport=True)
+        starport_setup_source = StarPortSetup(parked=configuration_allowed, enabled=lambda: starport_enabled(Params()),
                                           session_valid=bluetooth_session_valid, bluetooth_enabled=bluetooth_ready,
                                           install_ready=install_ready, service_ready=service_ready,
-                                          set_enabled=lambda value: Params().put_bool('AndroidAutoEnabled', value),
+                                          set_enabled=lambda value: set_starport_enabled(Params(), value),
                                           enable_bluetooth=enable_bluetooth)
-        server.android_auto_setup_source = aa_setup_source
-    return aa_setup_source
+        server.starport_setup_source = starport_setup_source
+    return starport_setup_source
 
   def spotify_owner():
     nonlocal spotify_setup_source
@@ -398,22 +399,22 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         server.spotify_setup_source = spotify_setup_source
     return spotify_setup_source
 
-  def aa_source_registry():
-    nonlocal aa_registry_source
-    with aa_source_lock:
-      if aa_registry_source is None:
-        from openpilot.starpilot.galaxy.android_auto_source import GalaxySourceRegistry
-        aa_registry_source = GalaxySourceRegistry(lambda identity: bluetooth_session_valid(identity) and aa_setup_owner().enabled(), clock)
-        server.android_auto_source_registry = aa_registry_source
-    return aa_registry_source
+  def starport_source_registry():
+    nonlocal starport_registry_source
+    with starport_source_lock:
+      if starport_registry_source is None:
+        from openpilot.starpilot.galaxy.starport_source import GalaxySourceRegistry
+        starport_registry_source = GalaxySourceRegistry(lambda identity: bluetooth_session_valid(identity) and starport_setup_owner().enabled(), clock)
+        server.starport_source_registry = starport_registry_source
+    return starport_registry_source
 
-  def aa_client():
-    nonlocal aa_client_source
-    with aa_source_lock:
-      if aa_client_source is None:
-        from openpilot.starpilot.system.android_auto.protocol import AndroidAutoClient
-        aa_client_source = AndroidAutoClient()
-    return aa_client_source
+  def starport_client_owner():
+    nonlocal starport_client_source
+    with starport_source_lock:
+      if starport_client_source is None:
+        from openpilot.starpilot.system.starport.protocol import StarPortClient
+        starport_client_source = StarPortClient()
+    return starport_client_source
 
   def plot_status():
     nonlocal plot_source
@@ -444,7 +445,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
       if settings_gateway is None:
         from openpilot.common.params import Params
         params = Params()
-        settings_gateway = SettingsGateway(params, context_source(params), android_auto=aa_client)
+        settings_gateway = SettingsGateway(params, context_source(params), starport=starport_client_owner)
         server.settings_source = settings_gateway
       return settings_gateway
 
@@ -611,17 +612,17 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           generation = paired_generation
         return (token, generation) if sessions.valid(token, generation) else None
 
-    def aa_command(self, identity, command, **arguments):
+    def starport_command(self, identity, command, **arguments):
       """Bind one daemon command to this live Galaxy session."""
       if self.settings_session() != identity:
         raise ValueError('Galaxy session changed')
-      source = aa_source_registry().mint(identity)
+      source = starport_source_registry().mint(identity)
       try:
         if self.settings_session() != identity:
           raise ValueError('Galaxy session changed')
-        return aa_client().call(command, source=source, **arguments)
+        return starport_client_owner().call(command, source=source, **arguments)
       finally:
-        aa_source_registry().revoke_source(source)
+        starport_source_registry().revoke_source(source)
 
     def phone_claim(self, operation, result):
       """The same window that lets a phone pair for music also lets the StarPilot app claim its key."""
@@ -634,9 +635,9 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
       except OSError:
         pass
 
-    def aa_phone_window(self, identity, operation, payload=None):
+    def starport_phone_window(self, identity, operation, payload=None):
       """The phone pairing window inside a running Android Auto projection; handled False when none holds the adapter."""
-      registry = aa_source_registry()
+      registry = starport_source_registry()
       minted = operation in ('accept_pair', 'pair', 'scan', 'stop_scan')
       source = registry.mint(identity) if minted else registry.current(identity)
       if source is None:
@@ -647,7 +648,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
       try:
         if self.settings_session() != identity:
           raise ValueError('Galaxy session changed')
-        delegated = aa_client().call('phone_window', source=source, operation=operation, **arguments)
+        delegated = starport_client_owner().call('phone_window', source=source, operation=operation, **arguments)
       except (OSError, RuntimeError) as error:
         # Falling back to this process cannot work while Android Auto holds the adapter, so say why it was skipped.
         cloudlog.warning(f'android auto phone window {operation} not delegated: {error!r}')
@@ -881,24 +882,24 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           # immediately before sending potentially sensitive content.
           if self.require_session():
             self.json(200, result)
-      elif path == '/api/android-auto/logs' or path.startswith('/api/android-auto/logs/'):
+      elif path == '/api/starport/logs' or path.startswith('/api/starport/logs/'):
         if not self.require_session():
           return
-        from openpilot.starpilot.galaxy.android_auto_logs import LogMissing, LogsUnavailable
-        name = unquote(path.removeprefix('/api/android-auto/logs/file/')) if path.startswith('/api/android-auto/logs/file/') else None
+        from openpilot.starpilot.galaxy.starport_logs import LogMissing, LogsUnavailable
+        name = unquote(path.removeprefix('/api/starport/logs/file/')) if path.startswith('/api/starport/logs/file/') else None
         if name is not None and not re.fullmatch(r'[\w.-]{1,128}', name):
           self.json(400, {'error': 'Invalid log name'})
           return
-        if path not in ('/api/android-auto/logs', '/api/android-auto/logs/bundle') and name is None:
+        if path not in ('/api/starport/logs', '/api/starport/logs/bundle') and name is None:
           self.json(404, {'error': 'Not found'})
           return
         try:
-          if path == '/api/android-auto/logs':
-            result = aa_logs().list()
+          if path == '/api/starport/logs':
+            result = starport_logs().list()
           elif name is None:
-            result = aa_logs().bundle()
+            result = starport_logs().bundle()
           else:
-            result = aa_logs().file(name)
+            result = starport_logs().file(name)
         except LogMissing:
           self.json(404, {'error': 'That log is no longer kept; refresh the list'})
         except LogsUnavailable:
@@ -907,7 +908,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           # The session can be revoked while logs are read; check again right before sending them.
           if not self.require_session():
             return
-          if path == '/api/android-auto/logs':
+          if path == '/api/starport/logs':
             self.json(200, result)
           else:
             filename, body = result
@@ -985,8 +986,8 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         try:
           result = bluetooth_owner().snapshot(session=identity)
           result['claim'] = phone_claim_view()
-          if result.get('pairing') is None and aa_setup_owner().enabled():
-            delegated = self.aa_phone_window(identity, 'status')
+          if result.get('pairing') is None and starport_setup_owner().enabled():
+            delegated = self.starport_phone_window(identity, 'status')
             if delegated['handled'] and type(delegated.get('bluetooth')) is dict:
               result['pairing'] = delegated['bluetooth'].get('pairing')
         except (OSError, RuntimeError):
@@ -996,7 +997,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             self.json(200, result)
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
-      elif path == '/api/android-auto/setup':
+      elif path == '/api/starport/setup':
         if not self.require_session():
           return
         identity = self.settings_session()
@@ -1004,9 +1005,9 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           self.json(401, {'error': 'Sign in to Galaxy'})
           return
         try:
-          result = aa_setup_owner().status(identity)
+          result = starport_setup_owner().status(identity)
         except Exception:
-          self.json(503, {'error': 'Android Auto setup is unavailable'})
+          self.json(503, {'error': 'StarPort setup is unavailable'})
         else:
           if self.settings_session() == identity:
             self.json(200, result)
@@ -1028,22 +1029,22 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             self.json(200, result)
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
-      elif path == '/api/android-auto/pairing/status':
+      elif path == '/api/starport/pairing/status':
         if not self.require_session():
           return
         identity = self.settings_session()
         if identity is None:
           self.json(401, {'error': 'Sign in to Galaxy'})
           return
-        source = aa_source_registry().current(identity)
+        source = starport_source_registry().current(identity)
         try:
-          result: dict = aa_client().call('pairing_status', source=source) if source and configuration_allowed() else \
+          result: dict = starport_client_owner().call('pairing_status', source=source) if source and configuration_allowed() else \
                    {'pairing': {'active': False, 'receiver': None, 'prompt': None, 'approved': False}}
         except (OSError, RuntimeError):
-          self.json(503, {'error': 'Android Auto pairing service is unavailable'})
+          self.json(503, {'error': 'StarPort pairing service is unavailable'})
         else:
           try:
-            runtime = aa_client().call('status')['status']
+            runtime = starport_client_owner().call('status')['status']
           except (OSError, RuntimeError, ValueError, KeyError, TypeError):
             runtime = None
           result['selectedReceiver'] = None
@@ -1058,20 +1059,20 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             self.json(200, result)
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
-      elif path == '/api/android-auto/receivers':
+      elif path == '/api/starport/receivers':
         identity = self.settings_session()
         if identity is None:
           self.json(401, {'error': 'Sign in to Galaxy'})
           return
         try:
-          runtime = aa_client().call('status')['status']
+          runtime = starport_client_owner().call('status')['status']
           if runtime.get('pairing_ready'):
             raise ValueError('Finish or cancel pairing before choosing a car')
-          if not aa_setup_owner().enabled():
-            raise ValueError('Enable Android Auto first')
-          result = self.aa_command(identity, 'devices')
+          if not starport_setup_owner().enabled():
+            raise ValueError('Enable StarPort first')
+          result = self.starport_command(identity, 'devices')
           devices = [{'address': normalized_address(item['address']), 'name': str(item['name'])[:80]}
-                     for item in result['devices'] if item.get('paired') and item.get('android_auto')]
+                     for item in result['devices'] if item.get('paired') and item.get('starport')]
         except ValueError as error:
           self.json(409, {'error': str(error)})
         except (OSError, RuntimeError, KeyError, TypeError):
@@ -1081,13 +1082,13 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             self.json(200, {'receivers': devices})
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
-      elif path.startswith('/api/android-auto/source/'):
-        source_id = path.removeprefix('/api/android-auto/source/')
+      elif path.startswith('/api/starport/source/'):
+        source_id = path.removeprefix('/api/starport/source/')
         # The daemon queries this short-lived opaque source over loopback.
         if getattr(self.server, 'remote_transport', False) or self.client_address[0] != '127.0.0.1' or \
            self.connection.getsockname()[0] != '127.0.0.1' or not self.direct_local():
           self.json(403, {'valid': False})
-        elif aa_source_registry().valid(source_id):
+        elif starport_source_registry().valid(source_id):
           self.json(200, {'valid': True})
         else:
           self.json(410, {'valid': False})
@@ -1376,7 +1377,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             self.json(200, result)
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
-      elif path == '/api/android-auto/layout':
+      elif path == '/api/starport/layout':
         if not self.require_session():
           return
         identity = self.settings_session()
@@ -1386,7 +1387,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         try:
           result = projection_layout_owner().snapshot()
         except (OSError, ValueError, RuntimeError):
-          self.json(503, {'error': 'Android Auto layout is unavailable'})
+          self.json(503, {'error': 'StarPort layout is unavailable'})
         else:
           if self.settings_session() == identity:
             self.json(200, result)
@@ -1500,7 +1501,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
       if path.startswith(('/api/replay/', '/api/recordings/')) and not self.direct_local():
         self.json(403, {'error': 'Routes require a local Galaxy connection', 'code': 'local_only'})
         return
-      if path == '/api/android-auto/upload':
+      if path == '/api/starport/upload':
         if not self.require_session():
           return
         identity = self.settings_session()
@@ -1515,15 +1516,15 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           size = int(self.headers.get('Content-Length', ''))
         except ValueError:
           size = -1
-        from openpilot.starpilot.system.android_auto.apk_identity import MAX_FILE_BYTES
+        from openpilot.starpilot.system.starport.apk_identity import MAX_FILE_BYTES
         if not 0 < size <= MAX_FILE_BYTES:
-          self.json(413, {'error': 'Android Auto package size is invalid'})
+          self.json(413, {'error': 'StarPort package size is invalid'})
           return
-        from openpilot.starpilot.galaxy.android_auto_setup import SetupRejected
+        from openpilot.starpilot.galaxy.starport_setup import SetupRejected
         old_timeout = self.connection.gettimeout()
         try:
           self.connection.settimeout(30.0)
-          result = aa_setup_owner().upload(identity, self.rfile, size)
+          result = starport_setup_owner().upload(identity, self.rfile, size)
         except SetupRejected as error:
           self.json(409, {'error': str(error)})
         except (OSError, TimeoutError):
@@ -1587,8 +1588,8 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                       '/api/replay/start', '/api/replay/control', '/api/replay/stop',
                       '/api/replay/export-start',
                       '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/cameras/snapshot',
-                      '/api/android-auto/layout', '/api/android-auto/enable', '/api/android-auto/control', '/api/android-auto/pairing',
-                      '/api/android-auto/pairing/response', '/api/android-auto/pairing/cancel', '/api/android-auto/pairing/select',
+                      '/api/starport/layout', '/api/starport/enable', '/api/starport/control', '/api/starport/pairing',
+                      '/api/starport/pairing/response', '/api/starport/pairing/cancel', '/api/starport/pairing/select',
                       '/api/spotify/enable', '/api/spotify/key', '/api/spotify/preferences', '/api/spotify/control', '/api/spotify/maintenance',
                       '/api/ui/layout', '/api/ui/layout/preview', '/api/favorites/slots',
                       '/api/maps/start', '/api/maps/cancel',
@@ -1604,7 +1605,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         return
       if (path.startswith(('/api/companion/', '/api/replay/', '/api/recordings/', '/api/connect/', '/api/cameras/', '/api/settings/', '/api/maps/',
                            '/api/bluetooth/',
-                           '/api/android-auto/', '/api/spotify/', '/api/controllers/', '/api/vehicle-selection/', '/api/toyota-tools/',
+                           '/api/starport/', '/api/spotify/', '/api/controllers/', '/api/vehicle-selection/', '/api/toyota-tools/',
                            '/api/models/', '/api/ui/', '/api/favorites/', '/api/sounds/', '/api/software/',
                            '/api/drives/', '/api/navigation/', '/api/drive-state/', '/api/sentry/', '/api/crash-reports/')) and
           not self.require_session()):
@@ -2102,7 +2103,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
         return
-      if path == '/api/android-auto/layout':
+      if path == '/api/starport/layout':
         identity = self.settings_session()
         if identity is None:
           self.json(401, {'error': 'Sign in to Galaxy'})
@@ -2120,7 +2121,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         except ValueError as error:
           self.json(400, {'error': str(error)})
         except (OSError, RuntimeError):
-          self.json(503, {'error': 'Android Auto layout could not be saved'})
+          self.json(503, {'error': 'StarPort layout could not be saved'})
         else:
           if self.settings_session() == identity:
             self.json(200, result)
@@ -2215,8 +2216,8 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             sessions.revoke(token)
           if identity is not None and bluetooth_source is not None:
             bluetooth_source.cancel_session(identity)
-          if identity is not None and aa_registry_source is not None:
-            aa_registry_source.revoke(identity)
+          if identity is not None and starport_registry_source is not None:
+            starport_registry_source.revoke(identity)
         self.respond(200, b'{"authenticated":false}', cookie='galaxy_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
         return
       if path.startswith('/api/spotify/'):
@@ -2250,7 +2251,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
         return
-      if path == '/api/android-auto/enable':
+      if path == '/api/starport/enable':
         if type(payload) is not dict or set(payload) not in ({'enabled'}, {'enabled', 'enableBluetooth'}) or \
            type(payload['enabled']) is not bool or type(payload.get('enableBluetooth', False)) is not bool or \
            payload.get('enableBluetooth', False) and not payload['enabled']:
@@ -2260,14 +2261,14 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         if identity is None:
           self.json(401, {'error': 'Sign in to Galaxy'})
           return
-        from openpilot.starpilot.galaxy.android_auto_setup import SetupRejected
+        from openpilot.starpilot.galaxy.starport_setup import SetupRejected
         try:
-          result = aa_setup_owner().enable(identity, payload['enabled'], enable_bluetooth=payload.get('enableBluetooth', False))
+          result = starport_setup_owner().enable(identity, payload['enabled'], enable_bluetooth=payload.get('enableBluetooth', False))
         except SetupRejected as error:
           self.json(409, {'error': str(error)})
         except (BluetoothRejected, BluetoothUnavailable) as error:
           self.json(409 if isinstance(error, BluetoothRejected) else 503,
-                    {'error': 'Bluetooth could not be enabled; Android Auto was not turned on', 'code': error.code})
+                    {'error': 'Bluetooth could not be enabled; StarPort was not turned on', 'code': error.code})
         except (OSError, RuntimeError):
           self.json(503, {'error': 'Android Auto setting is unavailable'})
         else:
@@ -2276,7 +2277,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
         return
-      if path == '/api/android-auto/control':
+      if path == '/api/starport/control':
         identity = self.settings_session()
         if identity is None:
           self.json(401, {'error': 'Sign in to Galaxy'})
@@ -2287,8 +2288,8 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         action = payload['action']
         if action == 'stop' and set(payload) == {'action'}:
           try:
-            self.aa_command(identity, 'stop')
-            current = aa_client().call('status').get('status', {})
+            self.starport_command(identity, 'stop')
+            current = starport_client_owner().call('status').get('status', {})
           except ValueError as error:
             self.json(409, {'error': str(error)})
           except (OSError, RuntimeError):
@@ -2299,8 +2300,8 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             else:
               self.json(401, {'error': 'Sign in to Galaxy'})
           return
-        if not aa_setup_owner().enabled():
-          self.json(409, {'error': 'Enable Android Auto first'})
+        if not starport_setup_owner().enabled():
+          self.json(409, {'error': 'Enable StarPort first'})
           return
         if action == 'start' and set(payload) == {'action'}:
           command, arguments = 'start', {}
@@ -2322,7 +2323,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             return
           command, arguments = 'set_car_type', {'car_type': payload['carType']}
         elif action == 'car_profile' and set(payload) == {'action', 'profile'} and isinstance(payload['profile'], str):
-          from openpilot.starpilot.system.android_auto.car_profiles import valid_override
+          from openpilot.starpilot.system.starport.car_profiles import valid_override
           if not valid_override(payload['profile']):
             self.json(400, {'error': 'Invalid car profile'})
             return
@@ -2344,15 +2345,15 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           self.json(400, {'error': 'Invalid Android Auto control request'})
           return
         try:
-          runtime = aa_client().call('status')['status']
+          runtime = starport_client_owner().call('status')['status']
           if runtime.get('pairing_ready'):
             raise ValueError('Finish or cancel pairing first')
           if command == 'start' and not runtime.get('receiver_address') and runtime.get('connection') == 'wireless':
             raise ValueError('Select a car first')
-          if command == 'start' and not aa_setup_owner().identity_status().get('installed'):
+          if command == 'start' and not starport_setup_owner().identity_status().get('installed'):
             raise ValueError('Verify your Android Auto package first')
-          self.aa_command(identity, command, **arguments)
-          current = aa_client().call('status')['status']
+          self.starport_command(identity, command, **arguments)
+          current = starport_client_owner().call('status')['status']
         except ValueError as error:
           self.json(409, {'error': str(error)})
         except (OSError, RuntimeError, KeyError, TypeError):
@@ -2363,7 +2364,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
         return
-      if path == '/api/android-auto/pairing':
+      if path == '/api/starport/pairing':
         if payload != {}:
           self.json(400, {'error': 'Invalid Android Auto pairing request'})
           return
@@ -2374,13 +2375,13 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         if not configuration_allowed():
           self.json(403, {'error': 'Park before pairing the car'})
           return
-        if not aa_setup_owner().enabled():
-          self.json(403, {'error': 'Enable Android Auto first'})
+        if not starport_setup_owner().enabled():
+          self.json(403, {'error': 'Enable StarPort first'})
           return
         try:
-          setup_state = aa_setup_owner().status(identity)
+          setup_state = starport_setup_owner().status(identity)
         except (OSError, RuntimeError):
-          self.json(503, {'error': 'Android Auto setup is unavailable'})
+          self.json(503, {'error': 'StarPort setup is unavailable'})
           return
         if not setup_state['installReady'] or not setup_state['serviceReady']:
           self.json(503, {'error': 'Android Auto display service is unavailable'})
@@ -2391,26 +2392,26 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         # Bluetooth pairing and the Wi-Fi bootstrap need no identity; only projection does.
         source = None
         try:
-          source = aa_source_registry().mint(identity)
+          source = starport_source_registry().mint(identity)
           if self.settings_session() != identity or not configuration_allowed():
             raise ValueError('Galaxy session or Park state changed')
-          aa_client().call('prepare_pairing', source=source)
+          starport_client_owner().call('prepare_pairing', source=source)
         except ValueError as error:
           if source is not None:
-            aa_source_registry().revoke_source(source)
+            starport_source_registry().revoke_source(source)
           self.json(409, {'error': str(error)})
         except (OSError, RuntimeError):
           if source is not None:
-            aa_source_registry().revoke_source(source)
-          self.json(503, {'error': 'Android Auto pairing service is unavailable'})
+            starport_source_registry().revoke_source(source)
+          self.json(503, {'error': 'StarPort pairing service is unavailable'})
         else:
           if self.settings_session() == identity and configuration_allowed():
             self.json(200, {'pairing': True, 'seconds': 180})
           else:
-            aa_source_registry().revoke_source(source)
+            starport_source_registry().revoke_source(source)
             self.json(409, {'error': 'Galaxy session or Park state changed'})
         return
-      if path in ('/api/android-auto/pairing/response', '/api/android-auto/pairing/cancel', '/api/android-auto/pairing/select'):
+      if path in ('/api/starport/pairing/response', '/api/starport/pairing/cancel', '/api/starport/pairing/select'):
         identity = self.settings_session()
         if identity is None:
           self.json(401, {'error': 'Sign in to Galaxy'})
@@ -2418,7 +2419,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         if not configuration_allowed():
           self.json(403, {'error': 'Park before pairing the car'})
           return
-        source = aa_source_registry().current(identity)
+        source = starport_source_registry().current(identity)
         if source is None:
           self.json(409, {'error': 'Pairing window expired'})
           return
@@ -2446,7 +2447,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         try:
           if self.settings_session() != identity or not configuration_allowed():
             raise ValueError('Galaxy session or Park state changed')
-          aa_client().call(command, source=source, **arguments)
+          starport_client_owner().call(command, source=source, **arguments)
         except ValueError as error:
           self.json(409, {'error': str(error)})
         except (OSError, RuntimeError):
@@ -2454,7 +2455,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                                    'Pairing prompt expired or changed'})
         else:
           if command == 'cancel_pairing':
-            aa_source_registry().revoke_source(source)
+            starport_source_registry().revoke_source(source)
           self.json(200, {'ok': True})
         return
       if path == '/api/toyota-tools/action':
@@ -2557,9 +2558,9 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             delegated = {'handled': False}
             if payload['operation'] == 'accept_pair' and configuration_allowed():
               spotify_owner().prepare_phone_pairing()
-            if payload['operation'] in ('connect', 'disconnect', 'forget') and aa_setup_owner().enabled():
+            if payload['operation'] in ('connect', 'disconnect', 'forget') and starport_setup_owner().enabled():
               try:
-                delegated = self.aa_command(identity, 'bluetooth_action', operation=payload['operation'],
+                delegated = self.starport_command(identity, 'bluetooth_action', operation=payload['operation'],
                                             address=normalized_address(payload['address']))
               except (OSError, RuntimeError):
                 # Without a running Android Auto service nothing else holds the adapter, so forgetting is local.
@@ -2575,10 +2576,10 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                 unavailable = ('service_unavailable', 'adapter_unavailable', 'radio_unavailable', 'radio_preference_unavailable')
                 raise BluetoothUnavailable('Android Auto Bluetooth service is unavailable',
                                            code=code if type(code) is str and code in unavailable else 'service_unavailable')
-            elif payload['operation'] == 'power' and aa_setup_owner().enabled():
+            elif payload['operation'] == 'power' and starport_setup_owner().enabled():
               # Android Auto may hold the adapter in its own process; it releases that hold before the radio stops.
               try:
-                delegated = self.aa_command(identity, 'bluetooth_power', enabled=payload['enabled'])
+                delegated = self.starport_command(identity, 'bluetooth_power', enabled=payload['enabled'])
               except (OSError, RuntimeError):
                 delegated = {'handled': False}
               if type(delegated) is not dict or type(delegated.get('handled')) is not bool:
@@ -2590,8 +2591,8 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                   raise BluetoothRejected(f'Android Auto: {why}' if type(why) is str and why else
                                           'Android Auto could not complete the Bluetooth change', code=code)
                 raise BluetoothUnavailable('Android Auto Bluetooth service is unavailable')
-            elif payload['operation'] in ('accept_pair', 'pair', 'scan', 'stop_scan', 'pairing_response', 'cancel_pair') and aa_setup_owner().enabled():
-              delegated = self.aa_phone_window(identity, payload['operation'], payload)
+            elif payload['operation'] in ('accept_pair', 'pair', 'scan', 'stop_scan', 'pairing_response', 'cancel_pair') and starport_setup_owner().enabled():
+              delegated = self.starport_phone_window(identity, payload['operation'], payload)
               if 'error_code' in delegated:
                 code = delegated['error_code']
                 if type(code) is str and code in ('busy', 'park_required', 'changed', 'session_expired'):
@@ -2801,7 +2802,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
         return
-      if urlsplit(self.path).path != '/api/android-auto/identity':
+      if urlsplit(self.path).path != '/api/starport/identity':
         self.json(405, {'error': 'Method unavailable'})
         return
       if not self.require_session():
@@ -2810,11 +2811,11 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
       if identity is None:
         self.json(401, {'error': 'Sign in to Galaxy'})
         return
-      from openpilot.starpilot.galaxy.android_auto_setup import SetupRejected
+      from openpilot.starpilot.galaxy.starport_setup import SetupRejected
       def disconnect():
         if self.settings_session() != identity:
           raise SetupRejected('Galaxy session expired; sign in again')
-        client = aa_client()
+        client = starport_client_owner()
         if client.available:
           runtime = client.call('status')['status']
           if not isinstance(runtime, dict) or type(runtime.get('running')) is not bool:
@@ -2830,7 +2831,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         if self.settings_session() != identity:
           raise SetupRejected('Galaxy session expired; sign in again')
       try:
-        result = aa_setup_owner().remove(identity, disconnect=disconnect)
+        result = starport_setup_owner().remove(identity, disconnect=disconnect)
       except SetupRejected as error:
         self.json(409, {'error': str(error)})
       except (OSError, RuntimeError, KeyError, TypeError):
@@ -2880,20 +2881,20 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
     server.toyota_tools_source = toyota_source
   if bluetooth_source is not None:
     server.bluetooth_source = bluetooth_source
-  if aa_setup_source is not None:
-    server.android_auto_setup_source = aa_setup_source
+  if starport_setup_source is not None:
+    server.starport_setup_source = starport_setup_source
   if software_operations_source is not None:
     server.software_operations_source = software_operations_source
   if drive_stats_source is not None:
     server.drive_stats_source = drive_stats_source
   legacy_google_removed = False
-  def maintain_android_auto():
+  def maintain_starport():
     nonlocal legacy_google_removed
     if not legacy_google_removed:
       legacy_google_removed = True
-      from openpilot.starpilot.galaxy.android_auto_setup import remove_legacy_google_files
+      from openpilot.starpilot.galaxy.starport_setup import remove_legacy_google_files
       remove_legacy_google_files()
-  server.maintain_android_auto = maintain_android_auto
+  server.maintain_starport = maintain_starport
   server.start_drive_history = lambda: statistics_owner().start()
   return server
 

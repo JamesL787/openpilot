@@ -456,6 +456,8 @@ def step(state: State, observation: Observation, authority: Authority, policy: P
       receipt = replace(receipt, status="different_decision")
     elif old.pending is None or old.pending.decision_id != pending.decision_id:
       receipt = replace(receipt, status="not_presented")
+    elif old.presentation is None or old.presentation.candidate != candidate:
+      receipt = replace(receipt, status="different_presentation")
     else:
       # The driver is always asked, even with only lateral or stock ACC active; the
       # choice is recorded as accepted history and only commands a target when

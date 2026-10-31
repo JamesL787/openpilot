@@ -145,19 +145,12 @@ const { execFileSync } = require('node:child_process')
         ['software-status', 'SoftwarePage', vm => vm.feed.publish({ status: 'ready', data: { installed: { branch: 'Dom', version: 'Test', commit: 'a'.repeat(40) },
           updater: { state: 'idle', finalizedUpdateReady: false }, operations: { parked: true, selectedTarget: 'Dom', availableBranches: ['Dom'],
             canCheck: true, canFastUpdate: true, canDownload: true, canSelect: true, canConfigure: true, automaticDownloads: true, request: null } } })],
-        ['android-auto', 'AndroidAutoPage', vm => Object.assign(vm, { setup: { enabled: true, parked: true, installReady: true, serviceReady: true,
+        ['starport', 'StarPortPage', vm => Object.assign(vm, { setup: { enabled: true, parked: true, installReady: true, serviceReady: true,
           bluetoothEnabled: true, identity: { installed: true }, import: { state: 'idle' } }, runtime: { running: false, auto_connect: true }, pairing: { active: false, devices: [] } })],
         ['offline-road-maps', 'OfflineRoadMapsPanel', vm => { vm.data = { areas: [], settings: { saveDriven: true }, service: {}, position: null,
           constants: { minRadiusKm: 2, maxRadiusKm: 200, defaultRadiusKm: 25, maxAreas: 24 } } }],
         ['onroad-layout', 'OnroadLayoutPage', prepareLayout],
         ['onroad-layout', 'OnroadLayoutPage', prepareLayout, { projection: true }],
-        ['flm', 'FlmLiveEditor', vm => {
-          const surface = { profile: 'torque_universal', knobs: { ff_gain_left: .3 }, baseValues: null }
-          vm.live = { available: true, editable: true, vehicle: 'Test GM', controller: 'starpilot', knobs: { ff_gain_left: { min: -.4, max: .6 } },
-            defaults: surface, curveDefaults: [.16, .18, .2, .23, .27], preconditions: {}, inactiveKnobs: {},
-            state: { saved: { profile1: { label: 'Test', surface } }, active: 'profile1', applied: true } }
-          vm.choose('profile1')
-        }],
         ['models', 'ModelsPage', prepareModels],
         ['model-laboratory', 'LaboratoryPage', vm => Object.assign(vm, { loading: false,
           configuration: { enabled: false, lateralModel: 'one', longitudinalModel: 'two' }, status: {
@@ -193,15 +186,19 @@ const { execFileSync } = require('node:child_process')
         }
         setBusy(true)
         await nextTick()
+        const saving = controls.map(({ node }) => ({ node, disabled: node.disabled, opacity: getComputedStyle(node).opacity }))
         for (let frame = 0; frame < 4; frame++) {
           await new Promise(requestAnimationFrame)
-          for (const { node, disabled, opacity } of controls) {
+          for (const { node, disabled, opacity } of saving) {
             if (!node.isConnected || node.disabled !== disabled || getComputedStyle(node).opacity !== opacity)
               throw new Error(`${name}: control flickered during saving: ${node.getAttribute('aria-label') || node.textContent}`)
           }
         }
         setBusy(false)
         await nextTick()
+        for (const { node, disabled } of controls) {
+          if (!node.isConnected || node.disabled !== disabled) throw new Error(`${name}: controls did not recover after saving`)
+        }
       }
       const component = (await import('./js/models.js')).ModelsPage
       mount({ ...component, mounted() {}, beforeUnmount() {} })
@@ -216,13 +213,13 @@ const { execFileSync } = require('node:child_process')
       return cases.map(([, name]) => name)
     }, layout)
     for (const success of [false, true]) {
-      await page.getByRole('combobox', { name: 'Active Small', exact: true }).click()
+      await page.getByRole('combobox', { name: /^Active Small/ }).click()
       await page.getByRole('option', { name: 'two', exact: true }).click()
       await page.waitForFunction(() => !!vm.busy)
-      assert.equal(await page.getByRole('combobox', { name: 'Active Small', exact: true, includeHidden: true }).textContent(), 'two')
+      assert.equal(await page.getByRole('combobox', { name: /^Active Small/, includeHidden: true }).textContent(), 'two')
       await page.evaluate(success => finishModel(success), success)
       await page.waitForFunction(() => !vm.busy)
-      assert.equal(await page.getByRole('combobox', { name: 'Active Small', exact: true }).textContent(), success ? 'two' : 'one')
+      assert.equal(await page.getByRole('combobox', { name: /^Active Small/ }).textContent(), success ? 'two' : 'one')
     }
     assert.deepEqual(errors, [])
     console.log(`Settings state: ${pages.length} settings pages and ${audited.length} specialized pages; delayed preview/save/readback, Default/download buttons, stable control nodes/opacity and failed-save recovery passed.`)

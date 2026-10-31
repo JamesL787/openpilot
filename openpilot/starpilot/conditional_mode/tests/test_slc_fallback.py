@@ -6,7 +6,9 @@ from dataclasses import replace
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 from openpilot.cereal import messaging
+from openpilot.starpilot.conditional_mode import ConditionalModePolicy, ManualIntent, ModeChoice
 from openpilot.starpilot.conditional_mode.slc_fallback import Reason, evaluate, evaluate_runtime
+from openpilot.starpilot.conditional_mode.tests.test_policy import AUTHORITY, scene
 from openpilot.starpilot.longitudinal.tests.test_cruise_ceiling import messages
 from openpilot.starpilot.speed_limits import acceptance as acc
 from openpilot.starpilot.speed_limits.selection import Source
@@ -165,6 +167,40 @@ class SlcFallbackTests(unittest.TestCase):
     later = runtime.step(self.sm, self.cp, now_ns=later_ns)
     self.assertEqual(evaluate_runtime(runtime, first).reason, Reason.INCONSISTENT_CYCLE)
     self.assertEqual(evaluate_runtime(runtime, later).reason, Reason.QUALIFIED_ABSENCE)
+
+  def test_matching_set_keeps_current_slc_evidence_and_ccm_chill(self):
+    source = self.sm['slcDashboardObservation']
+    source.status, source.speedMps, source.episode = 'valid', 25.0, 1
+    self.sm['carState'].vCruise = self.sm['carState'].vCruiseCluster = 90.0
+    for fallback in (0, 1, 2):
+      with self.subTest(fallback=fallback):
+        settings = parse({'SpeedLimitController': True, 'SLCFallback': fallback,
+                          'SLCPriority1': 'Dashboard', 'SLCPriority2': 'Dashboard'})
+        runtime = Runtime(settings, is_metric=True)
+        policy = ConditionalModePolicy()
+        for now in (10.0, 10.2, 10.4, 10.5):
+          decision = policy.step(now, ModeChoice.CCM, ManualIntent.NONE, AUTHORITY,
+                                 scene(now, speed=25.0, set_speed_mps=30.0))
+        self.assertFalse(decision.requested_experimental)
+        previous = None
+        for index in range(2):
+          now_ns = NOW + index * 50_000_000
+          self.sm.logMonoTime = dict.fromkeys(self.sm.data, now_ns)
+          source.carStateLogMonoTime = now_ns
+          output = runtime.step(self.sm, self.cp, now_ns=now_ns)
+          self.assertTrue(output.message.slcState.hasAccepted)
+          self.assertIsNone(output.command)
+          self.assertIs(output.result.state, runtime.state)
+          evidence = evaluate_runtime(runtime, output)
+          self.assertIs(evidence.proposed_experimental, False)
+          now = 10.6 + index * .05
+          decision = policy.step(now, ModeChoice.CCM, ManualIntent.NONE, AUTHORITY,
+                                 scene(now, speed=25.0, set_speed_mps=30.0,
+                                       slc_experimental=evidence.proposed_experimental))
+          self.assertFalse(decision.requested_experimental)
+          if previous is not None:
+            self.assertEqual(evaluate_runtime(runtime, previous).reason, Reason.INCONSISTENT_CYCLE)
+          previous = output
 
 
 if __name__ == '__main__':

@@ -10,8 +10,8 @@ import unittest
 
 from openpilot.starpilot.galaxy.onroad_layout import LayoutChanged
 from openpilot.starpilot.galaxy.projection_layout import ProjectionLayoutOwner, host_owner
-from openpilot.starpilot.system.android_auto.display_profile import record_screen
-from openpilot.starpilot.system.android_auto.projection_layout import ProjectionLayoutSource
+from openpilot.starpilot.system.starport.display_profile import record_screen
+from openpilot.starpilot.system.starport.projection_layout import ProjectionLayoutSource
 from openpilot.starpilot.ui.onroad_customization import default_document
 
 SCREEN = {'version': 1, 'width': 1280, 'height': 720, 'margin_width': 0,
@@ -29,7 +29,7 @@ class Params:
   def get_param_path(self, key):
     return str(self.root / key)
   def get_bool(self, key):
-    assert key == 'AndroidAutoEnabled'
+    assert key == 'StarPortEnabled'
     return self.enabled
 
 
@@ -137,7 +137,7 @@ class TestProjectionLayoutOwner(unittest.TestCase):
     self.assertFalse(snapshot['available'])
     self.assertFalse(snapshot['editable'])
     self.assertTrue(snapshot['valid'])
-    self.assertIn('Enable Android Auto', snapshot['reason'])
+    self.assertIn('Enable StarPort', snapshot['reason'])
     with self.assertRaises(LayoutChanged):
       self.owner.save(self.payload(), session_valid=lambda: True)
     self.assertEqual(self.source.path.read_bytes(), before)
@@ -264,8 +264,8 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 from openpilot.starpilot.galaxy.projection_layout import host_owner
-from openpilot.starpilot.system.android_auto.projection_layout_runtime import load_projection_layout
-root = Path(os.environ['ANDROID_AUTO_DIR'])
+from openpilot.starpilot.system.starport.projection_layout_runtime import load_projection_layout
+root = Path(os.environ['STARPORT_DIR'])
 params = SimpleNamespace(get_param_path=lambda key: str(root / 'params' / key), get_bool=lambda key: False, get=lambda key: None)
 owner = host_owner(params, lambda: True)
 snapshot = owner.snapshot()
@@ -274,7 +274,7 @@ payload['document']['widgets']['current_speed']['x'] += 10
 owner.save(payload, session_valid=lambda: True)
 assert load_projection_layout((1920, 1080)) == payload['document']
 """
-    env = os.environ | {'SP_HOST_RUNTIME': '1', 'ANDROID_AUTO_DIR': str(self.root / 'host')}
+    env = os.environ | {'SP_HOST_RUNTIME': '1', 'STARPORT_DIR': str(self.root / 'host')}
     subprocess.run([sys.executable, '-c', code], env=env, check=True, capture_output=True)
 
 

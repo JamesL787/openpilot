@@ -2,7 +2,7 @@ name: iOS companion
 
 on:
   push:
-    branches: [SecretGoodStarPilot, secretgood-ios-integration]
+    branches: [Dom, secretgood-ios-integration]
     paths:
       - 'openpilot/starpilot/companion/ios/**'
       - 'openpilot/starpilot/galaxy_bluetooth/**'

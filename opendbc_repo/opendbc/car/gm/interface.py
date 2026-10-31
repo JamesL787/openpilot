@@ -41,8 +41,9 @@ class CarInterface(CarInterfaceBase):
                     structs.CarState.GearShifter.eco, structs.CarState.GearShifter.manumatic)
 
   @classmethod
-  def get_params(cls, candidate, fingerprint, car_fw, alpha_long, is_release, docs):
-    return super().get_params(pedal_candidate(candidate, fingerprint), fingerprint, car_fw, alpha_long, is_release, docs)
+  def get_params(cls, candidate, fingerprint, car_fw, alpha_long, is_release, docs, *, auto_pedal=True):
+    selected = pedal_candidate(candidate, fingerprint) if auto_pedal else candidate
+    return super().get_params(selected, fingerprint, car_fw, alpha_long, is_release, docs)
 
   def apply(self, c, now_nanos=None, *, startup_keepalive=False):
     if startup_keepalive:

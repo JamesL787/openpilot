@@ -64,10 +64,10 @@ class SelectedProfilesTests(unittest.TestCase):
     self.assertEqual(selected.braking_style, 'eco')
     self.assertIsNone(selected.acceleration_max)
     ordinary, _ = self.run_planner()
-    comfort, coast = self.run_planner(selected)
+    comfort, cruise = self.run_planner(selected)
     self.assertAlmostEqual(ordinary.a_cruise, -0.5)
     self.assertAlmostEqual(comfort.a_cruise, -0.6)
-    self.assertEqual(coast['full_brake_floor'], -0.6)
+    self.assertEqual(cruise['base_brake_floor'], -0.6)
     self.assertIsNone(comfort.last_profile)
     self.assertEqual(comfort.mpc.params[0, 4], ordinary.mpc.params[0, 4])
     self.assertIsNone(self.params.get('LongitudinalPersonalityProfiles'))
@@ -217,8 +217,7 @@ class SelectedProfilesTests(unittest.TestCase):
 
   def run_planner(self, selected=None, *, lead=False, force=False, traffic=False):
     planner = LongitudinalPlanner(self.cp, init_v=V_EGO)
-    with patch.object(planner_module, 'slc_coast_floor', wraps=planner_module.slc_coast_floor) as coast, \
-         patch.object(planner_module, 'get_cruise_accel', wraps=planner_module.get_cruise_accel) as cruise:
+    with patch.object(planner_module, 'get_cruise_accel', wraps=planner_module.get_cruise_accel) as cruise:
       for _ in range(65):
         sm, _ = messages(lead=lead, force=force)
         sm['carState'].vCruise = 50.0
@@ -229,12 +228,12 @@ class SelectedProfilesTests(unittest.TestCase):
                            profile_tuning=traffic_tuning, traffic_mode=traffic)
         self.assertEqual(planner.mpc.solution_status, 0)
     planner.test_cruise_profile = cruise.call_args.args[9]
-    return planner, coast.call_args.kwargs
+    return planner, cruise.call_args.kwargs
 
   def test_actual_planner_uses_one_selected_brake_response_without_enabling_follow_or_jerks(self):
     ordinary, _ = self.run_planner()
     normal, _ = self.run_planner(SelectedProfileTuning(cruise_brake_magnitude=1.2))
-    comfort, coast = self.run_planner(SelectedProfileTuning(cruise_brake_magnitude=0.6, braking_style='eco'))
+    comfort, cruise = self.run_planner(SelectedProfileTuning(cruise_brake_magnitude=0.6, braking_style='eco'))
     sport, _ = self.run_planner(SelectedProfileTuning(cruise_brake_magnitude=2.4, braking_style='sport'))
     # The upstream native floor is independent of StarPilot's named presets.
     self.assertAlmostEqual(ordinary.a_cruise, -0.5)
@@ -243,7 +242,7 @@ class SelectedProfilesTests(unittest.TestCase):
     self.assertAlmostEqual(sport.a_cruise, -2.4)
     self.assertGreater(comfort.a_cruise, normal.a_cruise)
     self.assertLess(sport.a_cruise, normal.a_cruise)
-    self.assertEqual(coast['full_brake_floor'], -0.6)
+    self.assertEqual(cruise['base_brake_floor'], -0.6)
     for planner in (ordinary, normal, comfort, sport):
       self.assertEqual(planner.output_a_target, planner.a_cruise)
       self.assertEqual(str(planner.mpc.source), '0')
@@ -257,9 +256,9 @@ class SelectedProfilesTests(unittest.TestCase):
     for kwargs in ({'lead': True}, {'force': True}):
       with self.subTest(kwargs=kwargs):
         native, _ = self.run_planner(**kwargs)
-        selected, coast = self.run_planner(SelectedProfileTuning(cruise_brake_magnitude=2.4), **kwargs)
+        selected, cruise = self.run_planner(SelectedProfileTuning(cruise_brake_magnitude=2.4), **kwargs)
         self.assertEqual(snapshot(native), snapshot(selected))
-        self.assertEqual(coast['braking_style'], 'standard')
+        self.assertEqual(cruise['base_brake_floor'], planner_module.A_CRUISE_MIN)
 
   def test_traffic_explicit_and_inherited_acceleration_share_effective_curve(self):
     document = self.document('sport', 'dom_default')

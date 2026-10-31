@@ -28,11 +28,12 @@ display units renews pending actions while preserving accepted limits, declines,
 overrides and the already applied SET.
 
 With Automatic adoption on, qualified new limits are adopted immediately.
-With it off, the stationary widget pulses purple twice slowly (700 ms
-each), rests for one second, pulses twice quickly (300 ms each), and rests for one
-second before repeating. Each pair has a 200 ms gap. The arrow remains relative
-to vehicle speed; Vienna numerals stay black while their ring pulses.
-Large UI uses the same US or Vienna sign at 1.25× scale beside SET speed.
+With it off, the stationary confirmation card gives two gentle purple pulses
+(700 ms each, separated by 200 ms), then rests until the 3.2-second cycle repeats.
+Only the lower part of the card pulses; the speed and source remain steady.
+The arrow remains relative to vehicle speed.
+Outside manual confirmation, large UI uses the same US or Vienna sign at 1.25×
+scale beside SET speed.
 US signs share a cached antialiased white outline with a transparent interior;
 the offset fits inside the fixed sign height on both screens.
 Both sign styles identify the displayed source: DASH for Dashboard, OSM for offline
@@ -43,7 +44,7 @@ The source and arrow share a centered row; all sign contents use the same geomet
 on both screens. Small arrows are baked at double resolution and text is aligned
 to final pixels for clear native rendering.
 Steering-wheel + accepts and − declines. Tapping the sign opens the same
-Accept / Decline choices on either native screen. A pending manual choice expires
+Accept / Reject choices on either native screen. A pending manual choice expires
 after ten monotonic seconds, including time without active longitudinal control.
 Decline and timeout leave set speed unchanged. An action at the exact deadline
 can still complete its presented decision; a later action cannot accept it.
@@ -71,6 +72,13 @@ applied set speed clears it, using card's receipt to account for whole-unit roun
 a new limit also clears it. Adoption retains the ordinary buttons' 0.1 km/h internal
 precision, including for mph targets. New-limit decisions continue during override.
 
+Ordinary software SET adjustments use the saved short-press and held-press intervals
+on every make, including PCM vehicles while SLC owns SET. Toyota uses Swap Toyota
+Cruise Steps for both native cruise and software SET: off selects short 1 / hold 5,
+and on selects short 5 / hold 1. Other makes use CustomCruise and CustomCruiseLong.
+Confirmation presses and native resume keep their existing meanings; they do not
+also apply an interval step. Toyota's native cruise ceiling still limits software SET.
+
 The accelerator temporarily allows higher vehicle speed without changing set speed
 or creating an SLC override. Adoption and confirmation can update software set
 speed while accelerator override temporarily suspends actuator output. On release the ordinary planner approaches set speed
@@ -93,7 +101,10 @@ sources. See [selection](SELECTION.md), [Maps](MAP_SOURCE.md), and the pinned ca
 
 Every action binds the current session, decision and presentation. The causal ledger
 keeps consumed confirmation presses out of the ordinary cruise-button path, through
-held repeats and release. Card checks active system-longitudinal authority, command
+held repeats and release. Accept and Reject cannot follow a replaced source
+candidate, including a replacement at the same numeric speed in the action's
+planner cycle. Such a replacement preserves the decision and its deadline but
+renews its presentation. Card checks active system-longitudinal authority, command
 and state age, matching presentation and source, expected current set speed, legal
 speed bounds, and intervening buttons before applying a command once. Dashboard
 commands also match the local OEM episode. Maps and Vision commands bind the fresh

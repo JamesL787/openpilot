@@ -97,6 +97,42 @@ def accepted_runtime(sm, cp, settings, *, session_id):
 
 
 class TestSlcUiRuntime(unittest.TestCase):
+  def test_confirmation_requires_current_presentation_through_source_handoff(self):
+    for profile in Profile:
+      for kind in (SlcActionKind.ACCEPT, SlcActionKind.REJECT):
+        for change in ('none', 'wrong_id', 'earlier_handoff', 'same_step_handoff', 'new_limit'):
+          with self.subTest(profile=profile, kind=kind, change=change):
+            sm, cp = replay_inputs()
+            runtime = Runtime(parse({'SpeedLimitController': True, 'SLCConfirmation': True,
+                                     'SLCPriority1': 'Dashboard'}))
+            pending = runtime.step(sm, cp, now_ns=START).message
+            request = ui_request(pending, profile=profile, kind=kind)
+            action = publish_request(pending.slcState, request, START + 10_000_000)
+            if change == 'wrong_id':
+              action = replace(action, presentation_id=action.presentation_id + 1000)
+            elif change != 'none':
+              sm['slcDashboardObservation'].episode += 1
+              sm['slcDashboardObservation'].observedMonoTime = START + 40_000_000
+              if change == 'new_limit':
+                sm['slcDashboardObservation'].speedMps = 30.0
+            if change == 'earlier_handoff':
+              sm.advance(START + 50_000_000)
+              renewed = runtime.step(sm, cp, now_ns=START + 50_000_000).message.slcState
+              self.assertEqual(renewed.decisionId, pending.slcState.decisionId)
+              self.assertNotEqual(renewed.presentationId, pending.slcState.presentationId)
+            now_ns = START + (100_000_000 if change == 'earlier_handoff' else 50_000_000)
+            sm.advance(now_ns)
+            output = runtime.step(sm, cp, now_ns=now_ns, request=action)
+            if change == 'none':
+              self.assertEqual(output.message.slcState.actionStatus, kind.value)
+              self.assertFalse(output.message.slcState.hasPending)
+              self.assertEqual(output.command is not None, kind == SlcActionKind.ACCEPT)
+            else:
+              self.assertTrue(output.message.slcState.hasPending)
+              self.assertFalse(output.message.slcState.hasAccepted)
+              self.assertIsNone(output.command)
+            self.assertEqual(runtime.ledger.transactions, ())
+
   def test_card_accept_produces_planner_receipt_and_bounded_command(self):
     sm, cp = replay_inputs()
     runtime = Runtime(parse({"SpeedLimitController": True, "SLCConfirmation": True,
@@ -158,7 +194,7 @@ class TestSlcUiRuntime(unittest.TestCase):
 
   def test_projected_use_limit_disappears_after_card_applies_rounded_set_speed(self):
     from openpilot.selfdrive.car.cruise import VCruiseHelper
-    from openpilot.starpilot.system.android_auto.projection_onroad import ProjectionOnroad
+    from openpilot.starpilot.system.starport.projection_onroad import ProjectionOnroad
 
     for metric, limit in ((False, 70 / 2.2369362921), (True, 90.4 / 3.6)):
       with self.subTest(metric=metric):

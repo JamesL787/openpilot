@@ -1,5 +1,7 @@
+import json
+from pathlib import Path
 from typing import TypedDict
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import pytest
 
@@ -11,7 +13,7 @@ from opendbc.car.toyota.interface import CarInterface as ToyotaInterface
 from opendbc.car.toyota.values import CAR as TOYOTA
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
 from openpilot.starpilot.longitudinal.cruise_ceiling import CruiseCeiling, CurveCeiling
-from openpilot.starpilot.longitudinal.encouragement import BOOST_RATE, Encouragement, MAX_BOOST, SOURCES
+from openpilot.starpilot.longitudinal.encouragement import BOOST_RATE, Encouragement, MAX_BOOST, SOURCES, NudgePreferences
 from openpilot.starpilot.longitudinal.tests.test_conditional_handoff import Frame, NOW
 from openpilot.starpilot.longitudinal.tests.test_cruise_ceiling import ACTIVE
 
@@ -309,3 +311,82 @@ def test_native_planner_reaches_clear_road_boost_plateau(factory, car):
     assert planner.output_a_target <= planner.a_cruise + 1e-6
   assert planner.encouragement.boost == pytest.approx(MAX_BOOST)
   assert planner.output_a_target == pytest.approx(MAX_BOOST, abs=.01)
+
+
+@pytest.mark.parametrize('factory,car', [(HondaInterface, HONDA.HONDA_CIVIC),
+                                       (HyundaiInterface, HYUNDAI.HYUNDAI_IONIQ_6),
+                                       (ToyotaInterface, TOYOTA.TOYOTA_RAV4_TSS2)])
+def test_native_planner_recovers_despite_recorded_acceleration_noise(factory, car):
+  tape = json.loads((Path(__file__).parent / 'fixtures' / 'encouragement_clear_road_noise.json').read_text())
+  params = factory.get_non_essential_params(car)
+  params.openpilotLongitudinalControl = True
+  planner = LongitudinalPlanner(params, init_v=tape['rows'][0][0])
+  maximum_boost = maximum_extra = 0.
+  for tick in range(40):
+    sm, now = frame(tick)
+    sm['carState'].vEgo = tape['rows'][0][0]
+    sm['modelV2'].action.desiredAcceleration = -.1
+    planner.update(sm, now_ns=now, curve_ceiling=CurveCeiling(20., sm.logMonoTime['modelV2']))
+    assert planner.encouragement.boost == 0.
+    assert planner.output_a_target <= planner.a_cruise + 1e-6
+  for offset, (speed, accel, model_accel, set_kph, experimental) in enumerate(tape['rows']):
+    sm, now = frame(offset + 40)
+    sm['carState'].vEgo, sm['carState'].aEgo, sm['carState'].vCruise = speed, accel, set_kph
+    sm['selfdriveState'].experimentalMode = experimental
+    sm['modelV2'].action.desiredAcceleration = model_accel
+    planner.update(sm, now_ns=now)
+    assert planner.mpc.solution_status == 0
+    assert planner.output_a_target <= planner.a_cruise + 1e-6
+    assert not planner.output_should_stop
+    maximum_boost = max(maximum_boost, planner.encouragement.boost)
+    maximum_extra = max(maximum_extra, planner.output_a_target - model_accel)
+  assert maximum_boost > .1
+  assert maximum_extra > .05
+
+
+@pytest.mark.parametrize('raw,readable,enabled', [(None, True, True), (b'1', True, True), (b'0', True, False),
+                                               (b'true', True, False), (None, False, False)])
+def test_speed_nudge_preference_defaults_on_and_rejects_invalid_sources(raw, readable, enabled):
+  with patch('openpilot.starpilot.longitudinal.encouragement.read_saved', return_value=(raw, readable)) as read:
+    preferences = NudgePreferences(object())
+    assert preferences.sample(1_000_000_000) is enabled
+    assert preferences.sample(1_500_000_000) is enabled
+    assert read.call_count == 1
+    read.return_value = (b'0', True)
+    assert not preferences.sample(2_000_000_000)
+    assert read.call_count == 2
+    read.return_value = (b'1', True)
+    assert preferences.sample(500_000_000)
+    assert read.call_count == 3
+
+
+@pytest.mark.parametrize('factory,car', [(HondaInterface, HONDA.HONDA_CIVIC),
+                                       (HyundaiInterface, HYUNDAI.HYUNDAI_IONIQ_6),
+                                       (ToyotaInterface, TOYOTA.TOYOTA_RAV4_TSS2)])
+def test_native_planner_speed_nudge_off_removes_entire_automatic_floor(factory, car):
+  params = factory.get_non_essential_params(car)
+  params.openpilotLongitudinalControl = True
+  planner = LongitudinalPlanner(params, init_v=20.)
+  for tick in range(220):
+    sm, now = frame(tick)
+    planner.update(sm, now_ns=now)
+  assert planner.encouragement.boost > 0.
+  for tick in range(220, 300):
+    sm, now = frame(tick)
+    planner.update(sm, now_ns=now, experimental_speed_nudge=False)
+    assert planner.encouragement.boost == 0.
+    assert planner.output_a_target == 0.
+  for tick in range(300, 520):
+    sm, now = frame(tick)
+    planner.update(sm, now_ns=now, experimental_speed_nudge=True)
+  assert planner.encouragement.boost == pytest.approx(MAX_BOOST)
+
+
+@pytest.mark.parametrize('host', [None, object()])
+def test_plannerd_forwards_speed_nudge_choice_through_both_curve_paths(host):
+  from openpilot.selfdrive.controls.plannerd import update_curve_frame
+  planner = Mock()
+  sm, now = frame(1)
+  with patch('openpilot.selfdrive.controls.plannerd.confirm_curve_frame'):
+    update_curve_frame(planner, sm, cp(), now, host=host, experimental_speed_nudge=False)
+  assert planner.update.call_args.kwargs['experimental_speed_nudge'] is False

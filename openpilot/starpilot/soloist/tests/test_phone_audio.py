@@ -25,7 +25,7 @@ class Phone:
 @pytest.fixture
 def music(tmp_path, monkeypatch):
   layout = Layout(tmp_path / 'music')
-  preferences.save(preferences.Preferences(source='phone', phone_address=PHONE, output='android_auto'), layout)
+  preferences.save(preferences.Preferences(source='phone', phone_address=PHONE, output='starport'), layout)
   processes, profiles, stopped = [], [], []
   sup, now = make_supervisor(layout, processes)
   sup.phone = Phone()
@@ -113,7 +113,7 @@ def test_phone_settings_migrate_validate_and_prevent_loop(tmp_path):
   layout = Layout(tmp_path)
   layout.config.write_text('{"output": "android_auto"}')
   assert preferences.load(layout).source == 'spotify'
-  saved = preferences.save(preferences.Preferences(source='phone', phone_address=PHONE, output='android_auto'), layout)
+  saved = preferences.save(preferences.Preferences(source='phone', phone_address=PHONE, output='starport'), layout)
   assert preferences.load(layout) == saved
   for change in ({'source': 'bad'}, {'phone_address': 'bad'}, {'output': 'bluetooth', 'output_address': PHONE}):
     with pytest.raises(ValueError):
@@ -362,7 +362,7 @@ def test_pairing_window_advertises_the_receiver_then_releases_it_unless_phone_is
   now[0] += 100
   sup.tick()
   assert profiles == ['acquire', 'release'] and not sup.phone_profile
-  preferences.save(preferences.Preferences(source='phone', phone_address=PHONE, output='android_auto'), sup.layout)
+  preferences.save(preferences.Preferences(source='phone', phone_address=PHONE, output='starport'), sup.layout)
   sup.handle({'command': 'prepare_phone_pairing'})
   now[0] += 1000
   sup.tick()

@@ -49,6 +49,8 @@ bin/
 !openpilot/starpilot/soloist/pulseaudio/modules/*.so
 *.a
 st[0-9A-Za-z][0-9A-Za-z][0-9A-Za-z][0-9A-Za-z][0-9A-Za-z][0-9A-Za-z]
+!/openpilot/starpilot/system/starport/
+!/openpilot/tools/starport/
 *.unchunked
 *.clb
 *.class

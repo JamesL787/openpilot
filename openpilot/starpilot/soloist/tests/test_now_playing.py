@@ -1,7 +1,7 @@
 import json
 
 from openpilot.starpilot.soloist import now_playing
-from openpilot.starpilot.system.android_auto.projection_now_playing import ProjectionNowPlayingFeed
+from openpilot.starpilot.system.starport.projection_now_playing import ProjectionNowPlayingFeed
 
 PLAYER = {'loggedIn': True, 'active': True, 'status': 'playing',
           'track': {'title': 'Midnight City', 'artists': 'M83', 'album': 'Hurry Up', 'durationMs': 243000},

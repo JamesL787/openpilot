@@ -21,6 +21,7 @@ PREFERENCES = frozenset({
 from openpilot.starpilot.honda_eps_settings import HONDA_EPS_PRESERVED_KEYS
 
 RETIRED_KEYS = frozenset({'ShareUsageStats'})
+RENAMED_BOOL_KEYS = {'AndroidAutoEnabled': 'StarPortEnabled'}
 MAX_VALUE_BYTES = 32 * 1024 * 1024
 MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024
 MAX_KEYS = 4096
@@ -404,6 +405,16 @@ def prepare_manager_start(params, storage, *, dry_run=False, auto_migrate=False)
     if consumed is not None:
       identity['consumed_dom_token'] = consumed
     known = {key.decode() if isinstance(key, bytes) else key for key in params.all_keys()}
+    if auto_migrate and not dry_run and initialized and not foreign_handoff:
+      for old, new in RENAMED_BOOL_KEYS.items():
+        if old not in values:
+          continue
+        _save_snapshot(values, storage / 'snapshots')
+        if new not in values and values[old] in (b'0', b'1'):
+          _atomic_write(namespace / new, values[old])
+        (namespace / old).unlink()
+        _fsync_dir(namespace)
+        values = _read_namespace(namespace)
     if auto_migrate and not dry_run and (foreign_handoff or not initialized and values):
       values = _migrate_first_start(params, namespace, storage, values, known, CACHE_KEYS, inspect_cache)
       migrated = True

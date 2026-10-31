@@ -20,7 +20,7 @@ class GlobalBrakingTests(unittest.TestCase):
   def run_planner(self, response=None, *, ceiling=None, lead=False, stop=False, force=False,
                   profile=None, traffic=False):
     planner = LongitudinalPlanner(self.cp, init_v=V_EGO)
-    with patch.object(planner_module, 'slc_coast_floor', wraps=planner_module.slc_coast_floor) as coast:
+    with patch.object(planner_module, 'get_cruise_accel', wraps=planner_module.get_cruise_accel) as cruise:
       for _ in range(65):
         sm, _ = messages(lead=lead, force=force)
         sm['carState'].vCruise = 100.0 if ceiling is not None else 50.0
@@ -30,7 +30,7 @@ class GlobalBrakingTests(unittest.TestCase):
                            cruise_ceiling=ceiling, profile_tuning=profile, traffic_mode=traffic,
                            global_braking_response=response)
         self.assertEqual(planner.mpc.solution_status, 0)
-    return planner, coast.call_args.kwargs
+    return planner, cruise.call_args.kwargs
 
   def test_real_cruise_candidate_uses_global_floor_without_changing_native_mpc(self):
     ordinary, _ = self.run_planner()
@@ -53,14 +53,12 @@ class GlobalBrakingTests(unittest.TestCase):
       self.assertEqual(planner.mpc.params[:, [0, 1, 4, 5]].tolist(),
                        ordinary.mpc.params[:, [0, 1, 4, 5]].tolist())
 
-  def test_slc_style_hazards_and_category_override(self):
+  def test_ceiling_hazards_and_category_override(self):
     ceiling = CruiseCeiling(19.0, ACTIVE)
-    eco, coast = self.run_planner('eco', ceiling=ceiling)
-    self.assertEqual(coast['braking_style'], 'eco')
-    self.assertEqual(coast['full_brake_floor'], -0.6)
-    self.assertIsNotNone(coast['slc_target'])
-    lead, coast = self.run_planner('eco', ceiling=ceiling, lead=True)
-    self.assertTrue(coast['relevant_lead'])
+    eco, cruise = self.run_planner('eco', ceiling=ceiling)
+    self.assertEqual(cruise['base_brake_floor'], -0.6)
+    self.assertAlmostEqual(eco.a_cruise, -0.6)
+    lead, _ = self.run_planner('eco', ceiling=ceiling, lead=True)
     self.assertLess(lead.output_a_target, lead.a_cruise)
     native_lead, _ = self.run_planner(ceiling=ceiling, lead=True)
     sport_lead, _ = self.run_planner('sport', ceiling=ceiling, lead=True)
@@ -68,24 +66,22 @@ class GlobalBrakingTests(unittest.TestCase):
     self.assertEqual(snapshot(sport_lead), snapshot(native_lead))
     for kwargs in ({'stop': True}, {'force': True}):
       with self.subTest(kwargs=kwargs):
-        protected, coast = self.run_planner('eco', ceiling=ceiling, **kwargs)
+        protected, cruise = self.run_planner('eco', ceiling=ceiling, **kwargs)
         native, _ = self.run_planner(ceiling=ceiling, **kwargs)
-        self.assertEqual(coast['braking_style'], 'standard')
-        self.assertIsNone(planner_module.slc_coast_floor(**coast))
+        self.assertEqual(cruise['base_brake_floor'], planner_module.A_CRUISE_MIN)
         self.assertEqual(snapshot(protected), snapshot(native))
     selected = ProfileTuning('standard', 1.45, 1.0, 1.0, 1.0, 1.0, 1.0,
-                             cruise_brake_magnitude=1.0, slc_braking_style='standard')
-    baseline, coast = self.run_planner(profile=selected, ceiling=ceiling)
-    with_global, with_coast = self.run_planner('sport', profile=selected, ceiling=ceiling)
+                             cruise_brake_magnitude=1.0)
+    baseline, _ = self.run_planner(profile=selected, ceiling=ceiling)
+    with_global, _ = self.run_planner('sport', profile=selected, ceiling=ceiling)
     self.assertEqual(snapshot(baseline), snapshot(with_global))
-    self.assertEqual((coast['braking_style'], with_coast['braking_style']), ('standard', 'standard'))
 
   def test_inactive_and_traffic_never_consume_global_choice(self):
     ordinary, _ = self.run_planner()
-    traffic, coast = self.run_planner('sport', traffic=True)
+    traffic, cruise = self.run_planner('sport', traffic=True)
     ordinary_traffic, _ = self.run_planner(traffic=True)
     self.assertEqual(snapshot(traffic), snapshot(ordinary_traffic))
-    self.assertEqual(coast['braking_style'], 'standard')
+    self.assertEqual(cruise['base_brake_floor'], planner_module.A_CRUISE_MIN)
     self.assertEqual(snapshot(ordinary), snapshot(self.run_planner('unknown')[0]))
     self.assertEqual(snapshot(ordinary), snapshot(self.run_planner([])[0]))
 

@@ -32,7 +32,7 @@ def test_preferences_validate_and_round_trip(layout):
   saved = preferences.save(preferences.Preferences(device_name=' Civic ', output_address='aa:bb:cc:dd:ee:ff', output_name='Car'), layout)
   assert saved.device_name == 'Civic' and saved.output_address == 'AA:BB:CC:DD:EE:FF'
   assert preferences.load(layout) == saved
-  assert preferences.validated({**preferences.Preferences().__dict__, 'output': 'android_auto'}).output == 'android_auto'
+  assert preferences.validated({**preferences.Preferences().__dict__, 'output': 'starport'}).output == 'starport'
   for bad in ({'device_name': ''}, {'cache_mb': 50}, {'initial_volume': 101}, {'output': 'speaker'}, {'output_address': 'nope'}):
     with pytest.raises(ValueError):
       preferences.validated({**preferences.Preferences().__dict__, **bad})
@@ -88,10 +88,10 @@ def test_vendored_server_matches_its_checksums():
     assert (root / 'licenses' / f'{name}.copyright').is_file()
 
 
-def test_android_auto_output_is_a_real_time_pipe(layout):
-  launch = backend.server_launch(layout, preferences.Preferences(output='android_auto'))
+def test_starport_output_is_a_real_time_pipe(layout):
+  launch = backend.server_launch(layout, preferences.Preferences(output='starport'))
   sink = next(arg for arg in launch.argv if arg.startswith('module-pipe-sink'))
-  assert f'file={backend.android_auto_pipe(layout)}' in sink
+  assert f'file={backend.starport_pipe(layout)}' in sink
   assert 'rate=48000' in sink and 'channels=2' in sink and 'use_system_clock_for_timing=yes' in sink
   assert launch.env['LD_LIBRARY_PATH'] == str(backend.SERVER_ROOT / 'lib')
 

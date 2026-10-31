@@ -5,7 +5,7 @@ import { navigate } from "./router.js"
 import { SystemMonitor } from "./system-monitor.js"
 import { CrashReportsFeed } from "./crash-reports.js"
 import { storedSize } from "./record-deletion.js"
-import { AndroidAutoLogsFeed, BUNDLE_URL, fileUrl, outcomeLabel } from "./android-auto-logs.js"
+import { StarPortLogsFeed, BUNDLE_URL, fileUrl, outcomeLabel } from "./starport-logs.js"
 import { MenuTile } from "./menu-tile.js"
 import { BluetoothNotice, bluetoothConnection } from "./bluetooth-notice.js"
 
@@ -15,25 +15,25 @@ export const Logs = {
   props: { path: { type: String, required: true }, mode: { type: String, required: true }, unauthorized: { type: Function, required: true },
     tools: { type: Array, required: true } },
   data: () => ({ crashes: { reports: [], scanIncomplete: false, listLimited: false, status: "idle", error: "", selected: null, preview: null, previewStatus: "idle", deleting: false, storageBytes: 0, reportCount: 0 }, search: "",
-    aaLogs: { sessions: [], others: [], status: "idle", error: "" }, bluetooth: bluetoothConnection() }),
+    starportLogs: { sessions: [], others: [], status: "idle", error: "" }, bluetooth: bluetoothConnection() }),
   computed: {
     visibleReports() { return this.crashes.reports.filter((item) => item.name.toLowerCase().includes(this.search.toLowerCase())) },
   },
   created() {
     this.crashFeed = new CrashReportsFeed({ publish: (update) => Object.assign(this.crashes, update), unauthorized: this.unauthorized })
-    this.aaFeed = new AndroidAutoLogsFeed({ publish: (update) => Object.assign(this.aaLogs, update), unauthorized: this.unauthorized })
+    this.starportFeed = new StarPortLogsFeed({ publish: (update) => Object.assign(this.starportLogs, update), unauthorized: this.unauthorized })
   },
   mounted() {
     if (this.path === "/logs/crashes" && this.mode === "local") this.crashFeed.start()
-    if (this.path === "/logs/android-auto" && this.mode === "local") this.aaFeed.start()
+    if (this.path === "/logs/starport" && this.mode === "local") this.starportFeed.start()
   },
-  beforeUnmount() { this.crashFeed.stop(); this.aaFeed.stop() },
+  beforeUnmount() { this.crashFeed.stop(); this.starportFeed.stop() },
   watch: {
     path(next, previous) {
       if (next === "/logs/crashes" && this.mode === "local") this.crashFeed.start()
       else if (previous === "/logs/crashes") { this.crashFeed.stop(); this.search = "" }
-      if (next === "/logs/android-auto" && this.mode === "local") this.aaFeed.start()
-      else if (previous === "/logs/android-auto") this.aaFeed.stop()
+      if (next === "/logs/starport" && this.mode === "local") this.starportFeed.start()
+      else if (previous === "/logs/starport") this.starportFeed.stop()
     },
   },
   methods: {
@@ -89,27 +89,27 @@ export const Logs = {
         <GxState v-if="crashes.previewStatus === 'loading'" loading>Loading report…</GxState>
         <section v-else-if="crashes.preview" class="gx-card gx-crash-preview gx-panel"><div class="gx-crash-preview__head"><strong>{{ crashes.preview.name }}</strong><button type="button" class="gx-btn gx-btn--tonal" @click="copyPreview">Copy visible text</button></div><p v-if="crashes.preview.truncated" class="gx-note">Preview truncated to the first 256 KiB.</p><pre>{{ crashes.preview.text }}</pre></section>
       </template>
-      <section v-else-if="path === '/logs/android-auto' && mode === 'local'" class="gx-settings gx-aa-logs" aria-labelledby="gx-aa-logs-title">
-        <header class="gx-settings__header gx-page-header"><div><h2 id="gx-aa-logs-title">Android Auto Logs</h2>
-          <p>The last 20 connection sessions, newest first. The archive includes every session, a readable report for each, Android Auto settings, the car view's renderer logs, and a snapshot of the device (Wi-Fi, Bluetooth and kernel logs, build, CPU load). Hardware addresses are masked.</p></div></header>
+      <section v-else-if="path === '/logs/starport' && mode === 'local'" class="gx-settings gx-starport-logs" aria-labelledby="gx-starport-logs-title">
+        <header class="gx-settings__header gx-page-header"><div><h2 id="gx-starport-logs-title">StarPort Logs</h2>
+          <p>The last 20 connection sessions, newest first. The archive includes every session, a readable report for each, StarPort settings, the car view's renderer logs, and a snapshot of the device (Wi-Fi, Bluetooth and kernel logs, build, CPU load). Hardware addresses are masked.</p></div></header>
         <BluetoothNotice v-if="bluetooth" feature="Log downloads">Log summaries remain available.</BluetoothNotice>
-        <div class="gx-settings__controls gx-actions"><a v-if="!bluetooth" class="gx-btn" :href="bundleUrl()" download><i class="bi bi-file-earmark-zip" aria-hidden="true"></i><span>Download all logs</span><span class="gx-aa-logs__format">ZIP</span></a><button type="button" class="gx-btn gx-btn--tonal" @click="aaFeed.load()"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i><span>Refresh</span></button></div>
+        <div class="gx-settings__controls gx-actions"><a v-if="!bluetooth" class="gx-btn" :href="bundleUrl()" download><i class="bi bi-file-earmark-zip" aria-hidden="true"></i><span>Download all logs</span><span class="gx-starport-logs__format">ZIP</span></a><button type="button" class="gx-btn gx-btn--tonal" @click="starportFeed.load()"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i><span>Refresh</span></button></div>
 
-        <GxState v-if="aaLogs.status === 'loading'" loading>Loading Android Auto logs…</GxState>
-        <GxNotice v-else-if="aaLogs.status === 'unavailable'" tone="danger">{{ aaLogs.error || 'Android Auto logs are unavailable.' }}</GxNotice>
-        <GxState v-else-if="aaLogs.status === 'ready' && !aaLogs.sessions.length">No Android Auto sessions have been logged yet.</GxState>
-        <div v-if="aaLogs.status === 'ready'" class="gx-aa-log-list">
-          <article v-for="log in aaLogs.sessions" :key="log.name" class="gx-card gx-aa-log">
-            <div class="gx-aa-log__body"><strong>{{ outcomeLabel(log.outcome) }}</strong><span>{{ log.car || 'Car not identified' }}{{ log.transport ? ' · ' + log.transport : '' }}{{ log.trigger ? ' · ' + log.trigger : '' }}</span><span>{{ reportDate(log.modifiedAt) }} · {{ reportSize(log.size) }}</span></div>
-            <a v-if="!bluetooth" class="gx-icon-btn gx-aa-log__download" :href="fileUrl(log.name)" :download="log.name" :aria-label="'Download ' + log.name" :title="'Download ' + log.name"><i class="bi bi-download" aria-hidden="true"></i></a>
+        <GxState v-if="starportLogs.status === 'loading'" loading>Loading StarPort logs…</GxState>
+        <GxNotice v-else-if="starportLogs.status === 'unavailable'" tone="danger">{{ starportLogs.error || 'StarPort logs are unavailable.' }}</GxNotice>
+        <GxState v-else-if="starportLogs.status === 'ready' && !starportLogs.sessions.length">No StarPort sessions have been logged yet.</GxState>
+        <div v-if="starportLogs.status === 'ready'" class="gx-starport-log-list">
+          <article v-for="log in starportLogs.sessions" :key="log.name" class="gx-card gx-starport-log">
+            <div class="gx-starport-log__body"><strong>{{ outcomeLabel(log.outcome) }}</strong><span>{{ log.car || 'Car not identified' }}{{ log.transport ? ' · ' + log.transport : '' }}{{ log.trigger ? ' · ' + log.trigger : '' }}</span><span>{{ reportDate(log.modifiedAt) }} · {{ reportSize(log.size) }}</span></div>
+            <a v-if="!bluetooth" class="gx-icon-btn gx-starport-log__download" :href="fileUrl(log.name)" :download="log.name" :aria-label="'Download ' + log.name" :title="'Download ' + log.name"><i class="bi bi-download" aria-hidden="true"></i></a>
           </article>
         </div>
-        <template v-if="aaLogs.status === 'ready' && aaLogs.others.length">
-          <h3 class="gx-aa-logs__section-title">Renderer logs</h3>
-          <div class="gx-aa-log-list">
-            <article v-for="log in aaLogs.others" :key="log.name" class="gx-card gx-aa-log">
-              <div class="gx-aa-log__body"><strong>{{ log.name }}</strong><span>{{ reportDate(log.modifiedAt) }} · {{ reportSize(log.size) }}</span></div>
-              <a v-if="!bluetooth" class="gx-icon-btn gx-aa-log__download" :href="fileUrl(log.name)" :download="log.name" :aria-label="'Download ' + log.name" :title="'Download ' + log.name"><i class="bi bi-download" aria-hidden="true"></i></a>
+        <template v-if="starportLogs.status === 'ready' && starportLogs.others.length">
+          <h3 class="gx-starport-logs__section-title">Renderer logs</h3>
+          <div class="gx-starport-log-list">
+            <article v-for="log in starportLogs.others" :key="log.name" class="gx-card gx-starport-log">
+              <div class="gx-starport-log__body"><strong>{{ log.name }}</strong><span>{{ reportDate(log.modifiedAt) }} · {{ reportSize(log.size) }}</span></div>
+              <a v-if="!bluetooth" class="gx-icon-btn gx-starport-log__download" :href="fileUrl(log.name)" :download="log.name" :aria-label="'Download ' + log.name" :title="'Download ' + log.name"><i class="bi bi-download" aria-hidden="true"></i></a>
             </article>
           </div>
         </template>

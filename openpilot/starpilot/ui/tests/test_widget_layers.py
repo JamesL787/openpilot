@@ -8,7 +8,7 @@ import pytest
 from openpilot.starpilot.ui.onroad_customization import (
   CLOCK_WIDGET, DEFAULT_WIDGET_ORDER, MODE_WIDGET, PROFILES, customization_metadata, decode_document, default_document, validate_document,
 )
-from openpilot.starpilot.system.android_auto.projection_layout import (
+from openpilot.starpilot.system.starport.projection_layout import (
   CAR_EXIT, default_layout_for_viewport, decode_layout_for_viewport, layout_metadata_for_viewport, projection_customization,
   validate_layout_for_viewport,
 )

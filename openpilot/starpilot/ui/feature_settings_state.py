@@ -50,6 +50,7 @@ class FeaturePage(StrEnum):
   LANE = "lane"
   LANE_CHANGE = "lane_change"
   PROFILES = "profiles"
+  PERSONALITIES = "personalities"
   AGGRESSIVE = "aggressive"
   STANDARD = "standard"
   RELAXED = "relaxed"

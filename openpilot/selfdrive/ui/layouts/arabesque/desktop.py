@@ -3,6 +3,7 @@ from collections.abc import Callable
 import pyray as rl
 
 from openpilot.selfdrive.ui.layouts.arabesque.theme import DEFAULT_THEME
+from openpilot.selfdrive.ui.layouts.arabesque.tools.browser import Browser
 from openpilot.selfdrive.ui.layouts.arabesque.tools.files import Files
 from openpilot.selfdrive.ui.layouts.arabesque.tools.rebecca import Rebecca
 from openpilot.selfdrive.ui.layouts.arabesque.tools.terminal import Terminal
@@ -35,7 +36,7 @@ class ArabesqueLayout(Widget):
     self._menu_button = rl.Rectangle(rect.x + 24 * s, rect.y + 8 * s, 88 * s, 88 * s)
     self._exit_button = rl.Rectangle(rect.x + 24 * s, rect.y + 116 * s, 456 * s, 116 * s)
     self._back_button = rl.Rectangle(rect.x + rect.width - 296 * s, rect.y + 8 * s, 272 * s, 88 * s)
-    self._dock = dock = rl.Rectangle(rect.x + (rect.width - 840 * s) / 2, rect.y + rect.height - 272 * s, 840 * s, 240 * s)
+    self._dock = dock = rl.Rectangle(rect.x + (rect.width - 1080 * s) / 2, rect.y + rect.height - 272 * s, 1080 * s, 240 * s)
     self._dock_shelf = rl.Rectangle(dock.x, dock.y + 178 * s, dock.width, 10 * s)
     self._dock_top = (rl.Vector2(dock.x + 36 * s, dock.y + 118 * s), rl.Vector2(dock.x, self._dock_shelf.y),
                       rl.Vector2(dock.x + dock.width, self._dock_shelf.y), rl.Vector2(dock.x + dock.width - 36 * s, dock.y + 118 * s))
@@ -45,6 +46,7 @@ class ArabesqueLayout(Widget):
       (rl.Rectangle(dock.x + 60 * s, dock.y, 240 * s, 200 * s), "Terminal", lambda: Terminal()),
       (rl.Rectangle(dock.x + 300 * s, dock.y, 240 * s, 200 * s), "Files", lambda: Files(self._permitted)),
       (rl.Rectangle(dock.x + 540 * s, dock.y, 240 * s, 200 * s), "Rebecca", lambda: Rebecca()),
+      (rl.Rectangle(dock.x + 780 * s, dock.y, 240 * s, 200 * s), "Firefox", lambda: Browser(self._permitted)),
     )
     self._tool_rect = rl.Rectangle(rect.x, self._bar.y + self._bar.height, rect.width, rect.height - self._bar.height)
 
@@ -67,6 +69,10 @@ class ArabesqueLayout(Widget):
   def hide_event(self):
     super().hide_event()
     self._close_tool()
+
+  def poll_runtime(self, awake: bool):
+    if isinstance(self._active_tool, Browser):
+      self._active_tool.poll_runtime(awake)
 
   def _handle_mouse_press(self, pos: MousePos):
     self._pressed_rect = None
@@ -156,6 +162,10 @@ class ArabesqueLayout(Widget):
           rl.draw_rectangle_rounded(rl.Rectangle(icon.x - 32 * s, icon.y - 26 * s, 30 * s, 18 * s), 0.3, 8, tint)
           rl.draw_rectangle_rounded(rl.Rectangle(icon.x - 36 * s, icon.y - 16 * s, 72 * s, 44 * s), 0.2, 8, tint)
           rl.draw_rectangle_rounded(rl.Rectangle(icon.x - 29 * s, icon.y - 9 * s, 58 * s, 30 * s), 0.2, 8, theme.background)
+        elif name == "Firefox":
+          rl.draw_ring(icon, 35 * s, 40 * s, 0, 360, 40, tint)
+          rl.draw_ellipse_lines(int(icon.x), int(icon.y), 16 * s, 39 * s, tint)
+          rl.draw_line_ex(rl.Vector2(icon.x - 38 * s, icon.y), rl.Vector2(icon.x + 38 * s, icon.y), 4 * s, tint)
         else:
           rl.draw_circle_v(rl.Vector2(icon.x - 19 * s, icon.y - 6 * s), 20 * s, tint)
           rl.draw_circle_v(rl.Vector2(icon.x + 19 * s, icon.y - 6 * s), 20 * s, tint)

@@ -23,7 +23,7 @@ class TestHotspotHttp(unittest.TestCase):
     aa = Mock()
     aa.enabled.return_value = False
     self.server = make_server(port=0, owner=self.access, hotspot=self.settings,
-                              parked=lambda: self.parked, android_auto_setup=aa)
+                              parked=lambda: self.parked, starport_setup=aa)
     self.worker = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
     self.worker.start()
     self.addCleanup(self.stop)

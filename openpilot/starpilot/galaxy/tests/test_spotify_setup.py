@@ -187,12 +187,12 @@ def test_phone_source_requires_park_and_a_paired_device_without_spotify(owner):
   state['parked'] = True
   with pytest.raises(SetupRejected, match='Pair your phone'):
     setup.save_preferences(SESSION, {'source': 'phone', 'phoneAddress': '11:22:33:44:55:66'})
-  result = setup.save_preferences(SESSION, {'source': 'phone', 'phoneAddress': 'AA:BB:CC:DD:EE:FF', 'output': 'android_auto'})
+  result = setup.save_preferences(SESSION, {'source': 'phone', 'phoneAddress': 'AA:BB:CC:DD:EE:FF', 'output': 'starport'})
   assert result['preferences']['source'] == 'phone' and result['preferences']['phoneName'] == 'My Car'
   assert not result['keyPresent'] and not result['release']['installed']
   with pytest.raises(SetupRejected, match='different device'):
     setup.save_preferences(SESSION, {'output': 'bluetooth', 'outputAddress': 'AA:BB:CC:DD:EE:FF'})
-  assert preferences.load(layout).output == 'android_auto'
+  assert preferences.load(layout).output == 'starport'
 
 
 @pytest.mark.parametrize('peer,destination,headers,remote,allowed', [

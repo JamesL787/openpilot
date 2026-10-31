@@ -8,8 +8,8 @@ import pytest
 
 from openpilot.selfdrive.ui.onroad import augmented_road_view as large
 from openpilot.selfdrive.ui.mici.onroad import augmented_road_view as compact
-from openpilot.starpilot.system.android_auto.projection_layout import projection_appearance
-from openpilot.starpilot.system.android_auto.projection_onroad import ProjectionOnroad
+from openpilot.starpilot.system.starport.projection_layout import projection_appearance
+from openpilot.starpilot.system.starport.projection_onroad import ProjectionOnroad
 from openpilot.starpilot.ui import onroad
 from openpilot.starpilot.ui.appearance_preferences import CameraViewChoice, OnroadAppearance
 from openpilot.starpilot.ui.developer_preview import OnroadVisualPreview

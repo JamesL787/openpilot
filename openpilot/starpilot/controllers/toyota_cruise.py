@@ -1,4 +1,4 @@
-"""Toyota PCM cruise step preference for the recurring ACC_CONTROL owner."""
+"""Toyota cruise step preference shared by native cruise and software SET."""
 
 import time
 from openpilot.starpilot.saved_source import read_saved
@@ -25,8 +25,12 @@ class ToyotaCruisePreference:
     now = time.monotonic()
     if now >= self.next_read:
       self.next_read = now + 1.0
-      choice, choice_valid = read_saved(self.params, "ReverseCruise", 8)
-      safe, safe_valid = read_saved(self.params, "SafeMode", 8)
-      self.enabled = bool(capability(self.cp) is not None and choice_valid and safe_valid and
-                          choice == b"1" and safe in (None, b"0"))
+      self.enabled = read_reverse_cruise(self.cp, self.params)
     return self.enabled
+
+
+def read_reverse_cruise(cp, params) -> bool:
+  choice, choice_valid = read_saved(params, "ReverseCruise", 8)
+  safe, safe_valid = read_saved(params, "SafeMode", 8)
+  return bool(capability(cp) is not None and choice_valid and safe_valid and
+              choice == b"1" and safe in (None, b"0"))

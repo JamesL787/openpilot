@@ -148,7 +148,7 @@ class TestProcessRecovery(unittest.TestCase):
   def test_boot_racing_processes_restart(self):
     from openpilot.system.manager.process_config import procs
     restarting = {p.name for p in procs if getattr(p, "restart_on_exit", False)}
-    self.assertLessEqual({"ui", "soundd", "android_autod"}, restarting)
+    self.assertLessEqual({"ui", "soundd", "starportd"}, restarting)
 
 
   def test_sensor_three_recovery_cycles_obey_backoff_and_stop_eligibility(self):

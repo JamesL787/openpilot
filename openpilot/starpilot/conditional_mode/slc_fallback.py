@@ -1,7 +1,7 @@
 """Advisory SLC experimental-fallback evidence from one completed planner cycle.
 
-This module does not select a driving mode. The future CEM owner must separately
-validate its own authority, preference revision, and scene freshness.
+This module does not select a driving mode. The conditional-mode owner separately
+validates its own authority, preference revision, and scene freshness.
 """
 
 from dataclasses import dataclass
@@ -100,7 +100,7 @@ def evaluate(output: Output, settings: Settings) -> Diagnostic:
 
 
 def evaluate_runtime(runtime: Runtime, output: Output) -> Diagnostic:
-  """Give the future mode owner an advisory snapshot for the current SLC tick.
+  """Give the conditional-mode owner an advisory snapshot for the current SLC tick.
 
   A prior tick or another Runtime cannot renew fallback. This does not validate
   conditional-mode settings or grant effective longitudinal mode ownership.

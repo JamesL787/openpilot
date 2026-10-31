@@ -57,7 +57,8 @@ from openpilot.starpilot.ui.feature_settings_state import (
 from openpilot.starpilot.ui.lane_change_feature import KEYS as LANE_CHANGE_KEYS, RESET as LANE_CHANGE_RESET
 from openpilot.starpilot.models.runtime import ModelStatusSource
 from openpilot.starpilot.models.status import project_status
-from openpilot.starpilot.ui.models_state import model_page, model_profile_choices, model_profile_request, home_model_label
+from openpilot.starpilot.ui.models_state import model_page, home_model_label
+from openpilot.starpilot.ui.models_actions import open_model_page
 from openpilot.starpilot.ui.maps_state import MapStatusSource
 from openpilot.starpilot.galaxy.access import GalaxyAccessOwner, default_owner
 from openpilot.starpilot.ui.galaxy_access import GalaxyAccessFlow
@@ -76,8 +77,8 @@ from openpilot.starpilot.ui.onroad_dm import DriverMonitorLayer
 from openpilot.starpilot.favorites.owner import FavoritesOwner
 from openpilot.starpilot.controllers.cruise_action import CruiseActionPublisher, ui_authority as cruise_action_authority
 from openpilot.starpilot.controllers.wheel_actions import WheelConsumer
-from openpilot.starpilot.system.android_auto.projection_bookmark import BookmarkReceiver
-from openpilot.starpilot.system.android_auto.projection_slc_action import SlcActionReceiver
+from openpilot.starpilot.system.starport.projection_bookmark import BookmarkReceiver
+from openpilot.starpilot.system.starport.projection_slc_action import SlcActionReceiver
 from openpilot.starpilot.controllers.mode_actions import ModeActionPublisher, producer_available, authority as mode_action_authority
 from openpilot.starpilot.favorites.actions import (BOOKMARK, CYCLE_PERSONALITY, EXPERIMENTAL, INCREASE_SPEED, DECREASE_SPEED, SET_SPEED,
                                                   FORCE_COAST, PULSE_GLIDE, DISENGAGE, TRAFFIC, SWITCHBACK, SCREEN_OFF, mapped_actions)
@@ -929,33 +930,8 @@ class StarShellSession:
       self.input.cancel()
     elif action.kind == "scroll":
       self.model_scroll = feature_scroll(self.model_scroll, action.direction, len(state.rows))
-    elif action.kind == "open" and action.row in state.rows and action.row.page in ("models:small", "models:big"):
-      from openpilot.system.ui.lib.application import gui_app
-      from openpilot.system.ui.widgets import DialogResult
-      from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
-      profile = action.row.page.split(":", 1)[1]
-      manager = self.model_manager_snapshot()
-      choices = dict(model_profile_choices(manager, profile))
-      current = manager["activeSmallModel" if profile == "small" else "activeBigModel"]
-      current_label = next((label for label, model_id in choices.items() if model_id == current), "")
-
-      def confirmed(result):
-        if result != DialogResult.CONFIRM or self._mode != ShellMode.SETTINGS or self.selected != Destination.DRIVING_MODEL:
-          return
-        fresh = self.model_manager_snapshot()
-        if fresh["activeSmallModel" if profile == "small" else "activeBigModel"] != current:
-          self._unavailable("saved model changed; reopen the selection")
-          return
-        request = model_profile_request(fresh, profile, choices.get(dialog.selection, ""))
-        if request is not None:
-          try:
-            self.model_manager_action("active", request)
-          except (OSError, ValueError, RuntimeError) as error:
-            self._unavailable(str(error))
-        self._snapshot_cache = None
-
-      dialog = MultiOptionDialog(f"Active {'Small' if profile == 'small' else 'Big'}", list(choices), current_label, callback=confirmed)
-      gui_app.push_widget(dialog)
+    elif action.kind == "open" and action.row in state.rows and not open_model_page(self, action.row.page):
+      return
     self._snapshot_cache = None
 
   def power_request(self, request: FeatureSettingsRequest) -> bool:

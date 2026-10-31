@@ -6,6 +6,7 @@ from opendbc.can.dbc import DBC as CANDBC
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.ford.fordcan import CanBus
+from opendbc.car.ford.mache_lateral import path_speed_window_supported
 from opendbc.car.ford.stock_cruise import FordStockCruiseButton
 from opendbc.car.ford.values import CAR, DBC, CarControllerParams, FordFlags
 from opendbc.car.interfaces import CarStateBase
@@ -40,7 +41,8 @@ class CarState(CarStateBase):
     self.lkas_available = False
     self.lkas_available_ts_nanos = 0
     self.lateral_motion_control = None
-    self.bluepilot_speed_samples = [0] * 6 if CP.safetyConfigs and CP.safetyConfigs[-1].safetyParam & 128 else None
+    self.bluepilot_speed_samples = [0] * 6 if (CP.safetyConfigs and CP.safetyConfigs[-1].safetyParam & 128 or
+                                                 path_speed_window_supported(CP)) else None
     self.bluepilot_speed_window = None
 
   def get_car_gps(self):

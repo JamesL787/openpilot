@@ -114,8 +114,14 @@ def qualified(CP) -> bool:
                                     (FordSafetyFlags.LONG_CONTROL if CP.openpilotLongitudinalControl else 0)))
 
 
+def path_speed_window_supported(CP) -> bool:
+  return (qualified(CP) and CP.alternativeExperience == 32 and
+          len(CP.safetyConfigs) == 1 and CP.safetyConfigs[0].safetyParam ==
+          int(FordSafetyFlags.CANFD | FordSafetyFlags.MACH_E_EXTENDED | FordSafetyFlags.LONG_CONTROL))
+
+
 def bounded_command(owner: MachELateralController, demanded: FordLateralResult, previous: float, speed: float,
-                    previous_path_angle: float = 0.0) -> FordLateralResult:
+                    previous_path_angle: float = 0.0, speed_window=None) -> FordLateralResult:
   """Intersect original demand with modern transient limits and old absolute cap.
 
   A discontinuous speed change may leave no legal active interval. Withdraw the
@@ -130,9 +136,12 @@ def bounded_command(owner: MachELateralController, demanded: FordLateralResult, 
   else:
     curvature = float(np.clip(demanded.curvature, low, high))
     path_angle = 0.0
-    if (3.0 <= speed < MACH_E_PATH_ANGLE_MAX_SPEED and abs(curvature) >= 0.0195 and
+    # Native path assistance checks the maximum of six raw ABS speed samples.
+    # Do not emit an assist that only the newest (lower) speed sample permits.
+    path_speed = max(speed, speed_window[1]) if speed_window is not None else speed
+    if (3.0 <= speed and path_speed < MACH_E_PATH_ANGLE_MAX_SPEED and abs(curvature) >= 0.0195 and
         curvature * demanded.path_angle > 0.0):
-      headroom = max(0.0, (MAX_LATERAL_ACCEL / speed ** 2 - abs(curvature)) * speed)
+      headroom = max(0.0, (MAX_LATERAL_ACCEL / path_speed ** 2 - abs(curvature)) * path_speed)
       path_cap = min(MACH_E_PATH_ANGLE_MAX, headroom)
       path_low = max(-path_cap, previous_path_angle - MACH_E_PATH_ANGLE_STEP)
       path_high = min(path_cap, previous_path_angle + MACH_E_PATH_ANGLE_STEP)

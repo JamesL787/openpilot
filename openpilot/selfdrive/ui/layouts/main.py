@@ -113,6 +113,14 @@ class MainLayout(Widget):
   def _arabesque_allowed(self) -> bool:
     return ui_state.is_offroad()
 
+  def poll_arabesque(self):
+    # Runs before the render/sleep branch so revocation never waits for a visible frame.
+    if self._current_mode == MainState.ARABESQUE:
+      if not self._arabesque_allowed():
+        self._set_mode_for_state()
+      else:
+        self._layouts[MainState.ARABESQUE].poll_runtime(device.awake and gui_app.get_active_widget() is self)
+
   def _open_arabesque(self):
     if self._current_mode == MainState.SETTINGS and self._arabesque_allowed():
       self._sidebar.set_visible(False)

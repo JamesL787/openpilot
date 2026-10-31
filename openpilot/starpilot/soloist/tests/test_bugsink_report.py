@@ -32,9 +32,9 @@ def test_healthy_timing_lines_are_not_windows():
   assert report.windows([timing(BASE)]) == []
 
 
-def test_event_is_phone_audio_not_android_auto_and_has_no_addresses():
+def test_event_is_phone_audio_not_starport_and_has_no_addresses():
   window = report.windows([rtp(BASE, 12)])[0]
-  event = report.dropout_event(window, output='android_auto')
+  event = report.dropout_event(window, output='starport')
   assert event['fingerprint'] == ['phone-audio', 'dropout'] and event['tags']['component'] == 'phone_audio'
   assert event['tags']['pa.cause_hint'] == 'bluetooth_input' and 'aa.schema' not in event['tags']
   assert '12 Bluetooth packets lost' in event['message']

@@ -42,6 +42,21 @@ def command_receipt(runtime, command, seconds, previous, selected, *, applied=Tr
                      command.decisionId, command.presentationId, command.commandId)
 
 
+@pytest.mark.parametrize('button,kind', [('accel', 'confirmationAccept'), ('decel', 'confirmationReject')])
+def test_wheel_confirmation_does_not_follow_same_step_source_replacement(drive, button, kind):
+  sm, cp = drive
+  runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard', 'SLCConfirmation': True}))
+  pending = tick(runtime, sm, cp, 0).message.slcState
+  sm['slcDashboardObservation'].episode += 1
+  sm['slcDashboardObservation'].observedMonoTime = START + 40_000_000
+  event = CruiseEvent(1, START + 50_000_000, 0.0, 0.0, button, 'card-producer', START + 50_000_000,
+                      kind, runtime.session_id, pending.decisionId, pending.presentationId)
+  output = tick(runtime, sm, cp, .05, cruise_event=event)
+  assert output.message.slcState.hasPending and not output.message.slcState.hasAccepted
+  assert output.message.slcState.actionStatus == 'different_presentation'
+  assert output.command is None and runtime.ledger.transactions == ()
+
+
 @pytest.mark.parametrize('confirmation', [False, True])
 @pytest.mark.parametrize('metric,limit,offset', [(False, 45., 0.), (False, 45., 5.), (False, 45., -.4),
                                               (True, 72., 0.), (True, 72., 5.), (True, 72., -.4)])

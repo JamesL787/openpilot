@@ -15,13 +15,15 @@ import { snapTargets, snapMove, snapResize, snapThreshold } from "./layout-snap.
 import { PROFILES, ROAD_COLORS, PATH_MODES, HEX, PROJECTION_DISPLAY_SWITCHES, layoutDocument, previewDocument, withDisplay, orderedWidgetIds, widgetPalette, withAlpha, widgetSize, placementLimits, clampBox, clampPlacement, overlapsReserved, previewPoint, validDocument, validSnapshot } from "./onroad-layout-document.js"
 export { layoutDocument, previewDocument, withDisplay, orderedWidgetIds, widgetPalette, withAlpha, widgetSize, placementLimits, clampBox, clampPlacement, overlapsReserved, previewPoint, validDocument, validSnapshot } from "./onroad-layout-document.js"
 
-const previewVisibilityKey = projection => "gx-layout-preview-visibility-v2:" + (projection ? "android-auto" : "comma")
+const previewVisibilityKey = projection => "gx-layout-preview-visibility-v2:" + (projection ? "starport" : "comma")
+const oldProjectionVisibilityKey = "gx-layout-preview-visibility-v2:android-auto"
 function loadPreviewVisibility(projection) {
   const hidden = { large: {}, compact: {} }
   try {
-    const raw = localStorage.getItem(previewVisibilityKey(projection))
+    const currentKey = previewVisibilityKey(projection)
+    const raw = localStorage.getItem(currentKey) ?? (projection ? localStorage.getItem(oldProjectionVisibilityKey) : null)
     const legacy = raw === null
-    const saved = JSON.parse(raw ?? localStorage.getItem(previewVisibilityKey(projection).replace('-v2:', '-v1:')))
+    const saved = JSON.parse(raw ?? localStorage.getItem(currentKey.replace('-v2:', '-v1:')))
     for (const profile of PROFILES) {
       const widgets = saved?.[profile]
       if (!widgets || typeof widgets !== "object" || Array.isArray(widgets)) continue
@@ -106,7 +108,7 @@ export class OnroadLayoutFeed {
         "Reading colors and layouts timed out. Try reloading.")
     }, 5000)
     try {
-      const response = await this.fetcher(this.projection ? "./api/android-auto/layout" : "./api/ui/layout", {
+      const response = await this.fetcher(this.projection ? "./api/starport/layout" : "./api/ui/layout", {
         credentials: "same-origin", cache: "no-store", signal: request.signal,
         ...(saving ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this.projection ? projectionPayload(body, this.data.metadata) : body) } : {})
       })
@@ -128,9 +130,9 @@ export class OnroadLayoutFeed {
       this.needsReload = false
       this.publish({
         status: "ready", data, ...((saving || initial || !background) ? { draft: clone(data.document) } : {}), error: "", needsReload: false,
-        notice: saving ? (this.projection ? "Android Auto layout saved." : data.failed?.length ?
+        notice: saving ? (this.projection ? "StarPort layout saved." : data.failed?.length ?
           "Layout saved, but these display options did not change: " + data.failed.join(", ") + ". Reload and try again." :
-          "Colors and both layouts saved.") + (mapMoved ? " The map overlay is now off in the " + (this.projection ? "Big screen" : "Android Auto") + " layout." : "") :
+          "Colors and both layouts saved.") + (mapMoved ? " The map overlay is now off in the " + (this.projection ? "Big screen" : "StarPort") + " layout." : "") :
           !background && !initial ? "Reloaded the saved layout." : ""
       })
       return true
@@ -352,7 +354,7 @@ export const OnroadLayoutPage = {
       for (const [key, value] of Object.entries(update)) {
         if (JSON.stringify(state[key]) !== JSON.stringify(value)) state[key] = value
       }
-      if (draftChanged || ["Colors and both layouts saved.", "Android Auto layout saved."].some(saved => update.notice?.startsWith(saved))) state.history = { undo: [], redo: [], group: null }
+      if (draftChanged || ["Colors and both layouts saved.", "StarPort layout saved."].some(saved => update.notice?.startsWith(saved))) state.history = { undo: [], redo: [], group: null }
     }
     const feed = new OnroadLayoutFeed({ projection: props.projection, unauthorized: props.unauthorized, publish: apply })
     watch(() => !!state.drag || !!state.layerDrag, (dragging) => { if (!dragging && deferred) apply({}) }, { flush: "sync" })
@@ -914,7 +916,7 @@ export const OnroadLayoutPage = {
       const before = clone(this.state.draft)
       this.state.draft.largeUiGammaTrial = value === "On"
       this.recordChange(before)
-      this.state.notice = "Save to apply the camera effect on Android Auto."
+      this.state.notice = "Save to apply the camera effect on StarPort."
     },
     setProjectionDisplay(key, value) {
       if (!this.projection || !this.editable || this.state.drag || this.state.layerDrag || !PROJECTION_DISPLAY_SWITCHES.includes(key)) return
@@ -922,7 +924,7 @@ export const OnroadLayoutPage = {
       const before = clone(this.state.draft)
       this.state.draft[key] = value === "On"
       this.recordChange(before)
-      this.state.notice = "Save to apply the screen options on Android Auto."
+      this.state.notice = "Save to apply the screen options on StarPort."
     },
     setProjectionLeadInfo(value) {
       if (!this.projection || !this.editable || this.state.drag || this.state.layerDrag ||
@@ -930,7 +932,7 @@ export const OnroadLayoutPage = {
       const before = clone(this.state.draft)
       this.state.draft.leadInfo = value
       this.recordChange(before)
-      this.state.notice = "Save to apply the screen options on Android Auto."
+      this.state.notice = "Save to apply the screen options on StarPort."
     },
     projectionLeadInfoRow() {
       const marker = this.state.draft.leadIndicator === true

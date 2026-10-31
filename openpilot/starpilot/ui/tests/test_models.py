@@ -3,7 +3,7 @@
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest import mock
 
 from openpilot.starpilot.models.catalog import BUNDLED_CURRENT, BY_ID
@@ -11,7 +11,7 @@ from openpilot.starpilot.models.status import ModelHealth, ModelStatus, ModelVar
 from openpilot.starpilot.ui.feature_settings_state import feature_row_top, FeatureInput
 from openpilot.starpilot.ui.models_compact import ModelsCompact, _ModelsPage, _display_text
 from openpilot.starpilot.ui.models_state import (model_page, model_action_allowed, model_catalog_rows, model_profile_choices, model_profile_request,
-                                                home_model_label)
+                                                home_model_label, model_download_choices)
 from openpilot.starpilot.ui.presentation import Profile
 from openpilot.starpilot.ui.settings_state import Destination
 from openpilot.starpilot.ui.shell import ShellMode, ShellView
@@ -122,14 +122,15 @@ class TestModelManager(unittest.TestCase):
                     "communityFavorite": True, "downloadAvailable": False}
     self.missing = {"value": "missing", "label": "Missing", "installed": False, "selectable": False, "requiresGpu": True,
                     "downloadAvailable": True, "gpuAvailable": False}
-    self.data = {"schemaVersion": 1, "models": [self.small, self.big, self.pending, self.missing], "isOnroad": False,
+    self.data: dict[str, Any] = {"schemaVersion": 1, "models": [self.small, self.big, self.pending, self.missing], "isOnroad": False,
                  "activeSmallModel": "small", "activeBigModel": "big", "currentModel": "small", "downloading": False,
                  "capabilities": {"select": True, "download": True, "downloadAll": True, "favorites": True, "delete": True, "cancel": True,
                                   "randomizer": True, "exclusions": True}}
 
   def test_verified_profiles_and_pending_catalog_are_distinct(self):
     self.assertEqual(model_profile_choices(self.data, "small"), (("Small", "small"),))
-    self.assertEqual(model_profile_choices(self.data, "big"), (("None — always use Active Small", ""), ("Big", "big")))
+    self.assertEqual(model_profile_choices(self.data, "big"), (("None – always use Active Small", ""), ("Big", "big")))
+    self.assertEqual(model_profile_choices(self.data | {"models": [self.small | {"label": "Small 👀📡"}]}, "small"), (("Small", "small"),))
     self.assertEqual(model_profile_request(self.data, "big", ""), {"profile": "big", "model": ""})
     self.assertIsNone(model_profile_request(self.data, "big", "small"))
     self.assertIsNone(model_profile_request(self.data, "small", "pending"))
@@ -154,6 +155,99 @@ class TestModelManager(unittest.TestCase):
     action = FeatureInput.target(1000, feature_row_top(state) + 288, state)
     self.assertEqual((action.kind, action.row.page), ("open", "models:small"))
     self.assertTrue(all(not row.available for row in state.rows[3:]))
+
+  def test_catalog_count_is_honest_and_download_rows_follow_the_owner(self):
+    status = ModelStatus(BUNDLED_CURRENT, None, None, ModelHealth.UNAVAILABLE, False, None, None)
+    data: dict[str, Any] = self.data | {"summary": {"installed": 2, "total": 4}}
+    state = model_page(status, data)
+    self.assertEqual(state.rows[0].value, "2 installed / 4 in catalog")
+    self.assertEqual([row.label for row in state.rows[3:6]], ["Download a model", "Download all missing", "Refresh catalog"])
+    # The only missing model needs a GPU this device lacks, and the fixture has no refresh capability.
+    self.assertEqual(model_download_choices(data), ())
+    self.assertFalse(any(row.available for row in state.rows[3:6]))
+    fetchable = {"value": "fetch", "label": "Fetch", "installed": False, "requiresGpu": False, "downloadAvailable": True}
+    data = data | {"models": data["models"] + [fetchable], "capabilities": data["capabilities"] | {"refresh": True}}
+    self.assertEqual(model_download_choices(data), (("Fetch (Small)", "fetch"),))
+    self.assertEqual(model_download_choices(data | {"models": data["models"] + [fetchable | {"value": "f2", "checking": True}]}),
+                     (("Fetch (Small)", "fetch"),))
+    self.assertEqual(model_download_choices(data | {"models": data["models"] + [fetchable | {"value": "f2"}]}),
+                     (("Fetch (Small) [fetch]", "fetch"), ("Fetch (Small) [f2]", "f2")))
+    self.assertEqual(model_page(status, data | {"progress": "Downloaded!"}).rows[0].reason, "Last job: Downloaded!")
+    self.assertEqual(model_download_choices(data | {"models": data["models"] + [self.missing | {"gpuAvailable": True}]}),
+                     (("Fetch (Small)", "fetch"), ("Missing (Big)", "missing")))
+    rows = model_page(status, data).rows
+    self.assertEqual([(row.page, row.available) for row in rows[3:6]],
+                     [("models:download", True), ("models:download_all", True), ("models:refresh_manifest", True)])
+    rows = model_page(status, data | {"isOnroad": True}).rows
+    self.assertFalse(any(row.available for row in rows[3:6]))
+    rows = model_page(status, data | {"downloading": True, "progress": "40%"}).rows
+    self.assertEqual([(row.label, row.value, row.available) for row in rows[3:6]],
+                     [("Download a model", "None to download", False), ("Cancel download", "40%", True), ("Refresh catalog", "Check for new models", False)])
+    self.assertEqual({row.reason for row in rows[1:3]}, {"Wait for the download to finish"})
+    rows = model_page(status, data | {"isOnroad": True, "downloading": True}).rows
+    self.assertEqual({row.reason for row in rows[1:3]}, {"Turn the vehicle off to change models"})
+
+  def _session(self, data):
+    from openpilot.starpilot.ui import runtime_app
+    session = runtime_app.StarShellSession.__new__(runtime_app.StarShellSession)
+    session._mode, session.selected = ShellMode.SETTINGS, Destination.DRIVING_MODEL
+    session._snapshot_cache = None
+    session.notice, session.notice_until = "", 0.0
+    session.model_manager_snapshot = mock.Mock(return_value=data)
+    session.model_manager_action = mock.Mock(return_value={})
+    session.model_snapshot = mock.Mock(side_effect=lambda: model_page(
+      ModelStatus(BUNDLED_CURRENT, None, None, ModelHealth.UNAVAILABLE, False, None, None), session.model_manager_snapshot()))
+    return session
+
+  def _open(self, session, page):
+    from openpilot.starpilot.ui.feature_settings_state import FeatureUiAction
+    row = next(row for row in session.model_snapshot().rows if row.page == page)
+    session._models_ui(FeatureUiAction("open", row))
+
+  def test_large_selector_with_no_installed_small_model_explains_instead_of_opening_empty(self):
+    session = self._session(self.data | {"models": [self.big, self.pending, self.missing]})
+    with mock.patch("openpilot.system.ui.lib.application.gui_app.push_widget") as push:
+      self._open(session, "models:small")
+    push.assert_not_called()
+    self.assertEqual(session.notice, "Unavailable: no installed Small model yet; use Download a model")
+    session = self._session(self.data | {"models": [self.big, self.small | {"installed": False, "selectable": False, "checking": True}]})
+    with mock.patch("openpilot.system.ui.lib.application.gui_app.push_widget") as push:
+      self._open(session, "models:small")
+    push.assert_not_called()
+    self.assertEqual(session.notice, "Unavailable: still checking installed models; try again")
+
+  def test_large_download_dialog_and_actions_recheck_a_fresh_snapshot(self):
+    from openpilot.system.ui.widgets import DialogResult
+    fetchable = {"value": "fetch", "label": "Fetch", "installed": False, "requiresGpu": False, "downloadAvailable": True}
+    data = self.data | {"models": self.data["models"] + [fetchable], "capabilities": self.data["capabilities"] | {"refresh": True}}
+    session = self._session(data)
+    with mock.patch("openpilot.system.ui.lib.application.gui_app.push_widget") as push, \
+         mock.patch("openpilot.system.ui.widgets.option_dialog.MultiOptionDialog") as dialog:
+      self._open(session, "models:download")
+      push.assert_called_once()
+      self.assertEqual(dialog.call_args.args[1], ["Fetch (Small)"])
+      callback = dialog.call_args.kwargs["callback"]
+      dialog.return_value.selection = "Fetch (Small)"
+      session.model_manager_snapshot.return_value = data | {"isOnroad": True}
+      callback(DialogResult.CONFIRM)
+      session.model_manager_action.assert_not_called()
+      session.model_manager_snapshot.return_value = data
+      callback(DialogResult.CANCEL)
+      session.model_manager_action.assert_not_called()
+      callback(DialogResult.CONFIRM)
+      session.model_manager_action.assert_called_once_with("download", {"model": "fetch"})
+    for page, kind in (("models:download_all", "download_all"), ("models:refresh_manifest", "refresh_manifest")):
+      session.model_manager_action.reset_mock()
+      self._open(session, page)
+      session.model_manager_action.assert_called_once_with(kind, {})
+    session.model_manager_snapshot.return_value = data | {"downloading": True}
+    session.model_manager_action.reset_mock()
+    self._open(session, "models:cancel")
+    session.model_manager_action.assert_called_once_with("cancel", {})
+    session.model_manager_action.side_effect = ValueError("manifest unreachable")
+    session.model_manager_snapshot.return_value = data
+    self._open(session, "models:refresh_manifest")
+    self.assertEqual(session.notice, "Unavailable: manifest unreachable")
 
   def test_compact_catalog_keeps_installation_and_exclusion_visible_first(self):
     session = mock.Mock()

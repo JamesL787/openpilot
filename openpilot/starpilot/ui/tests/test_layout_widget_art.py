@@ -37,7 +37,7 @@ def test_native_preview_sidebar_choice_is_strict_and_does_not_change_saved_layou
 
 
 def test_widget_art_registry_is_shared_with_native_and_projection_metadata():
-  from openpilot.starpilot.system.android_auto.projection_layout import layout_metadata_for_viewport
+  from openpilot.starpilot.system.starport.projection_layout import layout_metadata_for_viewport
   metadata = customization_metadata()['profiles']
   for profile, ids in RUNTIME_PREVIEW_WIDGETS.items():
     assert metadata[profile]['runtimePreviewWidgets'] == list(ids)
@@ -124,7 +124,7 @@ def test_large_wheel_art_is_drawn_inside_its_crop_with_or_without_sidebar(monkey
   from openpilot.starpilot.ui.onroad import OnroadView
   from openpilot.starpilot.ui.onroad_large_widgets import SteeringWheelWidget
   from openpilot.starpilot.ui.presentation import Profile
-  from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, projection_customization
+  from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport, projection_customization
 
   document = default_document()
   positions = document['layouts']['large']

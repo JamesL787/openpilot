@@ -383,7 +383,7 @@ class Runtime:
       return None, None, None
     self.last_ui_sequence = request.sequence_id
     shown = self.state.acceptance.presentation
-    if request.kind == 'adopt' and (shown is None or shown.presentation_id != request.presentation_id):
+    if shown is None or shown.presentation_id != request.presentation_id:
       return None, None, None
     action_id = self.ledger.last_action_id + 1
     context = self.state.override.context
@@ -426,6 +426,7 @@ class Runtime:
       self.ledger = completed.state
     commanded_before = self.commanded_acceptance
     command = self._command(result, sm, now_ns, old_pending, action, adopt)
+    result = replace(result, state=self.state)
     message = self._message(now_ns, result, sm, frame)
     if command is not None and (request is not None or commanded_before != self.commanded_acceptance):
       self._command_ui_sequence = request.sequence_id if request is not None else 0

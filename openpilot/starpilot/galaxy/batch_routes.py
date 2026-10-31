@@ -66,7 +66,7 @@ def preview_layout(self, payload, projection_layout_owner, layout_owner, layout_
     return
   try:
     if payload['profile'] == 'projection':
-      from openpilot.starpilot.system.android_auto.projection_layout import validate_layout
+      from openpilot.starpilot.system.starport.projection_layout import validate_layout
       from openpilot.starpilot.ui.onroad_customization import read_customization
       snapshot = projection_layout_owner().snapshot()
       if not snapshot['available']:

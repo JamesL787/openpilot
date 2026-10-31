@@ -11,7 +11,7 @@ from openpilot.starpilot.soloist.paths import Layout, private_dir
 ADDRESS = re.compile(r'^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$')
 NAME = re.compile(r'^[^\x00-\x1f\x7f]{1,40}$')
 CACHE_CHOICES = (100, 256, 512, 1024)
-OUTPUTS = ('bluetooth', 'android_auto', 'test')
+OUTPUTS = ('bluetooth', 'starport', 'test')
 MUTE_MAX = 1.5
 
 
@@ -20,7 +20,7 @@ class Preferences:
   device_name: str = 'StarPilot'
   cache_mb: int = 256
   initial_volume: int = 100
-  output: str = 'bluetooth'           # or 'android_auto' (the car's media channel), or 'test' (a silent sink)
+  output: str = 'bluetooth'           # or 'starport' (the car's media channel), or 'test' (a silent sink)
   output_address: str = ''
   output_name: str = ''
   source: str = 'spotify'
@@ -44,6 +44,7 @@ def _mute(value: object) -> float:
 
 
 def validated(values: dict) -> Preferences:
+  values = {**values, 'output': 'starport' if values.get('output') == 'android_auto' else values.get('output', 'bluetooth')}
   prefs = Preferences(**values)
   name = prefs.device_name.strip() if isinstance(prefs.device_name, str) else ''
   if not NAME.fullmatch(name):

@@ -15,6 +15,7 @@ from typing import Protocol, cast
 
 from openpilot.starpilot.ui.feature_settings_owner import FeatureSettingsOwner
 from openpilot.starpilot.galaxy.setting_descriptions import description
+from openpilot.starpilot.galaxy.localization_settings import LocalizationSettingsOwner
 from openpilot.starpilot.ui.controller_feature import SETUP_ACTION, SETUP_QUESTION
 from openpilot.starpilot.ui.vehicle_bool import VEHICLE_BOOL_KEYS, confirmation_question as vehicle_question
 from openpilot.starpilot.ui.conditional_feature import confirmation_question as conditional_question
@@ -37,7 +38,8 @@ from openpilot.starpilot.ui.sentry_owner import RESET as SENTRY_RESET, SentryOwn
 from openpilot.starpilot.ui.vasm_owner import ANNOTATION as VASM_ANNOTATION, RESET as VASM_RESET, VASMOwner, validated_annotation
 
 
-PAGES = frozenset(("hub", "developer", "vehicle", "slc", "lane", "lane_change", "profiles", "traffic", "aggressive", "standard", "relaxed",
+PAGES = frozenset(("hub", "localization", "developer", "vehicle", "slc", "lane", "lane_change", "profiles", "personalities",
+                   "traffic", "aggressive", "standard", "relaxed",
                    "curve", "torque", "aol", "wheel", "appearance", "display", "data", "sounds", "pip", "sentry", "vasm",
                    "conditional", "conditional/cem", "conditional/ccm", "night_star",
                    *(f"{name}/{category}" for name in ("traffic", "aggressive", "standard", "relaxed")
@@ -56,6 +58,7 @@ CAR_CONTROL_SECTIONS = (
   ("visual", "Visual (Display & UI)", ("appearance", "pip")),
   ("sounds", "Sounds & Alerts", ("sounds",)),
   ("device", "Device & Data", ("display", "data")),
+  ("localization", "Localization", ("localization",)),
   ("developer", "Developer", ("developer",)),
 )
 
@@ -136,7 +139,7 @@ def _onroad_preference(page: str, key: str) -> bool:
   # multi-key reset/repair operations need the offroad transaction boundary;
   # their owners independently recheck that requirement at commit time.
   return bool(page != "developer" and key and key != SETUP_ACTION and key not in (
-    "AlphaLongitudinalEnabled", "reset_profiles", "curve_reset", "slc_adopt", "slc_reset",
+    "IsRhdDetected", "AlphaLongitudinalEnabled", "reset_profiles", "curve_reset", "slc_adopt", "slc_reset",
     "conditional:reset", "conditional:manual_reset",
   ) and not is_long_confirm_action(key) and not key.startswith("torque_repair:"))
 
@@ -468,11 +471,11 @@ def _question(row: FeatureRow, request: FeatureSettingsRequest) -> str:
 
 
 class SettingsGateway:
-  def __init__(self, params, context: ContextSource | None = None, *, clock=time.monotonic, android_auto=None):
+  def __init__(self, params, context: ContextSource | None = None, *, clock=time.monotonic, starport=None):
     self.params = params
     self.context = context if context is not None else LiveContextSource(params)
     self.clock = clock
-    self.android_auto = android_auto
+    self.starport = starport
     self.lock = threading.Lock()
     self.views: dict[str, _View] = {}
     self.intents: dict[str, _Intent] = {}
@@ -587,9 +590,19 @@ class SettingsGateway:
       return bool(fresh.parked and not fresh.editing_saved_vehicle and fresh.cp_raw == ctx.cp_raw)
     return DeveloperSettingsOwner(self.params, authorized,
                                   panda_wake=self._owner(ctx, live=live, session_valid=session_valid).panda_wake,
-                                  android_auto=self.android_auto)
+                                  starport=self.starport)
+
+  def _localization_owner(self, ctx: AuthorityContext, *, live: bool = False,
+                          session_valid: Callable[[], bool] = lambda: True) -> LocalizationSettingsOwner:
+    def authorized() -> bool:
+      return session_valid()
+    def parked() -> bool:
+      return session_valid() and (self.context.sample() if live else ctx).parked
+    return LocalizationSettingsOwner(self.params, authorized, parked)
 
   def _state(self, page: str, ctx: AuthorityContext):
+    if page == "localization":
+      return self._localization_owner(ctx).snapshot()
     if page == "developer":
       return self._developer_owner(ctx).snapshot()
     if page == "appearance":
@@ -815,6 +828,8 @@ class SettingsGateway:
       return self._sentry_owner(ctx, live=True, session_valid=session_valid).apply(intent.request)
     if intent.page == "vasm":
       return self._vasm_owner(ctx, live=True, session_valid=session_valid).apply(intent.request)
+    if intent.page == "localization":
+      return self._localization_owner(ctx, live=True, session_valid=session_valid).apply(intent.request)
     if intent.page == "developer":
       return self._developer_owner(ctx, live=True, session_valid=session_valid).apply(intent.request)
     owner = self._owner(ctx, live=True, session_valid=session_valid)

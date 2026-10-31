@@ -951,7 +951,7 @@ def test_stopped_timer_draws_inside_its_moved_widget():
 
 def test_projection_timer_renders_at_saved_coordinates_without_native_timer_enabled():
   from openpilot.starpilot.ui import onroad
-  from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, projection_customization
+  from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport, projection_customization
   layout = default_layout_for_viewport((2880, 1080))
   layout['widgets'][STOPPED_TIMER_WIDGET].update(enabled=True, x=450, y=600)
   document = projection_customization(layout, default_document())

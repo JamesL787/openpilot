@@ -66,7 +66,8 @@ def test_live_offset_edits_keep_the_accepted_limit_and_native_ceiling(tmp_path, 
   assert runtime is not None
   drive.runtime = runtime
   first, _, _ = drive.step(0)
-  output, _, _ = drive.step(50, request=Action(runtime.session_id, 1, first.message.slcState.decisionId, 0, 'accept') if confirm else None)
+  output, _, _ = drive.step(50, request=Action(runtime.session_id, 1, first.message.slcState.decisionId,
+                                             first.message.slcState.presentationId, 'accept') if confirm else None)
   accepted = output.result.state.acceptance.accepted
   session = runtime.session_id
   for milliseconds, offset in ((1000, 5), (2000, -5)):
@@ -97,7 +98,7 @@ def test_offset_edits_invalidate_old_prompts_without_accepting_a_new_limit(tmp_p
   drive.runtime = runtime
   first, _, _ = drive.step(0)
   if accepted_first:
-    drive.step(50, request=Action(runtime.session_id, 1, first.message.slcState.decisionId, 0, 'accept'))
+    drive.step(50, request=Action(runtime.session_id, 1, first.message.slcState.decisionId, first.message.slcState.presentationId, 'accept'))
   old, _, _ = drive.step(100, limit=50)
   old_id = old.message.slcState.decisionId
   params.put('SLCOffsetSchedule', od.to_value(od.adopt_legacy(False, (0, 0, 0, 5, 0, 0, 0))), block=True)
@@ -120,9 +121,9 @@ def test_offset_edits_preserve_rejected_limits(tmp_path):
   assert runtime is not None
   drive.runtime = runtime
   first, _, _ = drive.step(0)
-  drive.step(50, request=Action(runtime.session_id, 1, first.message.slcState.decisionId, 0, 'accept'))
+  drive.step(50, request=Action(runtime.session_id, 1, first.message.slcState.decisionId, first.message.slcState.presentationId, 'accept'))
   proposed, _, _ = drive.step(100, limit=50)
-  drive.step(150, limit=50, request=Action(runtime.session_id, 2, proposed.message.slcState.decisionId, 0, 'reject'))
+  drive.step(150, limit=50, request=Action(runtime.session_id, 2, proposed.message.slcState.decisionId, proposed.message.slcState.presentationId, 'reject'))
   rejected = runtime.state.acceptance.rejected
   params.put('SLCOffsetSchedule', od.to_value(od.adopt_legacy(False, (0, 0, 0, 5, 0, 0, 0))), block=True)
   assert lifecycle.refresh(NOW + 1_000_000_000)[0] is runtime
@@ -206,7 +207,8 @@ def test_compact_rejection_or_timeout_keeps_set_speed_until_explicit_adoption(tm
   drive.runtime = Runtime(read_params(params))
   drive.ui.is_metric = metric
   first, _, _ = drive.step(0)
-  approved, _, target = drive.step(50, request=Action(drive.runtime.session_id, 1, first.message.slcState.decisionId, 0, 'accept'))
+  approved, _, target = drive.step(50, request=Action(drive.runtime.session_id, 1, first.message.slcState.decisionId,
+                                                    first.message.slcState.presentationId, 'accept'))
   accepted = approved.result.state.acceptance.accepted
   assert target == pytest.approx(published_cruise_mph(50, metric=metric), rel=0, abs=1e-10)
 
@@ -308,7 +310,7 @@ def test_long_gap_confirmation_and_recovery_keep_the_accepted_limit(tmp_path, an
   drive = RetentionDrive(tmp_path, confirm=True)
   first, _, _ = drive.step(0)
   assert first.message.slcState.hasPending and not first.message.slcState.hasAccepted
-  drive.step(50, request=Action(drive.runtime.session_id, 1, first.message.slcState.decisionId, 0, 'accept'))
+  drive.step(50, request=Action(drive.runtime.session_id, 1, first.message.slcState.decisionId, first.message.slcState.presentationId, 'accept'))
   _, _, target = drive.step(100, status='noCoverage')
   assert target == pytest.approx(published_cruise_mph(45), rel=0, abs=1e-10)
   _, view, target = drive.step(35_000, received=False)
@@ -316,7 +318,8 @@ def test_long_gap_confirmation_and_recovery_keep_the_accepted_limit(tmp_path, an
   assert resolve_unified_speed(view).status == 'Unavailable'
   pending, _, target = drive.step(40_000, limit=limit, wayId=124)
   assert target == pytest.approx(published_cruise_mph(45), rel=0, abs=1e-10) and pending.message.slcState.hasPending
-  action = None if answer == 'timeout' else Action(drive.runtime.session_id, 2, pending.message.slcState.decisionId, 0, answer)
+  action = None if answer == 'timeout' else Action(drive.runtime.session_id, 2, pending.message.slcState.decisionId,
+                                                 pending.message.slcState.presentationId, answer)
   drive.step(71_000 if answer == 'timeout' else 40_050, limit=limit, wayId=124, request=action)
   output, view, target = drive.step(300_000, received=False)
   assert target == pytest.approx(published_cruise_mph(limit if answer == 'accept' else 45), rel=0, abs=1e-10)
@@ -332,7 +335,8 @@ def test_long_gap_confirmation_and_recovery_keep_the_accepted_limit(tmp_path, an
 def test_unchanged_map_speed_does_not_accept_new_identity_or_keep_old_prompt(tmp_path):
   drive = RetentionDrive(tmp_path, confirm=True)
   first, _, _ = drive.step(0)
-  accepted, _, _ = drive.step(50, request=Action(drive.runtime.session_id, 1, first.message.slcState.decisionId, 0, 'accept'))
+  accepted, _, _ = drive.step(50, request=Action(drive.runtime.session_id, 1, first.message.slcState.decisionId,
+                                               first.message.slcState.presentationId, 'accept'))
   unchanged, _, target = drive.step(100, wayId=124)
   assert target == pytest.approx(published_cruise_mph(45), rel=0, abs=1e-10)
   assert not unchanged.message.slcState.hasPending

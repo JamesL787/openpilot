@@ -318,7 +318,7 @@ SConscript([
 
 if arch == "comma_arm64":
   SConscript(['openpilot/system/camerad/SConscript'])
-  SConscript(['openpilot/starpilot/system/android_auto/SConscript'])
+  SConscript(['openpilot/starpilot/system/starport/SConscript'])
 
 # Build selfdrive
 SConscript([

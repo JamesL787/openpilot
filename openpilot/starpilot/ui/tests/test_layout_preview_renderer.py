@@ -58,7 +58,7 @@ class LayoutPreviewRendererTests(unittest.TestCase):
       sidebar.assert_not_called()
 
   def test_native_and_projection_previews_supply_timer_sample(self):
-    from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport
+    from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport
     from openpilot.starpilot.ui.layout_preview_transport import SCENES
     from openpilot.starpilot.ui.onroad_customization import STOPPED_TIMER_WIDGET
     native = default_document()
@@ -88,7 +88,7 @@ class LayoutPreviewRendererTests(unittest.TestCase):
         renderer.close()
 
   def test_big_and_projection_previews_supply_route_and_timer_samples_but_compact_does_not(self):
-    from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport
+    from openpilot.starpilot.system.starport.projection_layout import default_layout_for_viewport
     from openpilot.starpilot.ui.onroad_customization import STOPPED_TIMER_WIDGET
     native = default_document()
     native['layouts']['large'][STOPPED_TIMER_WIDGET]['enabled'] = True

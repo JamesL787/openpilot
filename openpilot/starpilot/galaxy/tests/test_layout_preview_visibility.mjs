@@ -41,10 +41,10 @@ try {
     assert.equal(reopened.previewHidden("current_speed"), false, "Eye preferences do not leak between scenes")
     assert.equal(reopened.previewHidden("stopped_timer"), true)
   }
-  const aa = editor(true)
+  const starport = editor(true)
   const before = [...saved]
-  aa.togglePreviewVisibility("car_exit")
-  assert.equal(aa.previewHidden("car_exit"), false)
+  starport.togglePreviewVisibility("car_exit")
+  assert.equal(starport.previewHidden("car_exit"), false)
   assert.deepEqual([...saved], before)
 
   saved.delete('gx-layout-preview-visibility-v2:comma')

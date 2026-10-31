@@ -110,11 +110,11 @@ export const GalaxyPage = {
       </GxNotice>
       <GxState v-if="mode !== 'local'">Connect to your comma to set up remote access.</GxState>
       <GxState v-else-if="loading" loading>Checking pairing status…</GxState>
-      <ol v-else class="gx-aa__steps">
-        <li class="gx-card gx-aa-step" :class="{'gx-aa-step--done': paired}">
-          <div class="gx-aa-step__head"><span class="gx-aa-step__num" aria-hidden="true"><i v-if="paired" class="bi bi-check-lg"></i><template v-else>1</template></span>
+      <ol v-else class="gx-starport__steps">
+        <li class="gx-card gx-starport-step" :class="{'gx-starport-step--done': paired}">
+          <div class="gx-starport-step__head"><span class="gx-starport-step__num" aria-hidden="true"><i v-if="paired" class="bi bi-check-lg"></i><template v-else>1</template></span>
             <div><h3>Remote pairing</h3><p>Pair your comma to get a secure Galaxy link.</p></div></div>
-          <div class="gx-aa-step__body">
+          <div class="gx-starport-step__body">
             <template v-if="paired">
               <GxNotice v-if="!tunnelClientAvailable" tone="warn">The remote tunnel client is unavailable. Your link will work when it is installed.</GxNotice>
               <BluetoothNotice v-if="bluetooth" feature="Galaxy QR code">Your Galaxy link remains available below.</BluetoothNotice>
@@ -137,10 +137,10 @@ export const GalaxyPage = {
             <GxNotice tone="danger" v-if="error">{{ error }}</GxNotice>
           </div>
         </li>
-        <li class="gx-card gx-aa-step">
-          <div class="gx-aa-step__head"><span class="gx-aa-step__num" aria-hidden="true">2</span>
+        <li class="gx-card gx-starport-step">
+          <div class="gx-starport-step__head"><span class="gx-starport-step__num" aria-hidden="true">2</span>
             <div><h3>Install Galaxy</h3><p>Launch Galaxy from your home screen or desktop.</p></div></div>
-          <div class="gx-aa-step__body"><InstallApp :url="url" :update-available="appUpdateAvailable" />
+          <div class="gx-starport-step__body"><InstallApp :url="url" :update-available="appUpdateAvailable" />
             <p v-if="availableAppVersion && !ios">Android offline app version: <strong>{{ availableAppVersion }}</strong><span v-if="installedAppVersion"> · {{ nativeVersion ? 'Installed' : 'Connected phone' }}: {{ installedAppVersion }}</span></p>
             <p v-if="!ios"><strong>Android users:</strong> join the Android beta on Google Groups to get the app for use over Galaxy Wi-Fi or your local network without Internet.</p>
             <LocalAccess v-if="!ios" :mode="mode" :on-unauthorized="unauthorized" />

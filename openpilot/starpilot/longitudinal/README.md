@@ -12,10 +12,11 @@ Policy order matters. Target shaping precedes PID preparation; vehicle output sh
 
 `LongitudinalPlanner.update(sm, *, cruise_ceiling=None, profile_tuning=None)` accepts an optional
 `CruiseCeiling(speed_mps, authority)` in addition to the existing driver cruise
-message. The default caller supplies no ceiling. The planner still reads
+message. The live caller supplies no ceiling. The planner still reads
 `carState.vCruise` for the driver's selected ceiling and leaves every supplied
-Cap'n Proto message unchanged. The opt-in SLC runtime in `plannerd` supplies
-the ceiling after source, acceptance and authority qualification.
+Cap'n Proto message unchanged. [SLC](../speed_limits/README.md) adopts accepted
+limits into Card's ordinary cruise SET; it supplies no additional planner ceiling.
+The optional input remains available to explicit callers and replay tests.
 
 The `CruiseCeiling` dataclass validates no source or acceptance history by
 construction. Its caller must first establish a fresh, accepted, normalized
@@ -31,13 +32,10 @@ The planner records the decision in `last_cruise_ceiling_status`; it does not
 publish that diagnostic or alter the longitudinal plan schema.
 
 This optional input changes only the cruise candidate before the planner's
-existing jerk limiting. A qualified SLC ceiling below driver cruise uses the
-frozen coast window above 4 m/s to soften only that candidate's
-braking floor. An enabled, validated named Eco or Sport braking personality
-selects its original window and coast floor; custom and default personalities
-use Standard. A relevant braking lead, stop intent, force deceleration or
-throttle veto retains its ordinary floor; Traffic's separate floor is unchanged.
-The native MPC, lead, e2e, stop and acceleration
+existing jerk limiting. SLC uses the ordinary cruise braking response and selected
+profile after its SET adoption. Lead-relevance checks still prevent cruise comfort
+tuning from weakening braking for a close, slow or braking lead; malformed lead
+evidence also vetoes that tuning. The native MPC, lead, e2e, stop and acceleration
 arbitration remain in place. An inactive planner may still compute a nonzero
 target; the host owns actuation gating. Stock setpoint control has a different
 output domain.
@@ -64,8 +62,9 @@ tests establishes the bounded planner input behavior, not vehicle qualification.
 An exact tagged Ioniq 6 system-longitudinal session starts saved personality
 settings when their validated document is present. The
 `LONG_PLANNER_REPLAY_RUNTIME=1` development flag remains available for replay.
-Fresh installations retain the native planner: `CustomPersonalities` defaults
-off, and the new input is absent unless the driver explicitly opts in. Existing
+Fresh installations leave Custom Following and Jerk (`CustomPersonalities`)
+off. Selected acceleration and deceleration profiles apply independently:
+their fresh defaults are StarPilot Default and Comfort, respectively. Existing
 saved follow and jerk values keep their frozen
 names, units and defaults. The strict versioned profile document migrates
 supported older versions, rejects malformed persisted values, and may choose
@@ -81,8 +80,8 @@ acceleration upper bound and jerk costs, plus the cruise candidate's
 acceleration/braking limits. It cannot widen the native car acceleration range.
 Valid saved curves above native acceleration bounds are intersected with those
 bounds without dropping their other tuning or rewriting the saved document.
-Lead, e2e and SLC candidates still arbitrate normally. A lower accepted SLC
-ceiling retains at least native cruise braking even when a saved profile asks
+Lead, e2e and cruise candidates still arbitrate normally. A lower explicit
+cruise or curve ceiling retains at least native cruise braking even when a saved profile asks
 for a softer approach; stronger configured braking may still apply.
 `forceDecel` keeps the native cruise braking response. Stock ACC and lateral-only control receive
 no profile effect. The acados model and cereal schemas are unchanged.
@@ -92,27 +91,45 @@ Traffic known active, base follow and all five jerk values interpolate over
 0–25 m/s from the Traffic value to the Relaxed low-speed value; the frozen
 Traffic defaults apply even when Custom Personalities is off. Traffic also
 uses the frozen seven-point acceleration ceiling and 0.42 m/s² cruise-braking
-magnitude before intersection with native limits. Saved Traffic following,
-acceleration and braking categories replace their respective defaults only
-when the master, document and Traffic profile are enabled. Historical v3
+magnitude as its base defaults. Selected acceleration and braking profiles
+follow the inheritance rules below. Saved Traffic following and preserved
+legacy acceleration/braking curves retain their master, document and Traffic
+profile gates. Historical v3
 Traffic braking as low as 0.35 m/s² is admitted only for a Traffic target;
 ordinary profiles retain their 0.5 m/s² lower bound. A fresh explicit Traffic OFF
 immediately changes the status and fades following, jerk, acceleration and
 cruise-braking values toward the ordinary native personality;
 unknown or stale Traffic authority clears the applied profile immediately.
-Ordinary personalities keep their existing 45/70 mph follow curve. The saved
-Long Planner document also carries an independent global braking response.
-Standard is the default and preserves the native cruise floor; choosing Eco
-or Sport requests the frozen -0.6 or -2.4 m/s² cruise floor and matching SLC
-coast style without enabling Custom Personalities. A validated personality
-braking category, then Traffic, takes priority. A braking-relevant lead,
-force deceleration or stop context returns the global choice to native
-braking; a lower accepted speed ceiling retains at least native approach
-braking. MPC lead and e2e candidates still arbitrate. The original global preference
-defaulted to Eco when Longitudinal Tune was on; the migrated selector defaults
-to Standard to preserve current driving output. Frozen weather, Traffic
-hazard-context braking and other vehicle-special-case policies remain outside
-this slice. The current
+Ordinary personalities keep their existing 45/70 mph follow curve. The global
+**Selected Deceleration Profile** and explicit personality braking presets use
+different historical scales:
+
+| UI selection | Global or inherited through Selected Profile | Explicit personality preset |
+| --- | --- | --- |
+| Comfort (`eco`) | 0.6 m/s² | 0.5 m/s² |
+| Normal (`standard`) | 1.2 m/s² | 1.0 m/s² |
+| Sport (`sport`) | 2.4 m/s² | 2.0 m/s² |
+
+These are positive deceleration magnitudes for ordinary cruise braking,
+including an SLC change to cruise SET. Global values preserve the historical
+1.2 m/s² baseline with half/normal/double responses; explicit personality
+presets retain their original physical values. The distinction preserves
+existing tuning and saved-document compatibility.
+
+Comfort is the fresh global default. A personality set to **Selected Profile**
+inherits the global choice; an explicit preset or Custom curve overrides it.
+For example, changing from inherited global Sport to explicit personality
+Sport changes the cruise braking magnitude from 2.4 to 2.0 m/s².
+**StarPilot Default** uses the existing native/profile path rather than either
+named scale. Existing saved selections, custom curves and migration gates
+keep their original meaning.
+
+A braking-relevant lead, force deceleration or stop context prevents the
+selected response from replacing native hazard handling. A lower explicit
+cruise or curve ceiling retains at least native approach braking. MPC lead and
+e2e candidates still arbitrate and may demand stronger braking; the table is
+not a limit on their braking. Frozen weather, Traffic hazard-context braking
+and other vehicle-special-case policies remain outside this slice. The current
 effective StarPilot follow floor is 0.5 s, matching saved profile admission.
 Stock planner following remains independent of StarPilot preferences. The
 6 m stopping distance and braking-distance guard remain unchanged. Offline native tests compare the committed planner and MPC outputs

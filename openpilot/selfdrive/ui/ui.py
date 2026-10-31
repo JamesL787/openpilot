@@ -16,8 +16,10 @@ from openpilot.starpilot.ui.startup import select_ui
 BIG_UI = gui_app.big_ui()
 
 
-def update_frame(preview=None, controllers=None, star=None, game_mode=None):
+def update_frame(preview=None, controllers=None, star=None, game_mode=None, arabesque=None):
   gui_app.measure_frame_phase("ui_state", ui_state.update)
+  if arabesque is not None:
+    arabesque()
   if star is not None:
     # Android Auto bookmarks must be consumed even when the comma screen is off
     # or another widget covers the StarPilot page.
@@ -70,7 +72,8 @@ def main():
   pm = messaging.PubMaster(['uiDebug'])
   star = layout.star if star_ui else None
   try:
-    for should_render, frame_time, cpu_time in gui_app.render(before_frame=lambda: update_frame(preview, controllers, star, poll_game_mode)):
+    poll_arabesque = layout.poll_arabesque if BIG_UI else None
+    for should_render, frame_time, cpu_time in gui_app.render(before_frame=lambda: update_frame(preview, controllers, star, poll_game_mode, poll_arabesque)):
       if should_render:
         if camera_core_ui and not main_thread_configured:
           # Share the camera core with normal scheduling, without FIFO display

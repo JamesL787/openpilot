@@ -42,7 +42,7 @@ def shell(monkeypatch):
   monkeypatch.setattr(terminal, 'gui_label', Mock())
   monkeypatch.setattr(terminal.Terminal, 'show_event', lambda self: None)
   for name in ('draw_rectangle_rec', 'draw_rectangle_rounded', 'draw_rectangle_rounded_lines_ex', 'draw_line_ex', 'draw_ring',
-               'draw_circle_v', 'draw_triangle', 'draw_ellipse', 'begin_scissor_mode', 'end_scissor_mode'):
+               'draw_circle_v', 'draw_triangle', 'draw_ellipse', 'draw_ellipse_lines', 'begin_scissor_mode', 'end_scissor_mode'):
     monkeypatch.setattr(rl, name, lambda *a: None)
   return ArabesqueLayout(Mock())
 
@@ -110,8 +110,8 @@ def test_layout_anchors_and_touch_targets(shell, bounds):
   assert dock.y + dock.height < rect.y + rect.height
   assert dock.width >= 44 and dock.height >= 44
   frame(shell)
-  captions = [call.args[0] for call in desktop.gui_label.call_args_list if call.args[1] in ('Terminal', 'Files', 'Rebecca')]
-  assert len(captions) == 3
+  captions = [call.args[0] for call in desktop.gui_label.call_args_list if call.args[1] in ('Terminal', 'Files', 'Rebecca', 'Firefox')]
+  assert len(captions) == 4
   for (target, _, _), caption in zip(shell._launchers, captions, strict=True):
     icon_x, icon_y = target.x + target.width / 2, dock.y + 72 * shell._scale
     assert caption.x + caption.width / 2 == pytest.approx(icon_x)
@@ -414,6 +414,31 @@ def test_shutdown_closes_active_tool_once(main, probe):
   main.layout.close()
   assert view._active_tool is None
   probe.hide_event.assert_called_once()
+
+
+def test_authority_revocation_closes_tool_without_rendering(main, probe):
+  main.layout._open_arabesque()
+  view = main.layout._layouts[main.state.ARABESQUE]
+  frame(main.layout)
+  view._open_tool('Probe', probe)
+  main.ui.started = True
+  main.layout.poll_arabesque()
+  assert main.layout._current_mode == main.state.ONROAD
+  assert view._active_tool is None
+  probe.hide_event.assert_called_once()
+
+
+def test_covering_widget_pauses_arabesque_runtime_without_rendering(main, monkeypatch):
+  main.layout._open_arabesque()
+  view = main.layout._layouts[main.state.ARABESQUE]
+  view.poll_runtime = Mock()
+  main.native.device.awake = True
+  monkeypatch.setattr(gui_app, 'get_active_widget', lambda: object())
+  main.layout.poll_arabesque()
+  view.poll_runtime.assert_called_once_with(False)
+  monkeypatch.setattr(gui_app, 'get_active_widget', lambda: main.layout)
+  main.layout.poll_arabesque()
+  view.poll_runtime.assert_called_with(True)
 
 
 def test_repeated_entry_exit_reuses_view_and_never_runs_it_closed(main):

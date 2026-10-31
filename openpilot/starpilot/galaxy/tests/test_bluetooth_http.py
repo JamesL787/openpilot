@@ -55,9 +55,9 @@ class BluetoothHttpTest(unittest.TestCase):
     self.access = access
     self.bluetooth = FakeBluetooth()
     # Never inherit the host's AA setting or delegate into a live supervisor.
-    aa_setup = mock.Mock()
-    aa_setup.enabled.return_value = False
-    self.server = make_server(port=0, owner=access, bluetooth=self.bluetooth, android_auto_setup=aa_setup)
+    starport_setup = mock.Mock()
+    starport_setup.enabled.return_value = False
+    self.server = make_server(port=0, owner=access, bluetooth=self.bluetooth, starport_setup=starport_setup)
     self.worker = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
     self.worker.start()
     self.addCleanup(self.stop)
@@ -82,9 +82,9 @@ class BluetoothHttpTest(unittest.TestCase):
 
   def test_accept_pair_opens_a_window_and_prepares_the_music_receiver(self):
     self.stop()
-    aa_setup = mock.Mock()
-    aa_setup.enabled.return_value = False
-    self.server = make_server(port=0, owner=self.access, bluetooth=self.bluetooth, android_auto_setup=aa_setup, parked=lambda: True)
+    starport_setup = mock.Mock()
+    starport_setup.enabled.return_value = False
+    self.server = make_server(port=0, owner=self.access, bluetooth=self.bluetooth, starport_setup=starport_setup, parked=lambda: True)
     self.worker = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
     self.worker.start()
     _, _, headers = self.request('/api/auth/login', {'password': 'password123'})
@@ -101,9 +101,9 @@ class BluetoothHttpTest(unittest.TestCase):
   def test_the_music_window_also_opens_and_closes_the_app_claim(self):
     from openpilot.starpilot.galaxy_bluetooth.bridge import claim
     self.stop()
-    aa_setup = mock.Mock()
-    aa_setup.enabled.return_value = False
-    self.server = make_server(port=0, owner=self.access, bluetooth=self.bluetooth, android_auto_setup=aa_setup, parked=lambda: True)
+    starport_setup = mock.Mock()
+    starport_setup.enabled.return_value = False
+    self.server = make_server(port=0, owner=self.access, bluetooth=self.bluetooth, starport_setup=starport_setup, parked=lambda: True)
     self.worker = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
     self.worker.start()
     _, _, headers = self.request('/api/auth/login', {'password': 'password123'})
@@ -122,9 +122,9 @@ class BluetoothHttpTest(unittest.TestCase):
 
   def test_forgetting_a_device_also_forgets_its_app_key(self):
     self.stop()
-    aa_setup = mock.Mock()
-    aa_setup.enabled.return_value = False
-    self.server = make_server(port=0, owner=self.access, bluetooth=self.bluetooth, android_auto_setup=aa_setup, parked=lambda: True)
+    starport_setup = mock.Mock()
+    starport_setup.enabled.return_value = False
+    self.server = make_server(port=0, owner=self.access, bluetooth=self.bluetooth, starport_setup=starport_setup, parked=lambda: True)
     self.worker = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
     self.worker.start()
     _, _, headers = self.request('/api/auth/login', {'password': 'password123'})

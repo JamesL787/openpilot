@@ -77,8 +77,9 @@ def vision_slc_development(started: bool, params: Params, CP: car.CarParams) -> 
 def galaxy_local(started: bool, params: Params, CP: car.CarParams) -> bool:
   return os.getenv("STARPILOT_GALAXY_DISABLE") != "1"
 
-def android_auto_enabled(started: bool, params: Params, CP: car.CarParams) -> bool:
-  return COMMA_HARDWARE and platform.system() == "Linux" and params.get_bool("AndroidAutoEnabled")
+def starport_enabled(started: bool, params: Params, CP: car.CarParams) -> bool:
+  from openpilot.starpilot.system.starport.settings import enabled
+  return COMMA_HARDWARE and platform.system() == "Linux" and enabled(params)
 
 def spotify_enabled(started: bool, params: Params, CP: car.CarParams) -> bool:
   from openpilot.starpilot.soloist.paths import enabled
@@ -160,7 +161,7 @@ procs = [
                 enabled=COMMA_HARDWARE and not os.environ.get('OPENPILOT_PREFIX'), restart_on_exit=True),
   JetlinkProcess("jetlinkd", "openpilot.starpilot.models.jetlink_adapter", jetlink_enabled, enabled=COMMA_HARDWARE,
                  restart_on_exit=True),
-  PythonProcess("android_autod", "openpilot.starpilot.system.android_auto.daemon", android_auto_enabled, enabled=COMMA_HARDWARE,
+  PythonProcess("starportd", "openpilot.starpilot.system.starport.daemon", starport_enabled, enabled=COMMA_HARDWARE,
                 restart_on_exit=True),  # boot can race bluetoothd (NoSuchUnit)
   PythonProcess("spotifyd", "openpilot.starpilot.soloist.supervisor", spotify_enabled, enabled=COMMA_HARDWARE, restart_on_exit=True),
   # Boot can race the audio device; selfdrived blocks engagement while soundd is down.

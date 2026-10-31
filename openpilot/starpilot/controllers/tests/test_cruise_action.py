@@ -12,6 +12,7 @@ from opendbc.car.toyota import toyotacan
 from openpilot.selfdrive.car.cruise import VCruiseHelper, V_CRUISE_MAX, V_CRUISE_MIN
 from openpilot.starpilot.controllers.cruise_action import CruiseActionPublisher, CruiseActionConsumer
 from openpilot.starpilot.controllers.toyota_cruise import capability, ToyotaCruisePreference
+from openpilot.starpilot.longitudinal.cruise_intervals import CruiseIntervals, read_cruise_intervals
 from openpilot.starpilot.ui.feature_settings_owner import FeatureSettingsOwner
 from openpilot.starpilot.ui.feature_settings_state import FeaturePage, FeatureSettingsRequest, row_change
 
@@ -183,3 +184,15 @@ class TestControllerCruise(unittest.TestCase):
       vehicle.pcmCruise=True
       vehicle.openpilotLongitudinalControl=False
       self.assertIsNone(capability(vehicle))
+
+  def test_toyota_native_and_software_steps_share_saved_value_validation(self):
+    with tempfile.TemporaryDirectory() as directory:
+      params = Params(directory)
+      vehicle = cp(True, 'toyota')
+      for choice, safe, expected in ((b'0', b'0', False), (b'1', b'0', True), (b'1', b'1', False),
+                                     (b'invalid', b'0', False), (b'1', b'invalid', False), (b'1' * 9, b'0', False)):
+        with self.subTest(choice=choice, safe=safe):
+          Path(params.get_param_path('ReverseCruise')).write_bytes(choice)
+          Path(params.get_param_path('SafeMode')).write_bytes(safe)
+          self.assertEqual(ToyotaCruisePreference(vehicle, params).update(), expected)
+          self.assertEqual(read_cruise_intervals(params, vehicle), CruiseIntervals(5, 1) if expected else CruiseIntervals())

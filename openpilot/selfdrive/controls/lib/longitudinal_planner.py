@@ -26,7 +26,7 @@ from openpilot.starpilot.longitudinal.vehicle_policy import forecast_should_stop
 from openpilot.starpilot.longitudinal.cruise_ceiling import CruiseCeiling, CurveCeiling, select_cruise_ceiling, select_curve_ceiling
 from openpilot.starpilot.longitudinal.profile_runtime import (AppliedProfile, ProfileSmoother, ProfileTuning, SelectedProfileTuning,
                                                              TRAFFIC_CRUISE_BRAKE_MAGNITUDE)
-from openpilot.starpilot.longitudinal.slc_coast import braking_lead_relevant, slc_coast_floor
+from openpilot.starpilot.longitudinal.slc_coast import braking_lead_relevant
 from openpilot.starpilot.longitudinal.throttle_gate import ModelThrottleGate
 from openpilot.starpilot.longitudinal.ioniq6_start import eligible as ioniq6_long_eligible
 from openpilot.starpilot.longitudinal.lane_change_gap import LaneChangeGap, project as project_lane_gap
@@ -68,7 +68,7 @@ def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
 
 def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle,
-                     profile: AppliedProfile | None = None, cruise_brake_floor: float | None = None,
+                     profile: AppliedProfile | None = None,
                      base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
                      *, a_target_prev: float | None = None, jerk_limit: bool = True):
   max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
@@ -91,8 +91,6 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
       max_accel = min(max_accel, coast_limit)
 
   cruise_min = max(ACCEL_MIN, -profile.cruise_brake_magnitude) if profile is not None else max(ACCEL_MIN, base_brake_floor)
-  if cruise_brake_floor is not None:
-    cruise_min = max(cruise_min, cruise_brake_floor)
   target_accel = np.clip(v_cruise - v_ego, cruise_min, max_accel)
   if not jerk_limit:  # Bosch-A Stock Brake Feel engage init only
     return float(target_accel)
@@ -161,7 +159,7 @@ class LongitudinalPlanner:
              lead_approach_key: LeadApproachKey | None = None,
              force_stop_provider: Callable[[float], StopPlan] | None = None,
              faster_lead_takeoff: bool = False, takeoff_drive_id: int = 0,
-             now_ns: int | None = None, drive_id: int = 0, wheel_coast=None):
+             now_ns: int | None = None, drive_id: int = 0, wheel_coast=None, experimental_speed_nudge: bool = True):
     if curve_ceiling is not None and curve_provider is not None:
       raise ValueError('choose explicit Curve ceiling or same-cycle provider')
     if self.plan_drive_id != drive_id:
@@ -194,7 +192,6 @@ class LongitudinalPlanner:
                                                        traffic_mode=traffic_mode)
     else:
       self.profile_smoother.applied = None
-      self.profile_smoother.slc_braking_style = 'standard'
       self.last_profile = None
 
     # Reset current state when not engaged, or user is controlling the speed
@@ -398,30 +395,18 @@ class LongitudinalPlanner:
                                                                           abs(A_CRUISE_MIN)))
     if ceiling.effective_mps is not None or curve.effective_mps is not None:
       global_floor = min(global_floor, A_CRUISE_MIN)
-    slc_floor = slc_coast_floor(
-      v_ego=v_ego, slc_target=ceiling.effective_mps if curve.effective_mps is None and not traffic_mode else None,
-      driver_cruise=v_cruise_kph * CV.KPH_TO_MS,
-      full_brake_floor=max(ACCEL_MIN, -cruise_profile.cruise_brake_magnitude) if cruise_profile is not None else global_floor,
-      relevant_lead=relevant_lead,
-      stop_context=bool(sm['carState'].standstill or sm['controlsState'].forceDecel or
-                        self.force_stop_plan.forcing or sm['modelV2'].action.shouldStop or output_should_stop_mpc or
-                        sm['selfdriveState'].experimentalMode or not sm['carControl'].longActive or not self.allow_throttle),
-      braking_style=(global_braking_response if global_selected and global_braking_response is not None else
-                     self.profile_smoother.slc_braking_style if self.last_profile is not None else 'standard'),
-    )
     if selected_acceleration is not None and cruise_profile is not None:
       # The selected curve owns acceleration; following/jerks retain their owner.
       cruise_profile = replace(cruise_profile, acceleration_max=selected_acceleration)
     if coast_plan is not None and coast_plan.brake_floor is not None:
       global_floor = coast_plan.brake_floor
       cruise_profile = None
-      slc_floor = None
     if preap_acceleration_cap is not None:
       selected_acceleration = (preap_acceleration_cap if selected_acceleration is None else
                                min(selected_acceleration, preap_acceleration_cap))
     cruise_args = (sm['selfdriveState'].experimentalMode, v_cruise, v_ego,
                    self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
-                   accel_coast, self.allow_throttle, cruise_profile, slc_floor)
+                   accel_coast, self.allow_throttle, cruise_profile)
     cruise_kwargs = {'base_brake_floor': global_floor, 'selected_acceleration_max': selected_acceleration,
                      'faster_takeoffs': faster_takeoffs, 'a_target_prev': self.output_a_target}
     self.a_cruise = get_cruise_accel(*cruise_args, **cruise_kwargs)  # ty: ignore[invalid-argument-type]
@@ -432,7 +417,7 @@ class LongitudinalPlanner:
       model_accel=output_a_target_e2e, mpc_accel=output_a_target_mpc, cruise_accel=self.a_cruise,
       lateral_accel=(v_ego ** 2 * steer_angle_without_offset * CV.DEG_TO_RAD / (self.CP.steerRatio * self.CP.wheelbase)
                      if self.CP.steerRatio > 0 and self.CP.wheelbase > 0 else math.inf),
-      blocked=bool(reset_state or self.fcw or not self.allow_throttle or self.force_stop_plan.forcing or
+      blocked=bool(experimental_speed_nudge is not True or reset_state or self.fcw or not self.allow_throttle or self.force_stop_plan.forcing or
                    output_should_stop_mpc or cruise_should_stop or self.mpc.solution_status != 0 or
                    curve.effective_mps is not None or traffic_mode is not False))
     manual_model = self.accel_boost.update(sm, output_a_target_e2e, output_a_target_mpc, self.a_cruise)
@@ -481,7 +466,7 @@ class LongitudinalPlanner:
       takeoff_frame = project_takeoff(
         sm, self.CP, now_ns=sample_now_ns, drive_id=takeoff_drive_id, stop_plan=self.force_stop_plan,
         acceleration_max=takeoff_max, mpc_accel=output_a_target_mpc, follow_seconds=float(self.mpc.params[0, 4]),
-        blocked=bool(reset_state or self.fcw or not self.allow_throttle or traffic_mode is not False or
+        blocked=bool(experimental_speed_nudge is not True or reset_state or self.fcw or not self.allow_throttle or traffic_mode is not False or
                      self.mpc.solution_status != 0))
       output_a_target, self.output_should_stop = self.lead_takeoff.step(
         True, takeoff_frame, output_a_target, self.output_should_stop)

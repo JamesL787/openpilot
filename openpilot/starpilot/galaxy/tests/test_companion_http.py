@@ -20,7 +20,7 @@ def companion_http(tmp_path):
   aa = Mock()
   aa.enabled.return_value = False
   parked = Mock(return_value=True)
-  server = make_server(port=0, owner=access, companion=registry, parked=parked, android_auto_setup=aa)
+  server = make_server(port=0, owner=access, companion=registry, parked=parked, starport_setup=aa)
   server.test_parked = parked
   worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
   worker.start()
@@ -166,7 +166,7 @@ def test_phone_location_needs_local_session(tmp_path):
   aa = Mock()
   aa.enabled.return_value = False
   server = make_server(port=0, owner=access, companion=CompanionRegistry(tmp_path / 's', tmp_path / 'l', tmp_path / 't'),
-                       parked=Mock(return_value=True), android_auto_setup=aa, phone_location=phone)
+                       parked=Mock(return_value=True), starport_setup=aa, phone_location=phone)
   worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
   worker.start()
   origin = f'http://127.0.0.1:{server.server_port}'

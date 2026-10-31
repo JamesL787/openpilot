@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 from openpilot.starpilot.longitudinal.cruise_ceiling import CruiseCeiling
 from openpilot.starpilot.speed_limits import acceptance as acc
 from openpilot.starpilot.speed_limits import action_arbitration as arb
-from openpilot.starpilot.speed_limits import lead_relaxation as lr
 from openpilot.starpilot.speed_limits import overrides as ov
 from openpilot.starpilot.speed_limits import selection as sel
 from openpilot.starpilot.speed_limits import speed_domain as sd
@@ -48,7 +47,6 @@ class State:
   session_id: str
   acceptance: acc.State
   override: ov.State
-  lead_prior: lr.PriorApplied | None = None
   control_generation: int = 0
   last_now_ns: int | None = None
   previous_mode: acc.Mode | None = None
@@ -65,7 +63,6 @@ class Result:
   domain: sd.DomainResolution | None = None
   override: ov.Decision | None = None
   coordinate: sd.PlannerCoordinate | None = None
-  relaxation: lr.Result | None = None
   ceiling: CruiseCeiling | None = None
   status: str = "none"
   errors: tuple[str, ...] = ()
@@ -97,10 +94,7 @@ def _state_valid(state: object) -> bool:
       (state.previous_mode is not None and not isinstance(state.previous_mode, acc.Mode)) or
       (state.previous_owner is not None and not isinstance(state.previous_owner, acc.LongitudinalOwner))):
     return False
-  return state.lead_prior is None or (isinstance(state.lead_prior, lr.PriorApplied) and
-                                      state.lead_prior.session_id == state.session_id and
-                                      state.lead_prior.continuity_id == f"control:{state.control_generation}" and
-                                      _number(state.lead_prior.cap_mps, positive=True))
+  return True
 
 
 def _host_valid(host: object) -> bool:
@@ -136,22 +130,21 @@ def step(state: State, frame: Frame) -> Result:
                                                 frame.acceptance_policy.display_only)) or
       not isinstance(frame.selected_kind, sd.DomainStatus) or not isinstance(frame.ego_pair, sd.SpeedPair) or
       (frame.is_metric is not None and type(frame.is_metric) is not bool) or type(frame.set_speed_ready) is not bool):
-    return Result(replace(state, lead_prior=None, reset_required=True), status="invalid_frame", errors=("invalid frame or clock",))
+    return Result(replace(state, reset_required=True), status="invalid_frame", errors=("invalid frame or clock",))
   host = frame.host
   selected_initialized = host.driver_v_cruise_kph > 0 and host.driver_v_cruise_kph != 255.0
   host_long = host.system_long_available and host.long_control_active and host.selfdrive_enabled
   system_mode = frame.authority.mode in (acc.Mode.LONGITUDINAL_ONLY, acc.Mode.COMBINED) and frame.authority.owner is acc.LongitudinalOwner.SYSTEM
   if (system_mode and frame.authority.longitudinal_active != host_long or
       frame.authority.accelerator_override and not (host.system_long_available and host.selfdrive_enabled and frame.pedal_pressed is True)):
-    return Result(replace(state, lead_prior=None, last_now_ns=frame.now_ns, reset_required=True),
+    return Result(replace(state, last_now_ns=frame.now_ns, reset_required=True),
                   status="host_authority_disagreement", errors=("host and system-long authority disagree",))
   active_path = (frame.authority.can_control and (host_long or frame.authority.accelerator_override) and selected_initialized and
                  not host.force_decel and not host.force_stop_active and not frame.acceptance_policy.display_only)
   mode_changed = state.previous_mode is not None and (state.previous_mode != frame.authority.mode or
                                                        state.previous_owner != frame.authority.owner)
   generation = state.control_generation + int(active_path and (not state.was_active_path or mode_changed))
-  prior = state.lead_prior if active_path and state.was_active_path and not mode_changed else None
-  base = replace(state, control_generation=generation, lead_prior=prior, last_now_ns=frame.now_ns,
+  base = replace(state, control_generation=generation, last_now_ns=frame.now_ns,
                  previous_mode=frame.authority.mode, previous_owner=frame.authority.owner, was_active_path=active_path)
 
   if frame.classified_cruise is not None:
@@ -163,11 +156,11 @@ def step(state: State, frame: Frame) -> Result:
         classified.state.last_effect_id != classified.change.effect_id or
         not isinstance(classified.change.disposition, arb.Disposition) or
         classified.status != classified.change.disposition.value or frame.action is not None or frame.adopt is not None):
-      return Result(replace(base, lead_prior=None, reset_required=True), status="invalid_ledger_result",
+      return Result(replace(base, reset_required=True), status="invalid_ledger_result",
                     errors=("invalid, stale or ambiguous causal ledger result",))
   selected = sel.select_limit(frame.observations, frame.selection_policy)
   if selected.errors:
-    return Result(replace(base, lead_prior=None, reset_required=True), selection=selected, status="invalid_selection", errors=selected.errors)
+    return Result(replace(base, reset_required=True), selection=selected, status="invalid_selection", errors=selected.errors)
   ego = frame.ego_pair
   candidate = selected.observation.candidate
   matches_set = False
@@ -183,7 +176,7 @@ def step(state: State, frame: Frame) -> Result:
                         now_ns=frame.now_ns, action=frame.action, adopt=frame.adopt, set_speed_matches=matches_set)
   base = replace(base, acceptance=acceptance.state)
   if acceptance.errors:
-    return Result(replace(base, lead_prior=None, reset_required=True), selected, acceptance,
+    return Result(replace(base, reset_required=True), selected, acceptance,
                   status="invalid_acceptance", errors=acceptance.errors)
 
   # The raw selected set speed is derived solely from the actual driver vCruise kph.
@@ -204,20 +197,20 @@ def step(state: State, frame: Frame) -> Result:
                      selected_evidence, pedal_evidence, now_ns=frame.now_ns, change=change, domain=domain)
   base = replace(base, override=override.state)
   if override.errors or domain.status is sd.DomainStatus.INVALID:
-    return Result(replace(base, lead_prior=None, reset_required=True), selected, acceptance, domain, override,
+    return Result(replace(base, reset_required=True), selected, acceptance, domain, override,
                   status="invalid_domain_or_override", errors=override.errors or (domain.reason,))
   if not active_path or domain.status is not sd.DomainStatus.VALID:
-    return Result(replace(base, lead_prior=None), selected, acceptance, domain, override, status="inactive_or_unavailable")
+    return Result(base, selected, acceptance, domain, override, status="inactive_or_unavailable")
   context = domain.context
   if (not isinstance(context, sd.DomainContext) or override.state.session_id != state.session_id or
       override.state.last_timestamp_ns != frame.now_ns or override.state.accepted_mps != context.accepted_raw_mps or
       override.state.effective_target_mps != context.effective_cluster_mps):
-    return Result(replace(base, lead_prior=None, reset_required=True), selected, acceptance, domain, override,
+    return Result(replace(base, reset_required=True), selected, acceptance, domain, override,
                   status="invalid_join", errors=("override and speed domain mismatch",))
   coordinate = sd.to_planner_coordinate(context, override.contribution_mps, override.basis)
   if coordinate.cap_mps is None:
-    return Result(replace(base, lead_prior=None, reset_required=True), selected, acceptance, domain, override, coordinate,
+    return Result(replace(base, reset_required=True), selected, acceptance, domain, override, coordinate,
                   status="invalid_coordinate", errors=("planner coordinate unavailable",))
   # Adoption changes card's set speed; SLC never supplies a second planner ceiling.
-  return Result(replace(base, lead_prior=None), selected, acceptance, domain, override, coordinate,
+  return Result(base, selected, acceptance, domain, override, coordinate,
                 status=acceptance.basis)

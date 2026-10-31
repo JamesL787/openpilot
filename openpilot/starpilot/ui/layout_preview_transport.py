@@ -77,7 +77,7 @@ def _payload(value: object) -> dict:
     raise PreviewInvalid('Invalid preview profile or scene')
   try:
     if value['profile'] == 'projection':
-      from openpilot.starpilot.system.android_auto.projection_layout import validate_layout_for_viewport
+      from openpilot.starpilot.system.starport.projection_layout import validate_layout_for_viewport
       source = value['document']
       if type(source) is not dict or set(source) != {'layout', 'base'}:
         raise ValueError('Invalid projection preview')

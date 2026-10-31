@@ -9,6 +9,7 @@ import threading
 from openpilot.starpilot.speed_limits import offset_document as od
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow, FeatureSettingsRequest
 from openpilot.starpilot.saved_source import read_saved
+from openpilot.starpilot.saved_document import commit_exact
 
 DOCUMENT_KEY = "SLCOffsetSchedule"
 OFFSET_KEYS = tuple(f"Offset{i}" for i in range(1, 8))
@@ -246,22 +247,31 @@ class SlcOffsetOwner:
         return False
       if snap.metric is not None and snap.metric == desired:
         return True
+      if (snap.raw_document is None and snap.raw_control in (None, b"0") and
+          isinstance(snap.document, od.OffsetDocument) and not any(snap.document.offsets_mps)):
+        result = commit_exact(self.params, key="IsMetric", max_bytes=8,
+                              raw=b"1" if desired else b"0", expected=expected_unit,
+                              authorized=lambda: self._same_unit_source(snap, None), temp_prefix=".display-units-")
+        return result.committed and result.verified
       try:
         protected_capability = None
+        migrating = False
         written_document = None
         if snap.raw_document is None:
           if isinstance(snap.document, od.OffsetDocument):
-            if not self.repair_parked() or self.capability() is None:
+            if not self.repair_parked():
               return False
             protected_capability = self.capability()
+            migrating = True
             if not self._same_unit_source(snap, protected_capability):
               return False
             self.params.put(DOCUMENT_KEY, od.to_value(snap.document), block=True)
             written_document = snap.document
           elif snap.raw_control not in (None, b"0"):
-            if not self.repair_parked() or self.capability() is None or not self._same_unit_source(snap, self.capability()):
+            if not self.repair_parked() or not self._same_unit_source(snap, self.capability()):
               return False
             protected_capability = self.capability()
+            migrating = True
             self.params.put(DOCUMENT_KEY, od.to_value(od.NEEDS_REVIEW), block=True)
             written_document = od.NEEDS_REVIEW
         if not self._readable("IsMetric") or self._raw("IsMetric") != expected_unit:
@@ -277,7 +287,8 @@ class SlcOffsetOwner:
           return False
         if (snap.raw_document is None and
             (not self._readable("SpeedLimitController") or self._raw("SpeedLimitController") != snap.raw_control) or
-            protected_capability is not None and (not self.repair_parked() or self.capability() != protected_capability)):
+            migrating and not self.repair_parked() or
+            protected_capability is not None and self.capability() != protected_capability):
           return False
         if snap.raw_document is None and written_document is None and not self._same_unit_source(snap, None):
           return False

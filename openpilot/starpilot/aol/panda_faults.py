@@ -32,6 +32,15 @@ def _diagnostic_mask(cp):
                          int(cp.flags) & int(HondaFlags.BOSCH) and qualified(cp, marked_only=True)) else 0
     if cp.brand == 'hyundai':
       from opendbc.car.hyundai.values import CAR, HyundaiFlags
+      if cp.carFingerprint == CAR.HYUNDAI_ELANTRA_2021:
+        from opendbc.car.hyundai.classic_scc_aol import qualified
+        # Firmware latches this IRQ diagnostic without revoking native authority.
+        # Limit compatibility to the recorded stock-SCC profile; keep raw faults;
+        # native permission, receive health, relay and heartbeat remain required.
+        recorded_flags = HyundaiFlags.SEND_LFA | HyundaiFlags.USE_FCA | HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.HAS_LDA_BUTTON
+        return (1 << 2) if (str(cp.fingerprintSource) == 'fw' and int(cp.flags) == int(recorded_flags) and
+                           len(cp.safetyConfigs) == 1 and int(cp.safetyConfigs[0].safetyParam) == 0xC00 and
+                           cp.alternativeExperience == 32 and qualified(cp, marked_only=True)) else 0
       if cp.carFingerprint != CAR.HYUNDAI_SONATA_HYBRID:
         return 0
       from opendbc.car.hyundai.classic_scc_aol import qualified
@@ -41,20 +50,24 @@ def _diagnostic_mask(cp):
                          len(cp.safetyConfigs) == 1 and int(cp.safetyConfigs[0].safetyParam) == 0xC02 and cp.alternativeExperience == 32 and
                          qualified(cp, marked_only=True)) else 0
     from opendbc.car.gm.aol import qualified_gm
-    from opendbc.car.gm.values import CAR, is_volt_sdgm_profile
+    from opendbc.car.gm.values import CAR, is_volt_sdgm_profile, is_bolt_present_no_acc_pedal_profile
     if cp.brand != 'gm' or len(cp.safetyConfigs) != 1:
       return 0
     word = int(cp.safetyConfigs[0].safetyParam)
-    # Only this exact GM identity can use this diagnostic classification.
+    # Only these two exact identities can use this diagnostic classification.
     # Reject every other profile before the full GM admission walk. Current
     # faults and all existing qualification checks remain authoritative.
-    if not (cp.carFingerprint == CAR.CHEVROLET_VOLT_2019 and word == 0x1005):
+    if not ((cp.carFingerprint == CAR.CHEVROLET_VOLT_2019 and word == 0x1005) or
+            (cp.carFingerprint == CAR.CHEVROLET_BOLT_CC_2018_2021 and word == 0x9D)):
       return 0
     if not qualified_gm(cp) or not aol_enabled(cp):
       return 0
     if (cp.carFingerprint == CAR.CHEVROLET_VOLT_2019 and word == 0x1005 and
         is_volt_sdgm_profile(cp, longitudinal=False) and cp.pcmCruise and not cp.openpilotLongitudinalControl):
       return 1 << 18
+    if (cp.carFingerprint == CAR.CHEVROLET_BOLT_CC_2018_2021 and word == 0x9D and
+        is_bolt_present_no_acc_pedal_profile(cp) and cp.openpilotLongitudinalControl and not cp.pcmCruise):
+      return (1 << 2) | (1 << 3)
   except (AttributeError, TypeError, ValueError, OverflowError, IndexError):
     pass
   return 0

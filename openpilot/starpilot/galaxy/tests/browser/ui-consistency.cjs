@@ -24,7 +24,7 @@ const { resolve } = require('node:path')
       json: { state: 'configured', authenticated: true, localAccess: true },
     })
     if (path === '/api/device/state') return route.fulfill({ json: { state: 'parked', maxAgeMs: 3000 } })
-    if (path === '/api/android-auto/logs') return route.fulfill({ json: { schemaVersion: 1,
+    if (path === '/api/starport/logs') return route.fulfill({ json: { schemaVersion: 1,
       sessions: [
         { name: 'session-000003.jsonl', size: 51712, modifiedAt: 1791354093, outcome: "projected, then failed: finding android auto: Could not find the car's Android Auto service: [Errno 112] Host is down", car: 'Honda T20', transport: 'wireless', trigger: 'car_connected' },
         { name: 'session-000002.jsonl', size: 716, modifiedAt: 1791340980, outcome: 'stopped at connecting_bluetooth', car: '', transport: 'wireless', trigger: 'manual' },
@@ -43,8 +43,8 @@ const { resolve } = require('node:path')
   })
 
   const paths = [...new Set(['/', '/tools', '/settings', '/developer/connect', '/cameras/events',
-    '/cameras/sentry-settings', '/cameras/pip', '/cameras/vasm', '/theme_maker/android_auto',
-    '/logs/crashes', '/logs/android-auto', '/logs/monitor', '/logs/troubleshoot', '/logs/tmux', '/tuning/plots', '/tuning/flm',
+    '/cameras/sentry-settings', '/cameras/pip', '/cameras/vasm', '/theme_maker/starport',
+    '/logs/crashes', '/logs/starport', '/logs/monitor', '/logs/troubleshoot', '/logs/tmux', '/tuning/plots', '/tuning/flm',
     '/driving/longitudinal-curves', '/appearance', '/driving/conditional', '/driving/curve', '/driving/slc', '/driving/profiles', '/driving/traffic',
     ...groups.filter(([page]) => page !== "standard").map(([page]) => '/driving/' + page), ...catalog.tools.map(tool => tool.path)])]
   for (const theme of ['dark', 'light']) {
@@ -57,10 +57,9 @@ const { resolve } = require('node:path')
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false,
           `${theme} ${width}px ${path}: no page overflow`)
         if (path === '/navigation') {
-          const map = await page.locator('.gx-navigation--fullscreen').boundingBox()
-          assert.ok(Math.abs(map.width - width) < 1 && Math.abs(map.height - 900) < 1, 'map intentionally fills viewport')
+          assert.equal(await page.locator('.gx-navigation').isVisible(), true)
           for (const tab of ['Offline Maps', 'Setup']) {
-            await page.getByRole('tab', { name: tab, exact: true }).click()
+            await page.getByRole('group', { name: 'Navigation tools' }).getByRole('button', { name: tab, exact: true }).click()
             assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${tab}: no overflow`)
           }
         }
@@ -81,24 +80,27 @@ const { resolve } = require('node:path')
     }
   }
   await page.setViewportSize({ width: 390, height: 900 })
-  await page.goto(base + '#/logs/android-auto')
-  await page.locator('.gx-aa-log').first().waitFor()
+  await page.goto(base + '#/logs/starport')
+  await page.locator('.gx-starport-log').first().waitFor()
+  await page.waitForFunction(() => !document.querySelector('.gx-route-enter-active, .gx-route-leave-active'))
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Android Auto logs fit a phone viewport')
-  const phoneCards = await page.locator('.gx-aa-log').evaluateAll(cards => cards.map(card => {
-    const row = card.getBoundingClientRect(), body = card.querySelector('.gx-aa-log__body').getBoundingClientRect()
-    const download = card.querySelector('.gx-aa-log__download').getBoundingClientRect()
+  const phoneCards = await page.locator('.gx-starport-log').evaluateAll(cards => cards.map(card => {
+    const row = card.getBoundingClientRect(), body = card.querySelector('.gx-starport-log__body').getBoundingClientRect()
+    const download = card.querySelector('.gx-starport-log__download').getBoundingClientRect()
     return { leftInset: body.left - row.left, rightInset: row.right - download.right, width: download.width, height: download.height }
   }))
   assert.ok(phoneCards.every(card => card.leftInset >= 11 && card.rightInset >= 11), 'log text and downloads are padded inside cards')
   assert.ok(phoneCards.every(card => card.width === 44 && card.height === 44), 'individual downloads remain compact touch targets')
-  assert.deepEqual(await page.locator('.gx-aa-log__download').evaluateAll(links => links.map(link => link.getAttribute('download'))),
+  assert.deepEqual(await page.locator('.gx-starport-log__download').evaluateAll(links => links.map(link => link.getAttribute('download'))),
     ['session-000003.jsonl', 'session-000002.jsonl', 'car_ui.log'])
   await page.setViewportSize({ width: 1280, height: 900 })
-  const desktop = await page.locator('.gx-aa-logs').evaluate(section => {
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  const desktop = await page.locator('.gx-starport-logs').evaluate(section => {
     const bounds = section.getBoundingClientRect()
-    return { width: bounds.width, center: bounds.left + bounds.width / 2 }
+    const content = section.closest('.gx-content').getBoundingClientRect()
+    return { width: bounds.width, center: bounds.left + bounds.width / 2, contentCenter: content.left + content.width / 2 }
   })
-  assert.ok(desktop.width <= 960 && Math.abs(desktop.center - 640) < 1, 'Android Auto logs are centered and readable on desktop')
+  assert.ok(desktop.width <= 960 && Math.abs(desktop.center - desktop.contentCenter) < 1, 'StarPort logs are centered and readable on desktop')
   await page.setViewportSize({ width: 390, height: 900 })
   await page.goto(base + '#/settings')
   const manage = page.getByRole('button', { name: 'Manage', exact: true }).first()
@@ -138,6 +140,7 @@ const { resolve } = require('node:path')
     if(back === 'browser') await page.evaluate(() => history.back())
     else await page.getByRole('button',{name:'Back',exact:true}).click()
     await longitudinal.waitFor()
+    await page.waitForFunction(() => !document.querySelector('.gx-route-leave-active, .gx-panel-leave-active'))
     assert.equal(await longitudinal.getAttribute('aria-pressed'),'true','Back returns to actual longitudinal parent')
     assert.equal(await page.locator('.gx-section__title').innerText(),'Longitudinal (Speed & Following)')
   }
@@ -171,7 +174,7 @@ const { resolve } = require('node:path')
   const bounds = await loading.boundingBox()
   assert.ok(Math.abs(bounds.x + bounds.width / 2 - 195) < 1, 'loading card is centered')
   await page.waitForTimeout(750)
-  await page.goto(base + '#/android-auto')
+  await page.goto(base + '#/starport')
   await page.waitForTimeout(300)
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   assert.deepEqual(errors, [], 'preview routes and unavailable Android Auto setup render without exceptions')

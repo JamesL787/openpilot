@@ -177,17 +177,17 @@ assert.deepEqual(SettingsPage.computed.visibleRows.call(page).map(({ index }) =>
 const destinations = []
 const navigation = { busy: false, state: { query: "old", section: "lateral", data: { page: "lane" } },
   feed: { active: true, load: (target) => destinations.push(target) } }
-for (const id of ["wheel", "sounds", "device", "visual"]) {
+for (const id of ["wheel", "sounds", "device", "visual", "localization"]) {
   const section = SETTINGS_SECTIONS.find((item) => item.id === id)
   SettingsPage.methods.selectSection.call(navigation, section)
   assert.equal(navigation.state.section, id)
   assert.equal(navigation.state.query, "")
 }
-assert.deepEqual(destinations, ["wheel", "sounds", "hub", "hub"])
+assert.deepEqual(destinations, ["wheel", "sounds", "hub", "hub", "localization"])
 navigation.busy = true
 SettingsPage.methods.selectSection.call(navigation, lateral)
-assert.equal(destinations.length, 4, "a save cannot be retired by section navigation")
-for (const id of ["wheel", "sounds"]) {
+assert.equal(destinations.length, 5, "a save cannot be retired by section navigation")
+for (const id of ["wheel", "sounds", "localization"]) {
   const section = SETTINGS_SECTIONS.find((item) => item.id === id)
   assert.equal(SettingsPage.computed.atSectionRoot.call({ activeSection: section,
     state: { data: { page: section.pages[0] } } }), true)
@@ -208,3 +208,16 @@ assert.equal(SettingsPage.computed.atSectionRoot.call({initialPage:'hub',state:{
   'section tabs stay mounted while loading a new section')
 assert.equal(SettingsPage.computed.atSectionRoot.call({initialPage:'hub',activeSection:lateral,state:{data:null,parents:['hub']}}),false,
   'nested page loading does not become a section root')
+
+const longitudinal = SETTINGS_SECTIONS.find(section => section.id === "longitudinal")
+const personalityRows = ["aggressive", "standard", "relaxed", "traffic"].map(page => ({page, label: page}))
+const longRoot = SettingsPage.computed.visibleRows.call({initialPage: "hub", activeSection: longitudinal,
+  state: {query: "", data: {page: "hub", rows: [
+    {page: "profiles", label: "Long Planner"}, {page: "personalities", label: "Driving Personalities"},
+  ]}}})
+assert.deepEqual(longRoot.map(({row}) => row.page), ["profiles", "personalities"])
+assert.deepEqual(SettingsPage.computed.visibleRows.call({initialPage: "hub", activeSection: longitudinal,
+  state: {query: "", data: {page: "personalities", rows: personalityRows}}}).map(({row}) => row.page),
+  ["aggressive", "standard", "relaxed", "traffic"])
+assert.equal(SettingsPage.computed.activeSection.call({sections: SETTINGS_SECTIONS,
+  state: {data: {page: "personalities"}}}).id, "longitudinal")

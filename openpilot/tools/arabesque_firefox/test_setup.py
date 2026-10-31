@@ -1,0 +1,155 @@
+import hashlib
+import importlib.util
+import io
+import json
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tarfile
+from unittest.mock import Mock
+
+import pytest
+
+spec = importlib.util.spec_from_file_location('firefox_setup', Path(__file__).with_name('setup.py'))
+assert spec is not None and spec.loader is not None
+setup = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(setup)
+
+
+def test_corrupt_cached_package_is_rejected(tmp_path):
+  path = tmp_path / 'package.deb'
+  path.write_bytes(b'good')
+  package = {'name': path.name, 'size': 4, 'sha256': hashlib.sha256(b'good').hexdigest()}
+  setup.verify(path, package)
+  path.write_bytes(b'evil')
+  with pytest.raises(ValueError, match='checksum'):
+    setup.verify(path, package)
+
+
+def test_download_reports_progress_and_reuses_verified_package(tmp_path, monkeypatch):
+  data = b'verified browser'
+  package = {'name': 'firefox-test.tar.xz', 'url': 'https://example.invalid/browser',
+             'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+  response = io.BytesIO(data)
+  response.url = package['url']
+  fetch, progress = Mock(return_value=response), Mock()
+  monkeypatch.setattr(setup.urllib.request, 'urlopen', fetch)
+  monkeypatch.setattr(setup, 'report', progress)
+  path = setup.download(package, tmp_path)
+  assert path.read_bytes() == data
+  progress.assert_called_once_with('Downloading Firefox… 100%')
+  assert setup.download(package, tmp_path) == path
+  fetch.assert_called_once()
+
+
+def test_cancelled_download_never_publishes_partial_package(tmp_path, monkeypatch):
+  data = b'partial'
+  response = io.BytesIO(data)
+  response.url = 'https://example.invalid/browser'
+  package = {'name': 'firefox-test.tar.xz', 'url': response.url, 'size': len(data),
+             'sha256': hashlib.sha256(data).hexdigest()}
+  monkeypatch.setattr(setup.urllib.request, 'urlopen', Mock(return_value=response))
+  monkeypatch.setattr(setup, 'report', Mock(side_effect=InterruptedError('cancelled')))
+  with pytest.raises(InterruptedError):
+    setup.download(package, tmp_path)
+  assert not list(tmp_path.iterdir())
+
+
+def test_archive_cannot_escape_the_private_runtime(tmp_path):
+  path = tmp_path / 'browser.tar.xz'
+  with tarfile.open(path, 'w:xz') as archive:
+    entry = tarfile.TarInfo('../escaped')
+    entry.size = 4
+    archive.addfile(entry, io.BytesIO(b'bad!'))
+  destination = tmp_path / 'runtime'
+  destination.mkdir()
+  with pytest.raises(tarfile.FilterError):
+    setup.unpack(path, destination)
+  assert not (tmp_path / 'escaped').exists()
+
+
+def test_preparation_refuses_unprivileged_host_without_writing(tmp_path, monkeypatch):
+  monkeypatch.setattr(setup.os, 'geteuid', lambda: 1000)
+  monkeypatch.setattr(setup, 'ROOT', tmp_path / 'browser')
+  with pytest.raises(RuntimeError, match='ARM64 AGNOS'):
+    setup.prepare()
+  assert not (tmp_path / 'browser').exists()
+
+
+@pytest.mark.parametrize('existing', ['missing', 'directory', 'symlink', 'unsafe'])
+def test_first_use_under_unwritable_data(tmp_path, monkeypatch, existing):
+  if not shutil.which('unshare') or not shutil.which('setpriv'):
+    raise pytest.skip.Exception('Linux user namespaces and setpriv are required')
+  probe = subprocess.run(['unshare', '-Ur', 'true'], capture_output=True, check=False)
+  if probe.returncode:
+    raise pytest.skip.Exception('Linux user namespaces are unavailable')
+
+  spec = importlib.util.spec_from_file_location(
+    'browser_session', Path(__file__).resolve().parents[2] / 'selfdrive/ui/layouts/arabesque/tools/browser_session.py')
+  assert spec is not None and spec.loader is not None
+  runtime = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(runtime)
+  data = tmp_path / 'data'
+  data.mkdir()
+  root = data / 'arabesque-firefox'
+  target = tmp_path / 'target'
+  target.mkdir()
+  (target / 'sentinel').write_text('preserved')
+  if existing == 'symlink':
+    root.symlink_to(target)
+  elif existing != 'missing':
+    root.mkdir(mode=0o755)
+    if existing == 'unsafe':
+      root.chmod(0o777)
+  data.chmod(0o555)
+  monkeypatch.setattr(runtime, 'ROOT', root)
+  command = runtime.preparation_command('test', 'test')
+  prestart = next((shlex.split(p.removeprefix('--property=ExecStartPre=')) for p in command
+                   if p.startswith('--property=ExecStartPre=')), [])
+  if prestart:
+    assert prestart[0].startswith('-+')
+    prestart[0] = prestart[0][2:]
+    assert prestart == ['/usr/bin/mkdir', '-m', '0755', str(root)]
+  caps = next(p.split('=', 2)[2] for p in command if p.startswith('--property=CapabilityBoundingSet='))
+  caps = ','.join('+' + cap.removeprefix('CAP_').lower() for cap in caps.split())
+  installer = '''
+import importlib.util, os, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('setup', sys.argv[1])
+setup = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(setup)
+setup.ROOT = Path(sys.argv[2])
+setup.platform.machine = lambda: 'aarch64'
+read_text = Path.read_text
+Path.read_text = lambda path, *a, **kw: '19.8.1' if str(path) == '/VERSION' else read_text(path, *a, **kw)
+setup.prepare_locked = lambda manifest: None
+assert os.geteuid() == 0
+assert int(next(line.split(':')[1] for line in Path('/proc/self/status').read_text().splitlines() if line.startswith('CapEff:')), 16) == 1
+setup.prepare()
+'''
+  runner = '''
+import json, os, subprocess, sys
+prestart = json.loads(sys.argv[1])
+if prestart:
+  subprocess.run(prestart, capture_output=True, check=False)
+os.execvp('setpriv', ['setpriv', '--no-new-privs', '--bounding-set=-all,' + sys.argv[2],
+                      sys.executable, '-c', sys.argv[3], sys.argv[4], sys.argv[5]])
+'''
+  try:
+    result = subprocess.run(['unshare', '-Ur', sys.executable, '-c', runner, json.dumps(prestart), caps, installer,
+                             str(Path(__file__).with_name('setup.py')), str(root)], capture_output=True, text=True, check=False)
+    if existing in ('missing', 'directory'):
+      assert result.returncode == 0, result.stderr
+      assert root.stat().st_mode & 0o777 == 0o755
+      assert (root / '.prepare.lock').is_file()
+    else:
+      assert result.returncode != 0
+      assert ('Refusing symlink' if existing == 'symlink' else 'Unsafe browser directory ownership') in result.stderr
+      if existing == 'unsafe':
+        assert root.stat().st_mode & 0o777 == 0o777
+    assert (target / 'sentinel').read_text() == 'preserved'
+    assert len(list(target.iterdir())) == 1
+  finally:
+    data.chmod(0o755)

@@ -16,24 +16,25 @@ const assert = require('node:assert/strict')
       const { createApp } = await import('./vendor/vue/vue.esm-browser.js')
       window.fixtureApp?.unmount()
       document.querySelector('#fixture').innerHTML = ''
-      const component = kind === 'android' ? (await import('./js/android-auto.js')).AndroidAutoPage :
-        (await import('./js/record-history.js')).LocalRecordingsPage
+      const component = kind === 'starport' ? (await import('./js/starport.js')).StarPortPage :
+        (await import('./js/route-workspace.js')).RouteWorkspace
       const routeId = '2026-09-28--01-30-00'
       const segments = [0, 1, 2].map(number => ({ number, segmentName: `${routeId}--${number}`, files: { fcamera: true } }))
-      const data = kind === 'android' ? {
+      const data = kind === 'starport' ? {
         setup: { enabled: false, bluetoothEnabled: true, parked: true, installReady: true, serviceReady: true,
           identity: { installed: true, message: 'Package ready' }, import: { state: 'idle' }, maxUploadBytes: 200 * 1048576 },
-        packageFile: { name: 'android-auto-package.apk', size: 1048576 },
-      } : { status: 'ready', data: { routes: [] }, playing: { routeId, route: { segments }, segments,
-        index: 1, camera: 'fcamera', url: './api/fixture-video' } }
+        packageFile: { name: 'android-auto-package.apk', size: 6 * 1048576 }, installOpen: true,
+      } : { status: 'ready', route: { routeId, segments, inventoryComplete: true }, segmentNumber: 1 }
       window.uploadClicks = 0
+      window.backClicks = 0
       window.fixtureApp = createApp({ ...component,
         data: () => ({ ...component.data(), ...data }),
         created() {},
-        mounted() { if (kind === 'recording') this.$refs.playerPanel.showModal() },
+        mounted() {},
         beforeUnmount() {},
         methods: { ...component.methods, upload() { window.uploadClicks++ }, videoError() {} },
-      }, { mode: 'local', localAccess: true, unauthorized() {} })
+      }, { mode: 'local', localAccess: true, unauthorized() {}, routeId,
+        exports: { busy: false, running: false }, onBack() { window.backClicks++ } })
       window.fixtureVM = window.fixtureApp.mount('#fixture')
     }, kind)
   }
@@ -49,20 +50,21 @@ const assert = require('node:assert/strict')
 
   for (const width of [320, 360, 390, 600, 1280]) {
     await page.setViewportSize({ width, height: 900 })
-    await mount('android')
-    await checkActions('.gx-driving__actions')
-    await page.getByRole('button', { name: 'Enable & upload', exact: true }).click()
+    await mount('starport')
+    await checkActions('.gx-starport-step-card__body, .gx-starport-sheet__toolbar')
+    await page.getByRole('button', { name: 'Turn On and Install', exact: true }).click()
     assert.equal(await page.evaluate(() => window.uploadClicks), 1)
     await page.evaluate(() => { window.fixtureVM.setup.enabled = true })
-    const upload = page.getByRole('button', { name: 'Upload package', exact: true })
+    const upload = page.getByRole('button', { name: 'Install', exact: true })
     await upload.click()
     assert.equal(await page.evaluate(() => window.uploadClicks), 2, 'icon clicks reach the existing handler')
-    await page.evaluate(() => { window.fixtureVM.busy = true })
-    assert.equal(await upload.isDisabled(), true, 'disabled state reaches the native icon button')
-    await checkActions('.gx-driving__actions')
+    await page.evaluate(() => { window.fixtureVM.busy = true; window.fixtureVM.uploadProgress = { loaded: 1, total: 2 } })
+    assert.equal(await page.getByRole('progressbar', { name: 'Sending to your comma' }).isVisible(), true)
+    assert.equal(await page.getByLabel('Android Auto APK, XAPK, APKM, or ZIP', { exact: true }).isDisabled(), true)
+    await checkActions('.gx-starport-step-card__body, .gx-starport-sheet__toolbar')
 
     await mount('recording')
-    await checkActions('.gx-recordings__player-controls, .gx-recordings__actions')
+    await checkActions('.gx-route-workspace__toolbar, .gx-route-workspace__download-actions')
     const next = page.getByRole('button', { name: 'Next segment', exact: true })
     await next.click()
     assert.equal(await next.isDisabled(), true)
@@ -70,10 +72,10 @@ const assert = require('node:assert/strict')
     await previous.click()
     await previous.click()
     assert.equal(await previous.isDisabled(), true)
-    await page.getByRole('button', { name: 'Close recording player', exact: true }).click()
-    assert.equal(await page.getByRole('dialog', { name: 'Camera recording player' }).count(), 0)
+    await page.getByRole('button', { name: 'Back to Routes', exact: true }).click()
+    assert.equal(await page.evaluate(() => window.backClicks), 1)
   }
   assert.deepEqual(errors, [])
-  console.log('Android Auto and recording controls fit five widths; icon names, handlers and disabled states passed.')
+  console.log('StarPort and recording controls fit five widths; action names, handlers and upload states passed.')
   await browser.close()
 })().catch(error => { console.error(error); process.exit(1) })

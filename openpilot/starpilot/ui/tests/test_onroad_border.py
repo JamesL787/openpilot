@@ -58,7 +58,7 @@ class TestOnroadBorder(unittest.TestCase):
     self.assertEqual([(call.args[0].x, call.args[0].y, call.args[0].width, call.args[0].height)
                       for call in draw.call_args_list], [(4, 4, 468, 232)] * 2)
 
-  def test_android_auto_large_edge_tints_each_half(self):
+  def test_starport_large_edge_tints_each_half(self):
     content = onroad_border.rl.Rectangle(30, 30, 1860, 1020)
     with patch.object(onroad_border.clip, 'begin_scissor_mode') as begin, \
          patch.object(onroad_border.clip, 'end_scissor_mode') as end, \

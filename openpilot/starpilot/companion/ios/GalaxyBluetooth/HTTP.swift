@@ -10,7 +10,7 @@ struct LocalRequest {
     static let maxPackageBody = 256 * 1024 * 1024
 
     static func isPackageUpload(method: String, target: String) -> Bool {
-        method == "POST" && ["/api/android-auto/upload", "/api/spotify/upload"].contains(target)
+        method == "POST" && ["/api/starport/upload", "/api/spotify/upload"].contains(target)
     }
 
     static func bodyLimit(method: String, target: String) -> Int {

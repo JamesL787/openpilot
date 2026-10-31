@@ -19,7 +19,7 @@ class PreviewContractTest(unittest.TestCase):
     self.assertEqual([tool["path"] for tool in catalog["tools"] if tool["availability"] == "partial-preview"], ["/logs"])
     self.assertEqual([tool["path"] for tool in catalog["tools"] if tool["availability"] == "local-only"],
                      ["/bluetooth", "/cameras", "/galaxy", "/manage_models", "/model_laboratory", "/navigation", "/system",
-                      "/theme_maker", "/tuning/plots", "/vehicle", "/android-auto"])
+                      "/theme_maker", "/tuning/plots", "/vehicle", "/starport"])
     self.assertEqual([tool["path"] for tool in catalog["tools"] if tool["availability"] == "always"], [])
     self.assertTrue(all(tool["availability"] in {"always", "unavailable", "partial-preview", "local-only"} for tool in catalog["tools"]))
     self.assertTrue(all(tool["name"] and tool["description"] and tool["icon"] for tool in catalog["tools"]))
@@ -42,7 +42,7 @@ class PreviewContractTest(unittest.TestCase):
     self.assertIn('./api/plots/live', scripts)
     self.assertFalse(re.search(r"\bWebSocket\b", scripts))
     xhr_sources = [path.name for path in (WEB / "js").glob("*.js") if re.search(r"\bXMLHttpRequest\b", path.read_text())]
-    self.assertEqual(xhr_sources, ["android-auto.js"])
+    self.assertEqual(xhr_sources, ["starport.js"])
     self.assertFalse(re.search(r"[\"']/embed", scripts))
     self.assertFalse(re.search(r"<iframe|createElement\s*\(\s*[\"']iframe", scripts))
     self.assertIn("No operation was attempted.", scripts)

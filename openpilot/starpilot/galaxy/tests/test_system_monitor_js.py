@@ -13,7 +13,7 @@ TESTS = tuple(path.name for path in sorted(Path(__file__).parent.glob('test_*.mj
 
 class SystemMonitorJavaScriptTest(unittest.TestCase):
   def test_projection_backend_snapshot_survives_browser_edit_and_save(self):
-    from openpilot.starpilot.system.android_auto.projection_layout import default_layout, layout_metadata, validate_layout
+    from openpilot.starpilot.system.starport.projection_layout import default_layout, layout_metadata, validate_layout
     from openpilot.starpilot.ui.onroad_customization import default_document
 
     screen = {'version': 1, 'width': 1280, 'height': 720, 'margin_width': 0,

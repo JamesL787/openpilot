@@ -2,7 +2,7 @@
 
 import pyray as rl
 
-from openpilot.starpilot.system.android_auto.projection_map_lease import projection_map_active
+from openpilot.starpilot.system.starport.projection_map_lease import projection_map_active
 from openpilot.system.ui.lib.application import gui_app
 
 

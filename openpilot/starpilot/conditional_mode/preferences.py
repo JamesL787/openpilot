@@ -37,7 +37,7 @@ class CEMOptions:
   curves_with_lead: bool = False
   lead: bool = True
   slower_lead: bool = True
-  stopped_lead: bool = False
+  stopped_lead: bool = True
   stop_lights: bool = True
   model_stop_s: float = 7.7
   signal_lane_detection: bool = True

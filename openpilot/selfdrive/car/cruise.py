@@ -253,9 +253,10 @@ class VCruiseHelper:
       self.v_cruise_kph = toyota.requested[1]
     interval = self.intervals.held if long_press else self.intervals.short
     v_cruise_delta = v_cruise_delta * interval
-    if interval % 5 == 0 and self.v_cruise_kph % v_cruise_delta != 0:
+    display_speed = round(self.v_cruise_kph if is_metric else self.v_cruise_kph * CV.KPH_TO_MPH)
+    if interval % 5 == 0 and display_speed % interval != 0:
       # partial interval
-      self.v_cruise_kph = CRUISE_NEAREST_FUNC[button_type](self.v_cruise_kph / v_cruise_delta) * v_cruise_delta
+      self.v_cruise_kph = CRUISE_NEAREST_FUNC[button_type](display_speed / interval) * interval * (1. if is_metric else CV.MPH_TO_KPH)
     else:
       self.v_cruise_kph += v_cruise_delta * CRUISE_INTERVAL_SIGN[button_type]
 

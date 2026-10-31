@@ -49,7 +49,7 @@ def test_native_map_prepares_outside_render_and_releases_when_hidden_disabled_or
     app.remove_render_prepare.assert_called_once_with(layer.prepare)
 
 
-def test_native_map_yields_while_android_auto_draws_its_own():
+def test_native_map_yields_while_starport_draws_its_own():
   with patch('openpilot.starpilot.ui.onroad_map_layer.gui_app'), \
        patch('openpilot.starpilot.ui.onroad_map_layer.projection_map_active') as lease, \
        patch('openpilot.starpilot.ui.onroad_map.MapOverlay') as overlay, \

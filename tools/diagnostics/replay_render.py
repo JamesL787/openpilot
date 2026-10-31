@@ -157,7 +157,7 @@ def instrument(render, trace, *, flush=None):
       trace.configuration = {'profile': getattr(getattr(core, 'profile', None), 'value', None),
                              'width': getattr(core, 'width', None), 'height': getattr(core, 'height', None),
                              'gui_target_fps': getattr(core.gui, 'target_fps', None)}
-      from openpilot.starpilot.system.android_auto import gpu_nv12
+      from openpilot.starpilot.system.starport import gpu_nv12
       camera_base = sys.modules[type(core.camera).__module__].CameraView
       for method, stage in (('_render', 'camera'), ('_ensure_connection', 'connect_import'),
                             ('_handle_switch', 'target_acquisition'), ('_complete_switch', 'stream_switch')):
@@ -285,7 +285,7 @@ def instrument(render, trace, *, flush=None):
     replace(render.Compositor, 'draw', draw)
     replace(render.Compositor, 'finish', finish)
     replace(render, 'time', SimpleNamespace(monotonic=monotonic, monotonic_ns=time.monotonic_ns, sleep=sleep))
-    from openpilot.starpilot.system.android_auto.hw_encoder import HardwareH264Encoder
+    from openpilot.starpilot.system.starport.hw_encoder import HardwareH264Encoder
     for target, method, stage in ((HardwareH264Encoder, 'encode_nv12', 'encode'),
                                   (render.MediaMux, 'frame', 'mux'), (render.MediaStore, 'publish', 'web_publish'),
                                   (render.ReplayFramePublisher, 'publish', 'native_publish')):
@@ -315,8 +315,8 @@ def main(argv=None):
   source = metadata(root)
   for name in ('openpilot/cereal/messaging/__init__.py', 'openpilot/selfdrive/ui/ui_state.py',
                'openpilot/selfdrive/ui/onroad/cameraview.py', 'openpilot/selfdrive/ui/mici/onroad/cameraview.py',
-               'openpilot/tools/replay/display_clock.py', 'openpilot/starpilot/system/android_auto/headless_egl.py',
-               'openpilot/starpilot/system/android_auto/hw_encoder.py'):
+               'openpilot/tools/replay/display_clock.py', 'openpilot/starpilot/system/starport/headless_egl.py',
+               'openpilot/starpilot/system/starport/hw_encoder.py'):
     source['sourceSha256'][name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
   source['replayHashes'] = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in
                           (('render', Path(render.__file__)), ('owner', Path(render.__file__).with_name('owner.py')),

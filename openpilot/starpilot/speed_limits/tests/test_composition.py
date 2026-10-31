@@ -60,7 +60,6 @@ class CompositionTests(unittest.TestCase):
     self.assertEqual(result.acceptance.control_target_mps, 15.0)
     self.assertEqual(result.domain.context.offset_mps, 2.0)
     self.assertEqual(result.coordinate.cap_mps, 16.0)
-    self.assertIsNone(result.relaxation)
     self.assertIsNone(result.ceiling)
     self.assertEqual(result.state.control_generation, 1)
 
@@ -77,16 +76,13 @@ class CompositionTests(unittest.TestCase):
       self.assertEqual(result.acceptance.state.observation.kind, kind)
       disabled = self.run_frame(frame(now + 1, source_kind=kind, policy=replace(POLICY, fallback_previous=False)))
       self.assertIsNone(disabled.ceiling)
-      self.assertIsNone(disabled.state.lead_prior)
 
   def test_uninitialized_driver_and_missing_coordinates_suppress(self):
     unset = self.run_frame(frame(0, host=replace(HOST, driver_v_cruise_kph=255.0)))
     self.assertIsNone(unset.ceiling)
-    self.assertIsNone(unset.state.lead_prior)
     self.assertEqual(unset.acceptance.control_target_mps, 15.0)
     missing = self.run_frame(frame(1, selected_kind=sd.DomainStatus.STALE))
     self.assertIsNone(missing.ceiling)
-    self.assertIsNone(missing.state.lead_prior)
     resumed = self.run_frame(frame(2))
     self.assertEqual(resumed.domain.context.effective_cluster_mps, 17.0)
 
@@ -109,7 +105,6 @@ class CompositionTests(unittest.TestCase):
     lost = self.run_frame(frame(1, authority=replace(ACTIVE, longitudinal_active=False),
                                 host=replace(HOST, long_control_active=False)))
     self.assertIsNone(lost.ceiling)
-    self.assertIsNone(lost.state.lead_prior)
     self.assertFalse(lost.state.reset_required)
     resumed = self.run_frame(frame(2))
     self.assertEqual(resumed.state.control_generation, 2)
@@ -122,7 +117,6 @@ class CompositionTests(unittest.TestCase):
     self.assertTrue(mismatch.errors)
     self.assertTrue(mismatch.state.reset_required)
     self.assertEqual(mismatch.state.acceptance, old_acc)
-    self.assertIsNone(mismatch.state.lead_prior)
 
   def test_late_error_preserves_consumed_action_receipt_and_history(self):
     pending_policy = replace(POLICY, confirm_lower=True)
@@ -168,7 +162,6 @@ class CompositionTests(unittest.TestCase):
     self.assertEqual(reversed_time.status, "invalid_frame")
     self.assertTrue(reversed_time.state.reset_required)
     self.assertIsNone(reversed_time.ceiling)
-    self.assertIsNone(reversed_time.state.lead_prior)
     self.assertEqual(reversed_time.state.acceptance, prior_acceptance)
     latched = self.run_frame(frame(11))
     self.assertEqual(latched.status, "session_reset_required")
@@ -213,7 +206,6 @@ class CompositionTests(unittest.TestCase):
     self.assertEqual(accepted.acceptance.basis, 'accepted')
     self.assertEqual(accepted.domain.context.effective_cluster_mps, 22.)
     self.assertIsNone(accepted.ceiling)
-    self.assertIsNone(accepted.state.lead_prior)
 
   def test_actual_native_planner_default_and_optional_cap_transitions(self):
     from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner

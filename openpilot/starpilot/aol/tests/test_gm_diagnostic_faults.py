@@ -33,7 +33,7 @@ def owner(label):
 def test_diagnostic_receipt_does_not_invent_native_authority(label, mask):
   cp, state = owner(label)
   state = replace(state, pandaInventory=(replace(state.pandaInventory[0], faults=mask),))
-  admitted = mask == 0 or (label == 'volt' and mask == 1 << 18)
+  admitted = mask == 0 or (label == 'volt' and mask == 1 << 18) or (label == 'bolt' and mask in (1 << 2, 1 << 3, 12))
   assert native_inventory_matches_cp(state, cp) == admitted
   accepted = current_native(sm_for(cp, state), cp, now_ns=NOW, axis_session_id='session')
   if not admitted:
@@ -51,7 +51,7 @@ def test_diagnostic_receipt_does_not_invent_native_authority(label, mask):
 @pytest.mark.parametrize('bit', (0, 1, 4, 5, 7, 8, 15, 20, 21, 22, 23, 25, 26, 27, 31))
 def test_authority_faults_and_unknown_bits_still_block(label, bit):
   cp, state = owner(label)
-  baseline = replace(state, pandaInventory=(replace(state.pandaInventory[0], faults=(1 << 18 if label == 'volt' else 0)),))
+  baseline = replace(state, pandaInventory=(replace(state.pandaInventory[0], faults=(1 << 18 if label == 'volt' else 12)),))
   assert current_native(sm_for(cp, baseline), cp, now_ns=NOW, axis_session_id='session') == baseline
   state = replace(baseline, pandaInventory=(replace(baseline.pandaInventory[0], faults=baseline.pandaInventory[0].faults | (1 << bit)),))
   assert current_native(sm_for(cp, state), cp, now_ns=NOW, axis_session_id='session') is None
@@ -61,7 +61,7 @@ def test_authority_faults_and_unknown_bits_still_block(label, bit):
 @pytest.mark.parametrize('bad', ('rx', 'heartbeat', 'word', 'ae', 'serial', 'session', 'expired'))
 def test_diagnostic_bits_cannot_bypass_other_vetoes(label, bad):
   cp, state = owner(label)
-  slot = replace(state.pandaInventory[0], faults=(1 << 18 if label == 'volt' else 0))
+  slot = replace(state.pandaInventory[0], faults=(1 << 18 if label == 'volt' else 12))
   baseline = replace(state, pandaInventory=(slot,))
   assert current_native(sm_for(cp, baseline), cp, now_ns=NOW, axis_session_id='session') == baseline
   mutations = {'rx': {'safetyRxChecksInvalid': True}, 'heartbeat': {'heartbeatLost': True},
@@ -88,9 +88,9 @@ def test_other_volt_configs_do_not_borrow_stock_register_policy(word):
   assert blocking_fault_mask(1 << 18, cp)
 
 
-@pytest.mark.parametrize('identity', (CAR.CHEVROLET_BOLT_CC_2017, CAR.CHEVROLET_BOLT_CC_2018_2021, CAR.CHEVROLET_BOLT_CC_2022_2023,
+@pytest.mark.parametrize('identity', (CAR.CHEVROLET_BOLT_CC_2017, CAR.CHEVROLET_BOLT_CC_2022_2023,
                                      CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL))
-def test_all_bolt_generations_reject_irq_faults(identity):
+def test_other_bolt_generations_do_not_borrow_irq_policy(identity):
   from openpilot.starpilot.aol.panda_faults import blocking_fault_mask
   cp = params(identity, pedal=True, camera=True)
   cp.alternativeExperience = 32
@@ -102,20 +102,20 @@ def test_latest_raw_faults_use_same_exact_policy_and_retain_native_veto(label):
   from openpilot.cereal import messaging
   from openpilot.starpilot.aol.transport_pause import healthy_transport
   cp, state = owner(label)
-  allowed = ['registerDivergent'] if label == 'volt' else []
-  mask = 1 << 18 if label == 'volt' else 0
+  allowed = 'registerDivergent' if label == 'volt' else 'interruptRateCan2'
+  mask = 1 << 18 if label == 'volt' else 1 << 3
   state = replace(state, pandaInventory=(replace(state.pandaInventory[0], faults=mask),))
   sm = sm_for(cp, state)
   assert current_native(sm, cp, now_ns=NOW, axis_session_id='session') == state
   event = messaging.new_message('pandaStates', 1, valid=True, logMonoTime=NOW)
   event.pandaStates[0] = sm['pandaStates'][0]
-  event.pandaStates[0].faults = allowed
+  event.pandaStates[0].faults = [allowed]
   sm.update_msgs(NOW / 1e9, [event.as_reader()])
   assert healthy_transport(sm, cp, car_state(), 'session', NOW)
-  event.pandaStates[0].faults = [*allowed, 'relayMalfunction']
+  event.pandaStates[0].faults = [allowed, 'relayMalfunction']
   sm.update_msgs(NOW / 1e9, [event.as_reader()])
   assert not healthy_transport(sm, cp, car_state(), 'session', NOW)
-  event.pandaStates[0].faults = allowed
+  event.pandaStates[0].faults = [allowed]
   event.pandaStates[0].heartbeatLost = True
   sm.update_msgs(NOW / 1e9, [event.as_reader()])
   assert not healthy_transport(sm, cp, car_state(), 'session', NOW)
@@ -126,7 +126,8 @@ def test_raw_enum_policy_does_not_borrow_other_config_diagnostics(label):
   from openpilot.cereal import log
   from openpilot.starpilot.aol.panda_faults import blocking_fault_list
   cp, _ = owner(label)
-  allowed = [log.PandaState.FaultType.registerDivergent] if label == 'volt' else []
+  allowed = [log.PandaState.FaultType.registerDivergent] if label == 'volt' else [
+    log.PandaState.FaultType.interruptRateCan1, log.PandaState.FaultType.interruptRateCan2]
   assert not blocking_fault_list(allowed, cp)
   denied = (log.PandaState.FaultType.interruptRateCan1 if label == 'volt' else log.PandaState.FaultType.registerDivergent)
   assert blocking_fault_list([*allowed, denied], cp)
@@ -189,7 +190,7 @@ def test_real_native_permission_and_brake_withdrawal_remain_authoritative(label)
       assert parsed.brakePressed
       assert not mask & 2
       slot = replace(state.pandaInventory[0], controlsAllowed=bool(safety.get_controls_allowed()),
-                     faults=1 << 18 if label == 'volt' else 0)
+                     faults=1 << 18 if label == 'volt' else 12)
       receipt = replace(state, observedMonoTime=now, validUntilMonoTime=now + 200_000_000,
                         lateralAllowed=bool(mask & 1), longitudinalAllowed=bool(mask & 2),
                         requestedLateral=bool(request & 1), requestedLongitudinal=bool(request & 2),
@@ -225,26 +226,3 @@ def test_interceptor_clarity_admits_only_interrupt_rate_faults():
   civic = CarInterface.get_params(CAR.HONDA_CIVIC, fp, [], False, False, False)
   civic.safetyConfigs[0].safetyParam = 544
   assert blocking_fault_mask(1 << 3, civic)  # only the Clarity is qualified
-@pytest.mark.parametrize('faults', (['interruptRateCan1'], ['interruptRateCan2'],
-                                  ['interruptRateCan1', 'interruptRateCan2']))
-def test_bolt_irq_faults_reject_raw_and_inventory_authority(faults):
-  from openpilot.cereal import messaging
-  from openpilot.starpilot.aol.panda_faults import blocking_fault_list
-  from openpilot.starpilot.aol.transport_pause import healthy_transport
-  cp, state = owner('bolt')
-  mask = sum({'interruptRateCan1': 1 << 2, 'interruptRateCan2': 1 << 3}[fault] for fault in faults)
-  slot = replace(state.pandaInventory[0], controlsAllowed=True, faults=mask)
-  receipt = replace(state, lateralAllowed=True, longitudinalAllowed=True, pandaInventory=(slot,))
-  sm = sm_for(cp, receipt)
-  assert not native_inventory_matches_cp(receipt, cp)
-  assert current_native(sm, cp, now_ns=NOW, axis_session_id='session') is None
-  # A newer raw health sample must veto even a clean admitted inventory.
-  sm = sm_for(cp, state)
-  assert current_native(sm, cp, now_ns=NOW, axis_session_id='session') == state
-  assert healthy_transport(sm, cp, car_state(), 'session', NOW)
-  event = messaging.new_message('pandaStates', 1, valid=True, logMonoTime=NOW)
-  event.pandaStates[0] = sm['pandaStates'][0]
-  event.pandaStates[0].faults = faults
-  sm.update_msgs(NOW / 1e9, [event.as_reader()])
-  assert blocking_fault_list(sm['pandaStates'][0].faults, cp)
-  assert not healthy_transport(sm, cp, car_state(), 'session', NOW)

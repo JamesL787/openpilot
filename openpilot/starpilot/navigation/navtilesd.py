@@ -442,7 +442,7 @@ class TileDaemon:
 # ---------------------------------------------------------------- process
 
 def _map_enabled() -> bool:
-  from openpilot.starpilot.system.android_auto.projection_layout import DOCUMENT_PATH
+  from openpilot.starpilot.system.starport.projection_layout import DOCUMENT_PATH
   from openpilot.starpilot.navigation.offline_roads import read_json
   document = read_json(Path(DOCUMENT_PATH), 1 << 16)
   try:

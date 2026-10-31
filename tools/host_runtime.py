@@ -295,7 +295,7 @@ class HostRuntime:
                BASEDIR=str(self.work), PWD=str(self.work), PARAMS_ROOT=str(inside(self.cache / 'params', self.cache)),
                OPENPILOT_PREFIX=self.prefix, SP_HOST_PREFIX=self.prefix,
                SP_HOST_PARAMS_ROOT=str(self.cache / 'params'), SP_HOST_RUNTIME='1',
-               ANDROID_AUTO_DIR=str(inside(self.cache / 'android_auto', self.cache)),
+               STARPORT_DIR=str(inside(self.cache / 'starport', self.cache)),
                SP_SCONS_CACHE_DIR=str(self.cache / 'scons-cache'),
                SCONS_CACHE=str(self.cache / 'scons-cache'),
                NOBOARD='1', SIMULATION='1', SKIP_FW_QUERY='1', STARPILOT_UI_DEV='1',

@@ -272,8 +272,8 @@ class DrawUpdates(dict):
 
 class Compositor:
   def __init__(self, profile: str, width: int, height: int, *, nv12: bool, wide: bool, cabin: bool):
-    from openpilot.starpilot.system.android_auto.headless_egl import HeadlessContext, FrameReadback
-    from openpilot.starpilot.system.android_auto import gpu_nv12
+    from openpilot.starpilot.system.starport.headless_egl import HeadlessContext, FrameReadback
+    from openpilot.starpilot.system.starport import gpu_nv12
     self.resources = ExitStack()
     self.context = HeadlessContext(width, height)
     self.resources.callback(self.context.close)
@@ -556,7 +556,7 @@ class Compositor:
       return False
     sample = self.ui.replay_sample
     key = epoch, sample.now_ns
-    from openpilot.starpilot.system.android_auto import gpu_nv12
+    from openpilot.starpilot.system.starport import gpu_nv12
     from openpilot.starpilot.ui.shell import ShellMode
     rl = self.rl
     self.context.begin_frame(cast(int, sample.now_ns) / 1e9)
@@ -667,7 +667,7 @@ def run(session_dir: Path, route_id: str, data_dir: Path, target: str, profile: 
       publisher = ReplayFramePublisher(Path(os.environ['SP_REPLAY_CLOCK_PATH']).with_name('frame'), session_dir.name, profile, width, height)
       resources.callback(publisher.close)
     else:
-      from openpilot.starpilot.system.android_auto.hw_encoder import HardwareH264Encoder
+      from openpilot.starpilot.system.starport.hw_encoder import HardwareH264Encoder
       from openpilot.starpilot.replay.export import BITRATE_KBPS
       encoder = HardwareH264Encoder(width, height, bitrate_kbps=BITRATE_KBPS)
       if not encoder.supports_nv12:
