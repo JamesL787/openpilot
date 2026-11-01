@@ -272,6 +272,9 @@ CIVIC_TEA_H020 = EpsFirmwareCalibration(
   # provisional: the C020's 0.15 ran 0.12-0.13 s early vs the plan on both owner routes (00000004, 00000022), flat by
   # speed band; only 3 clean turns, below the timing standard, so re-measure on the next drive
   cmd_delay_s=0.27, cmd_delay_highway_s=0.27,
+  # a plan model (CD210, route 00000037) is told the C020's 0.28 s, but the car answered its request ~0.18 s after it
+  # was published (eps_report 0.13 / 0.17 s at 5-9 / 9-15 m/s, 25 turns at 9-15 m/s): hold it the 0.10 s difference
+  plan_cmd_delay_s=0.10,
   lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
   rack=CIVIC_TGG_A120_RACK,
   default_on=True,
@@ -522,7 +525,7 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table (the C020's and TGG's); not measured on the H020",
     "load": "measured: k0 and friction on one 3.7 min route of the owner (00000004--a8cb4760f4); the rest inferred from the TGG-A120",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "measured (provisional): the C020's 0.15 plus the 0.12 s early that plan_timing found on routes 00000004 / 00000022 (3 clean turns)",
+    "cmd_delay": "measured (provisional): the C020's 0.15 plus the 0.12 s early that plan_timing found on routes 00000004 / 00000022 (3 clean turns); plan models 0.10 s, the car ~0.10 s ahead of CD210's 0.28 s told delay on route 00000037",
     "model_delay": "inferred: the C020's (same chassis)",
     "rack": "inferred: the TGG-A120's yaw-fitted rack (same A table, gearing a donor assumption)",
   },

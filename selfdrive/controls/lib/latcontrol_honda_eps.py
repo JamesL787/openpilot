@@ -65,7 +65,8 @@ SETTINGS_REFRESH_FRAMES = 300
 
 # The command delay makes up for the part of the told delay the model does not follow, so it depends on where the
 # steering comes from (starpilotModelV2.lateralSource). A plan model is read at the told delay exactly (this fork has no
-# MIN_STABLE_DELAY floor), so telling it the measured lag already lands the car on time: no command delay. An action
+# MIN_STABLE_DELAY floor), so telling it the measured lag already lands the car on time: no command delay, unless the
+# car answers faster than the told delay it shares with the action heads (the calibration's plan_cmd_delay_s). An action
 # head (Cinque v3) moves its aim only ~0.53 of a change in the told delay, which is what the calibration's command
 # delay was measured against; a curvature head and an unknown source (older logs, no message yet) take it too.
 CMD_DELAY_SCALE_BY_SOURCE = {"plan": 0.0}
@@ -194,7 +195,7 @@ class LatControlHondaEps(LatControl):
     target = CMD_DELAY_SCALE_BY_SOURCE.get(self.lateral_source, 1.0)
     step = self.dt / CMD_DELAY_RAMP_S
     self.cmd_delay_scale += max(min(target - self.cmd_delay_scale, step), -step)
-    return self.cmd_delay_scale * command_delay(self.calibration, v_ego)
+    return self.cmd_delay_scale * command_delay(self.calibration, v_ego) + (1.0 - self.cmd_delay_scale) * self.calibration.plan_cmd_delay_s
 
   def reset(self):
     # controlsd calls this on every inactive frame; update() decides whether the dropout is long enough to reset

@@ -1,4 +1,5 @@
 """The command delay follows where the model's steering comes from (starpilotModelV2.lateralSource)."""
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -82,6 +83,14 @@ def test_a_plan_model_runs_with_no_command_delay_reached_by_a_ramp(monkeypatch):
   steps = [a - b for a, b in zip(delays, delays[1:], strict=False)]
   assert max(steps) <= 0.12 * lac.dt / honda_eps.CMD_DELAY_RAMP_S + 1e-6  # no step: 0.12 s over 1 s (logged as float32)
   assert delays[frames // 2] == pytest.approx(0.06, abs=0.002)
+
+
+def test_a_plan_model_takes_the_calibrations_plan_command_delay(monkeypatch):
+  lac, VM, _ = _controller(monkeypatch)
+  lac.calibration = dataclasses.replace(lac.calibration, plan_cmd_delay_s=0.10)
+  frames = int(honda_eps.CMD_DELAY_RAMP_S / lac.dt)
+  assert _delays(lac, VM, ["plan"] * (frames + 5))[-1] == pytest.approx(0.10)
+  assert _delays(lac, VM, ["actionHead"] * (frames + 5))[-1] == pytest.approx(0.12)
 
 
 def test_a_model_swap_ramps_back(monkeypatch):
