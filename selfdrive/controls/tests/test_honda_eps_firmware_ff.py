@@ -737,6 +737,7 @@ def _ptm_cp(candidate, fw):
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', rack.CIVIC_TBA_C020_RACK),
   (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', rack.INSIGHT_TXM_A040_RACK),
   (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00', rack.CRV_TLA_A040_RACK),
+  (CAR.HONDA_CRV_5G, b'39990-TLA,A220\x00\x00', rack.CRV_TLA_A040_RACK),
 ])
 def test_the_civic_c020_insight_and_crv_a040_have_their_own_yaw_fitted_rack_maps(candidate, fw, table):
   CP, cal = _ptm_cp(candidate, fw)

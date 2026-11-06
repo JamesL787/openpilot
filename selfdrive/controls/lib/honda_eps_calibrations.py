@@ -11,8 +11,7 @@ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_TRW_A
   EpsFirmwareCalibration, R6_GAIN_BP, computed_r6
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CIVIC_TGG_A120_RACK, \
   CLARITY_TRW_A020_RACK, CRV_TLA_A040_RACK, INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
-from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, \
-  CRV_2020_SPEC, spec_rack_table
+from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, spec_rack_table
 
 # --- the images ------------------------------------------------------------------------------------------------
 # Every table below was read from the image the car's owners actually run (the latest builds on the dev machine;
@@ -327,8 +326,13 @@ CRV_TLA_A040 = EpsFirmwareCalibration(
 # Carried over, NOT read from this image: load = CRV_TLA_A040_LOAD and the P/I trims (the CR-V's, see CRV_TLA_A040). R6 is computed
 # from its A table: the motor-to-angle constant (3121, 0x19C00), the A table (16783 at centre, 0x11338, byte-identical to
 # the A040's) and NORM (1650, PTM halfword 0x42558) all equal the A040's, so it has the A040's R6.
-# Rack map predicted from the 2020+ CR-V's specs through the same A table (no yaw fit).
-CRV_TLA_A220_SPEC_RACK = spec_rack_table(CRV_2020_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040])
+# Rack map: the A040's, measured against its VSA yaw. Same steering (lock 2.30 turns at 12.3, ~3% heavier) and the same
+# A table. Scored on this car's own VSA yaw (0x94 bus 1, 0.2467 deg/s per count + 0.135 clockwise from 334k GPS pairs) over
+# routes 0000030a, 0000030d, 00000039 and 0000003d (740 s moving at >= 3 deg): left / right measured / predicted
+# curvature 0.95 / 0.99 at 25-40 m/s and 0.97 / 1.01 at 15-25 m/s, against 0.79 / 0.90 and 0.86 / 0.95 on its spec map
+# (slip factor -0.000534), and 1.00 past 90 deg at crawl against 1.02-1.035. Ahead of the spec map on either half of
+# those routes held out. Its own fit is not usable yet: the slip factor comes out -0.00112 or -0.00041 depending on
+# which half it is fitted on.
 CRV_TLA_A220 = EpsFirmwareCalibration(
   name="crv_tla_a220", e4_per_output=4096.0,
   r5_key_bp=(0, 161, 222, 322, 409, 534, 696, 998, 1663), r5_v=(0, 2720, 3750, 5439, 6917, 9038, 11775, 16880, 28127), key_clamp=1774,
@@ -336,7 +340,7 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040.r6_per_deg_s, r6_angle_bp=CRV_TLA_A040.r6_angle_bp, r6_angle_gain=CRV_TLA_A040.r6_angle_gain,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
-  rack=CRV_TLA_A220_SPEC_RACK,
+  rack=CRV_TLA_A040_RACK,
 )
 
 # Acura RDX 3G 39990-TJB-A220, the Route-A PTM, Trk1641 build with the runtime ROM CRC fix (RDX-PTM-101526-RomCRC.rwd,
@@ -528,7 +532,7 @@ CALIBRATION_PROVENANCE = {
     "load": "inferred: the A040 owner's (the A220 drives 0x30A-0x30D ran the 10-06 build: refit after the reflash)",
     "trims": "inferred: the A040 owner's",
     "cmd_delay": "default", "model_delay": "default: the Clarity's schedule",
-    "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
+    "rack": "inferred: the A040's VSA-yaw map (same steering and A table), checked on its own VSA yaw, routes 030a / 030d / 39 / 3d",
   },
 }
 

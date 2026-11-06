@@ -97,7 +97,6 @@ def test_the_spec_load_is_close_to_every_measured_load(name, s, profile, load):
 
 @pytest.mark.parametrize("cal,s,profile", [
   (eps_cal.CIVIC_TBA_C120, spec.CIVIC_2019_SEDAN_SPEC, sr.HONDA_VGR_CIVIC_TBA_C120),
-  (eps_cal.CRV_TLA_A220, spec.CRV_2020_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
 ])
 def test_cars_without_a_yaw_fit_steer_on_their_spec_rack_map(cal, s, profile):
   assert cal.rack == spec.spec_rack_table(s, INV[profile])
@@ -117,6 +116,7 @@ def test_measured_cars_keep_their_own_fits():
   assert eps_cal.CIVIC_TEG_A010.rack is rack.CIVIC_TEG_A010_RACK
   assert eps_cal.CIVIC_TBA_A030.rack is rack.CIVIC_TEG_A010_RACK  # the same car on the same A table
   assert eps_cal.CRV_TLA_A040.rack is rack.CRV_TLA_A040_RACK
+  assert eps_cal.CRV_TLA_A220.rack is rack.CRV_TLA_A040_RACK  # the same steering on the same A table
 
 
 def test_past_the_table_end_the_linear_angle_holds_the_last_divisor():
