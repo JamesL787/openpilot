@@ -11,7 +11,8 @@ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_TRW_A
   EpsFirmwareCalibration, R6_GAIN_BP, computed_r6
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CIVIC_TGG_A120_RACK, \
   CLARITY_TRW_A020_RACK, CRV_TLA_A040_RACK, INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
-from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, spec_rack_table
+from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, \
+  spec_rack_table
 
 # --- the images ------------------------------------------------------------------------------------------------
 # Every table below was read from the image the car's owners actually run (the latest builds on the dev machine;
