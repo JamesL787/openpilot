@@ -1,8 +1,8 @@
 # Honda EPS controller (`LatControlHondaEps`)
 
 The lateral controller for Hondas whose EPS runs a PTM (Proper Torque Mod) image: Clarity TRW-A020, Civic TBA-C020 /
-TBA-C120 / TGG-A120 / TBA-A030 / TEG-A010, Insight TXM-A040, CR-V TLA-A040 / TLA-A220, and the Acura RDX 3G's
-TJB-A220. Every one of those images runs the same firmware control law with its own tables, so one controller serves
+TBA-C120 / TGG-A120 / TBA-A030 / TEG-A010, Insight TXM-A040, CR-V TLA-A040 / TLA-A220, the Acura RDX 3G's
+TJB-A220, and the Ridgeline's T6Z-A110 rev b5 (a V850 image in the same form, see below). Every one of those images runs the same firmware control law with its own tables, so one controller serves
 them all; what differs per car lives in one calibration record per EPS image. The TJB is the exception that proves
 it: it runs THR (Odyssey) code in its own units, and its Route-A build ports the Clarity's tables into them, so in
 the Clarity's units (key x 1.732, gains x 16) it is the same law. It has no angle table (its rack is variably
@@ -70,6 +70,15 @@ complete, and the controller logs the summary at start.
   rms, 2.5% worst); the slip factor comes from the axle loads (within 10%). The A030 carries the TEG-A010's measured
   map (same car, same A table). Every calibration has one, and a car whose firmware A table is unknown stays on
   LatControlPID; paramsd's steer ratio, the road-measured curves and `HondaEpsFirmwareVgr` are LatControlPID's only.
+- **The Ridgeline.** Its T6Z-A110 is a V850 image of the Pilot codebase, not the Clarity's family, with the same structure:
+  a target map indexed by the command, P (+ D) on the target minus a filtered motor-speed rate feedback, added to the
+  assist. PTM rev b5 folds the Clarity's KFF into its target and scales target and P to the Clarity's percent of full
+  scale per output, so the law here is the Clarity's form with KFF 0, its output stage in `scale_q8` (x655/256 after the
+  fades) and one addition, `p_clamp`: its P clamp (942) binds just inside its output cap (2410), where every SH-2A
+  image's lies past its own. The image has no angle table and the rack is constant-ratio (the EPS's own rate word reads
+  -4.0 per published deg/s from centre to lock), so its linear map is the identity and R6 is -128 per deg/s, flat. Only
+  rev b5 reports 39990-T6Z,A110 (dash, comma); the earlier T6Z builds report 39990,T6Z,A110 and stay dashcam. Its load
+  is in its own LKAS counts (full motor command +-2457) and lands on the Clarity's column in percent of full scale.
 - **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
   front-axle mass / R0^2 for an image with no sibling (holds within ~12%, turn rates ~15%, held out).
 - **Command delay.** The curvature the car executes is delayed by the calibration's `cmd_delay_s` below 10 m/s and

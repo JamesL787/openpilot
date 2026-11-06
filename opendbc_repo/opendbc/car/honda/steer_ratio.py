@@ -20,6 +20,7 @@ HONDA_VGR_INSIGHT_TXM_A040 = "insight_txm_a040"
 HONDA_VGR_CRV_TLA_A040 = "crv_tla_a040"
 HONDA_VGR_CIVIC_TBA_C120 = "civic_tba_c120"
 HONDA_VGR_RDX_TJB_A220 = "rdx_tjb_a220"
+HONDA_VGR_RIDGELINE_T6Z_A110 = "ridgeline_t6z_a110"
 
 
 # Firmware queries return the modified image with a comma in place of the
@@ -38,6 +39,7 @@ HONDA_VGR_PROFILE_BY_FW = {
   # Position X/Y at 0x11374/0x11338 (0x11300-0x113B0) byte-identical to the A040's, read by the same shifted controller code.
   "39990-TLA-A220": HONDA_VGR_CRV_TLA_A040,
   "39990-TJB-A220": HONDA_VGR_RDX_TJB_A220,
+  "39990-T6Z-A110": HONDA_VGR_RIDGELINE_T6Z_A110,
 }
 
 HONDA_VGR_PROFILE_FLAGS = {
@@ -47,6 +49,7 @@ HONDA_VGR_PROFILE_FLAGS = {
   HONDA_VGR_CRV_TLA_A040: HondaFlags.VGR_CRV_TLA_A040,
   HONDA_VGR_CIVIC_TBA_C120: HondaFlags.VGR_CIVIC_TBA_C120,
   HONDA_VGR_RDX_TJB_A220: HondaFlags.VGR_RDX_TJB_A220,
+  HONDA_VGR_RIDGELINE_T6Z_A110: HondaFlags.VGR_RIDGELINE_T6Z_A110,
 }
 
 
@@ -231,6 +234,15 @@ RDX_TJB_A220_VGR_REL_LOCAL = [_RDX_TJB_A220_RATE_WORD[0] / _piecewise(a, _RDX_TJ
                               for a in RDX_TJB_A220_VGR_ANGLE_BP]  # d(published)/d(linear), as the B tables
 RDX_TJB_A220_VGR_LINEAR_BP = _integrate_inverse_local_gain(RDX_TJB_A220_VGR_ANGLE_BP, RDX_TJB_A220_VGR_REL_LOCAL)
 
+# Honda Ridgeline on 39990-T6Z-A110 (a V850 image, the Pilot family). Traced, not a table: the EPS receives the wheel
+# angle from the steering-angle sensor (0x156 handler FUN_000404b8) and publishes none, and no angle-indexed axis exists
+# in its calibration, so the published angle IS the linear one. Its rate feedback, motor speed through a fixed gear,
+# confirms the rack is constant-ratio: on the owner's PTM rev b5 routes 0000023d/0000023e the 0x18F rate word,
+# integrated against the published angle's change over 0.25 / 0.5 s windows (no zero crossing, the RDX's method), reads
+# -3.97 / -4.01 / -4.03 / -4.04 / -4.05 per deg at 0-10 / 10-20 / 20-30 / 30-90 / 90+ deg: flat out to lock.
+RIDGELINE_T6Z_A110_VGR_ANGLE_BP = [0.0, 600.0]
+RIDGELINE_T6Z_A110_VGR_LINEAR_BP = [0.0, 600.0]
+
 
 HONDA_VGR_INVERSE_BY_PROFILE = {
   HONDA_VGR_CLARITY_TRW_A020: (CLARITY_TRW_A020_VGR_LINEAR_BP, CLARITY_TRW_A020_VGR_ANGLE_BP),
@@ -239,6 +251,7 @@ HONDA_VGR_INVERSE_BY_PROFILE = {
   HONDA_VGR_CRV_TLA_A040: (CRV_TLA_A040_VGR_LINEAR_BP, CRV_TLA_A040_VGR_ANGLE_BP),
   HONDA_VGR_CIVIC_TBA_C120: (CIVIC_TBA_C120_VGR_LINEAR_BP, CIVIC_TBA_C120_VGR_ANGLE_BP),
   HONDA_VGR_RDX_TJB_A220: (RDX_TJB_A220_VGR_LINEAR_BP, RDX_TJB_A220_VGR_ANGLE_BP),
+  HONDA_VGR_RIDGELINE_T6Z_A110: (RIDGELINE_T6Z_A110_VGR_LINEAR_BP, RIDGELINE_T6Z_A110_VGR_ANGLE_BP),
 }
 
 # Each A table's centre divisor (Y[0]): the published angle is raw * 2**14 / Y, so a published degree near centre is
@@ -250,6 +263,7 @@ HONDA_VGR_CENTRE_DIVISOR_BY_PROFILE = {
   HONDA_VGR_CRV_TLA_A040: _CRV_TLA_A040_POSITION_Y[0],
   HONDA_VGR_CIVIC_TBA_C120: _CIVIC_C120_POSITION_Y[0],
   HONDA_VGR_RDX_TJB_A220: 1 << 14,  # no table: the published angle is the linear one at centre
+  HONDA_VGR_RIDGELINE_T6Z_A110: 1 << 14,  # no table
 }
 
 HONDA_VGR_INVERSE_BY_FLAG = {

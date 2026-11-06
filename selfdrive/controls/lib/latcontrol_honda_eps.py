@@ -7,8 +7,8 @@ wheel along the desired path rather than one it has to be dragged into by error.
 the car's own image (eps_firmware_ff.EpsFirmwareCalibration), picked by the EPS part number in carFw.
 
 Which cars get it: a calibration with default_on (the Clarity, where it was developed and validated) always; the other
-PTM cars (Civic A030/TEG/C020/C120/TGG-A120, Insight, CR-V, RDX 3G) only with HondaEpsController on, because parts of
-their calibration are carried over from a related car until a drive measures them. A car with no calibration, whose
+PTM cars (Civic A030/TEG/C020/C120/TGG-A120, Insight, CR-V, RDX 3G, Ridgeline T6Z-A110 rev b5) only with
+HondaEpsController on, because parts of their calibration are carried over from a related car until a drive measures them. A car with no calibration, whose
 torque map is not the linear [0, E4 cap] the calibration expects, or with no firmware A table for its rack map, keeps
 LatControlPID. The setting is read once, when
 controlsd starts.
@@ -41,6 +41,7 @@ from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.honda_eps_calibrations import (
   REQUIRED_PTM_RWD,
+  REQUIRED_RAW_EPS_FW,
   provenance_summary,
   select_eps_firmware_calibration,
 )
@@ -108,12 +109,12 @@ def eps_firmware_calibration(CP, params=None) -> EpsFirmwareCalibration | None:
   """The EPS image calibration this car should steer with, or None to keep LatControlPID."""
   if not (bool(CP.flags & HondaFlags.EPS_MODIFIED) and CP.lateralTuning.which() == "pid"):
     return None
-  eps_fw = next((normalize_honda_eps_fw(fw.fwVersion) for fw in CP.carFw if fw.ecu == "eps"), None)
-  if eps_fw is None:
+  raw_fw = next((bytes(fw.fwVersion) for fw in CP.carFw if fw.ecu == "eps"), None)
+  if raw_fw is None:
     return None
   params = params if params is not None else Params()
-  calibration = select_eps_firmware_calibration(str(CP.carFingerprint), eps_fw)
-  if calibration is None:
+  calibration = select_eps_firmware_calibration(str(CP.carFingerprint), normalize_honda_eps_fw(raw_fw))
+  if calibration is None or not raw_fw.startswith(REQUIRED_RAW_EPS_FW.get(calibration.name, b'')):
     return None
   # The inversion assumes 0xE4 = -output * e4_per_output, i.e. the car's linear modified-EPS torque map
   cap = calibration.e4_per_output

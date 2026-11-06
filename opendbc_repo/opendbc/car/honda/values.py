@@ -94,6 +94,7 @@ class HondaFlags(IntFlag):
   VGR_CRV_TLA_A040 = 262144
   VGR_CIVIC_TBA_C120 = 524288
   VGR_RDX_TJB_A220 = 1048576  # measured on the road: the TJB image has no angle table (see steer_ratio.py)
+  VGR_RIDGELINE_T6Z_A110 = 2097152  # the T6Z-A110 rack is constant-ratio and its image has no angle table (see steer_ratio.py)
 
 
 # Car button codes

@@ -798,6 +798,7 @@ FW_VERSIONS = {
       b'39990-T6Z-A030\x00\x00',
       b'39990-T6Z-A050\x00\x00',
       b'39990-T6Z-A110\x00\x00',
+      b'39990-T6Z,A110\x00\x00',
     ],
     (Ecu.fwdRadar, 0x18dab0f1, None): [
       b'36161-T6Z-A020\x00\x00',

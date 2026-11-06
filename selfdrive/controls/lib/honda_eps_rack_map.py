@@ -106,6 +106,20 @@ CRV_TLA_A040_RACK = RackMapTable(
   slip_factor=-0.00084,
 )
 
+# Honda Ridgeline (T6Z-A110 PTM rev b5): a constant-ratio rack and no angle table (steer_ratio RIDGELINE_T6Z_A110_VGR_*).
+# It has no VSA yaw on its bus, so yaw is the rear wheel-speed difference over a 1.70 m track (less a 0.11 % tyre
+# mismatch found on straights) below 9 m/s, where it matches GPS heading within 0.4 %, and livePose / 0.965 above
+# (livePose reads 3-4 % low against GPS at every speed; the wheel-speed yaw over-reads 34 % at 25-35 m/s, likely the
+# rear torque vectoring). On the owner's routes 9b9a340b3a3dd778/0000023d-0000023e the ratio is flat, 17.7-17.9 from 15 to
+# 320 deg at 3-9 m/s, and with the roll term a slip factor of -0.00108 makes it speed-independent within 1.2 % rms
+# (without it -0.00078 leaves 4.6 %). Per route, measured / predicted angle is 0.98-1.02 in every speed x angle cell
+# but the small-angle crawl ones (1.04; angle offset), 0.99-1.14 on the short route 0000023d (small angles only).
+RIDGELINE_T6Z_A110_RACK = RackMapTable(
+  ratio_bp=(5.0, 400.0),
+  ratio_v=(17.08, 17.08),
+  slip_factor=-0.00108,
+)
+
 
 class HondaEpsRackMap:
   """Physical wheel angle (deg, left-positive) <-> curvature (1/m, openpilot's right-positive) for one RackMapTable."""

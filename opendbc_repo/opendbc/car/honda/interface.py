@@ -340,6 +340,19 @@ class CarInterface(CarInterfaceBase):
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2560, 4920], [0, 2560, 12000]]
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
+    elif candidate == CAR.HONDA_RIDGELINE and any(fw.ecu == "eps" and fw.fwVersion.startswith(b'39990-T6Z,A110') for fw in car_fw):
+      # 39990-T6Z,A110 PTM rev b5 only (the earlier builds report 39990,T6Z,A110 and keep the stock tune): its target, P
+      # and fades are folded to the Clarity's percent of full scale at every E4 (E4 4096 per unit), so the Clarity's
+      # gains carry over. LatControlHondaEps steers it with HondaEpsController on (honda_eps_calibrations
+      # RIDGELINE_T6Z_A110); otherwise LatControlPID on this tune.
+      ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]
+      bp = [0., 25. * CV.MPH_TO_MS - 1e-3, 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS]
+      ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [bp, [0.018, 0.024, 0.048, 0.060]]
+      ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [bp, [0.006, 0.008, 0.016, 0.020]]
+      ret.lateralTuning.pid.kf = 3.6e-6
+      ret.steerAtStandstill, ret.autoResumeSng = True, True
+      ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
+
     elif candidate == CAR.HONDA_RIDGELINE:
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.38], [0.11]]

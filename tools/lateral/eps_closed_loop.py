@@ -2,7 +2,8 @@
 """Closed-loop replay of LatControlHondaEps's core against a car's own firmware law and fitted column.
 
 The route's logged target (pidState.steeringAngleDesiredDeg: after the command delay and rate limit, as the core saw
-it) drives HondaEpsLateralCore, the code the car runs; its output goes out as 0xE4 after --cmd-lag, through the
+it; on a drive steered by another controller, controlsState.desiredCurvature through the calibration's rack map) drives
+HondaEpsLateralCore, the code the car runs; its output goes out as 0xE4 after --cmd-lag, through the
 calibration's command map to R5, into the firmware law F = scale*(Kp(R5)*(R5 - ref) + KFF*R5)/2^18 with ref the R6
 rate feedback through tracker-1, and into the column j*thdd = F - load(th, thd) (the calibration's ColumnLoadModel,
 Coulomb tanh at 2 deg/s as fitted). The angle comes back --sensor-delay late. Hands-off engaged windows only: there is
@@ -34,8 +35,10 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 sys.path[:0] = [ROOT, os.path.join(ROOT, 'opendbc_repo'), os.path.dirname(os.path.abspath(__file__))]
 import eps_pytest_stubs  # noqa: F401  (device-only modules)
 from cereal import log
+from opendbc.car.honda.steer_ratio import HONDA_VGR_INVERSE_BY_PROFILE
 from openpilot.selfdrive.controls.lib import honda_eps_calibrations as C
 from openpilot.selfdrive.controls.lib import honda_eps_firmware_ff as F
+from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 
 MPH = 0.44704
 # interface.py, every modified-EPS Honda
@@ -43,6 +46,9 @@ KP = ([0., 25 * MPH - 1e-3, 25 * MPH, 50 * MPH], [0.018, 0.024, 0.048, 0.060])
 KI = ([0., 25 * MPH - 1e-3, 25 * MPH, 50 * MPH], [0.006, 0.008, 0.016, 0.020])
 DT, SUB = 0.01, 20  # 100 Hz controller, 2 kHz plant
 TRACKER_TAU = 0.0195  # s, tracker-1 at its Route-A / P-minus-5 setting (KB TRACKER1_TIMING.md)
+# The Ridgeline's rate feedback filter instead: the 7/8 IIR in its 4 kHz motor task (1.9 ms) and the c6/c8 IIR in its 1 kHz
+# control task (6.6 ms), FUN_0002e2b6 / FUN_00035fc8
+TRACKER_TAU_BY_CALIBRATION = {"ridgeline_t6z_a110": 0.0085}
 
 
 def seg(p):
@@ -50,9 +56,10 @@ def seg(p):
   return int(m.group(1)) if m else 0
 
 
-def read_route(pattern):
+def read_route(pattern, rack=None):
   s16 = lambda b: int.from_bytes(b, 'big', signed=True)  # noqa: E731
-  S = {k: [] for k in ('cs', 'e4', 'cc', 'ctl', 'lp')}
+  S = {k: [] for k in ('cs', 'e4', 'cc', 'ctl', 'lp', 'kd')}
+  wheelbase = None
   files = sorted({f for g in pattern.split(',') for f in glob.glob(os.path.join(g, 'rlog*') if os.path.isdir(g) else g)}, key=seg)
   for p in files:
     raw = zstd.ZstdDecompressor().stream_reader(open(p, 'rb').read()).read()
@@ -69,15 +76,21 @@ def read_route(pattern):
         elif w == 'carControl':
           S['cc'].append((t, float(e.carControl.latActive)))
         elif w == 'controlsState':
-          S['ctl'].append((t, e.controlsState.lateralControlState.pidState.steeringAngleDesiredDeg))
+          if e.controlsState.lateralControlState.which() == 'pidState':
+            S['ctl'].append((t, e.controlsState.lateralControlState.pidState.steeringAngleDesiredDeg))
+          S['kd'].append((t, e.controlsState.desiredCurvature))
+        elif w == 'carParams':
+          wheelbase = e.carParams.wheelbase
         elif w == 'liveParameters':
           S['lp'].append((t, e.liveParameters.angleOffsetDeg, e.liveParameters.roll))
     except Exception:
       pass
-  A = {k: np.array(sorted(v), float) for k, v in S.items()}
+  A = {k: np.array(sorted(v), float) if v else np.zeros((0, 2)) for k, v in S.items()}
   t = A['cs'][:, 0]
 
   def at(arr, col):
+    if len(arr) == 0:
+      return np.full(len(t), np.nan)
     i = np.searchsorted(arr[:, 0], t, side='right') - 1
     out = arr[np.clip(i, 0, None), col].copy()
     out[i < 0] = np.nan
@@ -85,13 +98,19 @@ def read_route(pattern):
   d = dict(t=t, v=A['cs'][:, 1], ang=A['cs'][:, 2], rate=A['cs'][:, 3], tq=A['cs'][:, 4], pr=A['cs'][:, 5],
            lat=np.nan_to_num(at(A['cc'], 1)), des=at(A['ctl'], 1), e4=np.nan_to_num(at(A['e4'], 1)),
            off=np.nan_to_num(at(A['lp'], 1)), roll=np.nan_to_num(at(A['lp'], 2)))
+  if len(A['ctl']) == 0 and rack is not None and wheelbase is not None:
+    # steered by another controller (no pidState): the target this controller would have had, without its command delay
+    rack_map = HondaEpsRackMap(wheelbase, HONDA_VGR_INVERSE_BY_PROFILE[rack[0]], rack[1])
+    kd = at(A['kd'], 1)
+    d['des'] = np.array([rack_map.angle_from_curvature(k, v, r) if np.isfinite(k) else np.nan
+                         for k, v, r in zip(kd, d['v'], d['roll'], strict=True)]) + d['off']
   return d
 
 
 class Plant:
   def __init__(self, cal, j, sensor_delay):
     self.cal, self.L, self.j = cal, cal.load, j
-    self.trk = (DT / SUB) / (TRACKER_TAU + DT / SUB)
+    self.trk = (DT / SUB) / (TRACKER_TAU_BY_CALIBRATION.get(cal.name, TRACKER_TAU) + DT / SUB)
     self.nd = int(round(sensor_delay / DT))
     self.reset(0.0, 0.0)
 
@@ -108,7 +127,7 @@ class Plant:
     k_ang, bias = L.k0 + L.k1 * v * v, L.bias + L.kroll * roll * v * v
     for _ in range(SUB):
       self.ref += self.trk * (max(min(cal.r6_per_deg_s * g * self.thd, F.R6_CLAMP), -F.R6_CLAMP) - self.ref)
-      fw = cal.scale_q8 * (kp * (r5 - self.ref) + cal.kff * r5) / 1024.0 / 256.0
+      fw = F.firmware_law(r5, self.ref, kp, cal)
       self.thd += h * (fw - k_ang * self.th - L.c * self.thd - bias - L.friction * math.tanh(self.thd / 2.0)) / self.j
       self.th += h * self.thd
     self.hist.append(self.th)
@@ -192,7 +211,7 @@ def main():
   plant = Plant(cal, a.j, a.sensor_delay)
   bands = ((9.0, 20.0), (20.0, 40.0))
   for r in a.routes:
-    d = read_route(r)
+    d = read_route(r, (cal.name, cal.rack) if cal.name in HONDA_VGR_INVERSE_BY_PROFILE and cal.rack is not None else None)
     wins = windows(d, 800)
     print(f"{r}: {len(wins)} hands-off engaged windows >= 8 s")
     for vlo, vhi in bands:
