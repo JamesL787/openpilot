@@ -97,7 +97,6 @@ def test_the_spec_load_is_close_to_every_measured_load(name, s, profile, load):
 
 @pytest.mark.parametrize("cal,s,profile", [
   (eps_cal.CIVIC_TBA_C120, spec.CIVIC_2019_SEDAN_SPEC, sr.HONDA_VGR_CIVIC_TBA_C120),
-  (eps_cal.CRV_TLA_A040, spec.CRV_2017_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
   (eps_cal.CRV_TLA_A220, spec.CRV_2020_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
 ])
 def test_cars_without_a_yaw_fit_steer_on_their_spec_rack_map(cal, s, profile):
@@ -117,6 +116,7 @@ def test_measured_cars_keep_their_own_fits():
   assert eps_cal.INSIGHT_TXM_A040.rack is rack.INSIGHT_TXM_A040_RACK
   assert eps_cal.CIVIC_TEG_A010.rack is rack.CIVIC_TEG_A010_RACK
   assert eps_cal.CIVIC_TBA_A030.rack is rack.CIVIC_TEG_A010_RACK  # the same car on the same A table
+  assert eps_cal.CRV_TLA_A040.rack is rack.CRV_TLA_A040_RACK
 
 
 def test_past_the_table_end_the_linear_angle_holds_the_last_divisor():
@@ -125,3 +125,17 @@ def test_past_the_table_end_the_linear_angle_holds_the_last_divisor():
   y = sr._INSIGHT_TXM_A040_POSITION_Y
   assert spec.linear_angle(inv, end_angle + 20.0) == pytest.approx((end_angle + 20.0) * y[-1] / y[0], rel=1e-4)
   assert spec.linear_angle(inv, end_angle) == pytest.approx(end_linear)
+
+
+def test_the_crv_a040_measured_map_joins_its_spec_shape_past_the_fit():
+  # fitted to 173.4 deg on rev b; past it the spec map's shape, scaled to the last fitted knot, carries it to lock
+  measured, spec_map = rack.CRV_TLA_A040_RACK, spec.spec_rack_table(spec.CRV_2017_SPEC, INV[sr.HONDA_VGR_CRV_TLA_A040])
+  assert eps_cal.provenance(eps_cal.CRV_TLA_A040)["rack"].startswith("measured")
+  assert all(b <= a for a, b in zip(measured.ratio_v, measured.ratio_v[1:], strict=False))
+  scale = measured.ratio_v[6] / np.interp(measured.ratio_bp[6], spec_map.ratio_bp, spec_map.ratio_v)
+  for bp, v in zip(measured.ratio_bp[7:], measured.ratio_v[7:], strict=True):
+    assert v == pytest.approx(scale * np.interp(bp, spec_map.ratio_bp, spec_map.ratio_v), abs=0.006)
+  rack_map = rack.HondaEpsRackMap(spec.CRV_2017_SPEC.wheelbase, INV[sr.HONDA_VGR_CRV_TLA_A040], measured)
+  for v in (3.0, 15.0, 30.0):
+    for angle in (-300.0, -40.0, 3.0, 90.0, 380.0):
+      assert rack_map.angle_from_curvature(rack_map.curvature_from_angle(angle, v, 0.01), v, 0.01) == pytest.approx(angle, abs=1e-3)

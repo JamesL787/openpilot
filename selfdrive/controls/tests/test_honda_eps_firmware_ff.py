@@ -736,8 +736,9 @@ def _ptm_cp(candidate, fw):
 @pytest.mark.parametrize("candidate,fw,table", [
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', rack.CIVIC_TBA_C020_RACK),
   (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', rack.INSIGHT_TXM_A040_RACK),
+  (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00', rack.CRV_TLA_A040_RACK),
 ])
-def test_the_civic_c020_and_insight_have_their_own_yaw_fitted_rack_maps(candidate, fw, table):
+def test_the_civic_c020_insight_and_crv_a040_have_their_own_yaw_fitted_rack_maps(candidate, fw, table):
   CP, cal = _ptm_cp(candidate, fw)
   assert cal.rack is table
   rack_map = honda_eps.get_rack_map(CP, cal)
@@ -748,8 +749,7 @@ def test_the_civic_c020_and_insight_have_their_own_yaw_fitted_rack_maps(candidat
       assert rack_map.angle_from_curvature(rack_map.curvature_from_angle(angle, v, 0.01), v, 0.01) == pytest.approx(angle, abs=1e-3)
 
 
-@pytest.mark.parametrize("candidate,fw", [(CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00'),
-                                          (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00')])
+@pytest.mark.parametrize("candidate,fw", [(CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00')])
 def test_cars_without_a_yaw_fit_steer_on_a_spec_rack_map(candidate, fw):
   # see test_honda_eps_spec_plant.py for how well the spec map predicts the measured ones
   CP, cal = _ptm_cp(candidate, fw)

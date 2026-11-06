@@ -10,8 +10,8 @@ from opendbc.car.honda.steer_ratio import (
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_TRW_A020_LAT_DELAY_SCHEDULE, ColumnLoadModel, \
   EpsFirmwareCalibration, R6_GAIN_BP, computed_r6
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CIVIC_TGG_A120_RACK, \
-  CLARITY_TRW_A020_RACK, INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
-from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, CRV_2017_SPEC, \
+  CLARITY_TRW_A020_RACK, CRV_TLA_A040_RACK, INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
+from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, \
   CRV_2020_SPEC, spec_rack_table
 
 # --- the images ------------------------------------------------------------------------------------------------
@@ -289,8 +289,7 @@ INSIGHT_TXM_A040 = EpsFirmwareCalibration(
 # feedback_R6 on steeringRateDeg, hands off, route 82bb (-121.6 at a 15 ms lag on the t9-67523237 build, norm 1450;
 # x 1650/1450 = -138.4) is an angle average against the B-table rate, not the centre value.
 # Column load measured on the same drive (CRV_TLA_A040_LOAD). P/I trims: the owner's (CRV_TLA_A040_P_SCALE /
-# CRV_TLA_A040_I_SCALE, untrimmed). Rack map predicted from the 2017-19 CR-V's specs through its A table (no yaw fit).
-CRV_TLA_A040_SPEC_RACK = spec_rack_table(CRV_2017_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040])
+# CRV_TLA_A040_I_SCALE, untrimmed). Rack map measured against its VSA yaw on rev b (honda_eps_rack_map.CRV_TLA_A040_RACK).
 CRV_TLA_A040 = EpsFirmwareCalibration(
   name="crv_tla_a040", e4_per_output=4096.0,
   r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=(0, 3699, 7497, 11200, 15001, 18747, 22502, 26252, 28127),
@@ -298,7 +297,7 @@ CRV_TLA_A040 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_TLA_A040_R6_GAIN,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
-  rack=CRV_TLA_A040_SPEC_RACK,
+  rack=CRV_TLA_A040_RACK,
 )
 # CR-V 5G 39990-TLA-A220 (2020+), the CORRECTED PTM build of 2026-10-16, revision b (payload sha256 a62337a9, RWD 2c992997;
 # KB PTM_FIX_FAMILY_20261016/out/A220, proof/) on stock df85f988: command map and P table Clarity-equivalent, D737, KFF45, Norm1650, Trk3200,
@@ -510,7 +509,7 @@ CALIBRATION_PROVENANCE = {
     "trims": "measured: the owner drives it untrimmed",
     "cmd_delay": "default (the owner's LatControlPID drive ran 0.08 s late: re-check on this controller)",
     "model_delay": "default: the Clarity's schedule",
-    "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
+    "rack": "measured: VSA yaw (GPS-checked scale), routes 00000003 / 04 / 05 on rev b; spec shape past 173 deg",
   },
   "rdx_tjb_a220": {
     "row": "firmware: rows 0-3 carry the same Route-A target, P and D (0x57BAE + 0x300*row), so the variant row does not matter",
