@@ -26,6 +26,14 @@ def make_radar_data(v_rel=0.0, *, track_id=1, d_rel=7.0, y_rel=0.0, measured=Tru
   return rr
 
 
+def make_empty_radar_data():
+  # What the parser publishes on the sweep where a lifecycle discontinuity retires an incarnation:
+  # the CAN identity is gone from RadarData until its replacement matures.
+  rr = car.RadarData.new_message()
+  rr.init('points', 0)
+  return rr
+
+
 class FakeSubMaster:
   def __init__(self, live_tracks_frame=1, *, model_seen=True):
     self.seen = {'modelV2': model_seen}
@@ -151,6 +159,93 @@ def test_civic_bosch_unmeasured_coast_updates_geometry_without_kf(monkeypatch):
   assert track.cnt == 1
   assert float(track.kf.x[radard.SPEED][0]) == pytest.approx(trusted_kf_speed)
   assert float(track.kf.x[radard.ACCEL][0]) == pytest.approx(trusted_kf_accel)
+
+
+def _bosch_sweeps(radar_d, sm):
+  """Advance the liveTracks receive frame per call, i.e. one Bosch-A sweep per published message."""
+  frame = [sm.recv_frame['liveTracks']]
+
+  def sweep(radar_data):
+    frame[0] += 1
+    sm.recv_frame['liveTracks'] = frame[0]
+    radar_d.update(sm, radar_data)
+  return sweep
+
+
+def test_civic_bosch_incarnation_gap_resets_lead_kalman(monkeypatch):
+  # Bosch-A track IDs are 6-bit and are reused within a segment (00000231--5782493b00: ID 58 covers
+  # two unrelated objects 27 s apart). radar_interface clears its own derivative history on a
+  # lifecycle discontinuity, but radard's lead KF is a separate filter with separate state, and the
+  # only thing that resets it is the CAN identity being absent from a liveTracks radard observes.
+  toggles = make_toggles()
+  monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
+
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
+  sm = FakeSubMaster(live_tracks_frame=1)
+  sweep = _bosch_sweeps(radar_d, sm)
+
+  # Incarnation 1: an object closing hard, tracked long enough to own a settled filter.
+  for _ in range(30):
+    sweep(make_radar_data(v_rel=-12.0, track_id=58, d_rel=70.0))
+  first = radar_d.tracks[58]
+  assert first.cnt == 30
+  assert float(first.kf.x[radard.SPEED][0]) == pytest.approx(-12.0, abs=1e-6)
+
+  # The incarnation boundary is exactly one sweep wide: radar_interface pops the point on the
+  # lifecycle break, and the replacement cannot be republished until a second coherent sample gives
+  # it a finite derivative (`matured`). This is the whole of the reset signal radard receives.
+  sweep(make_empty_radar_data())
+  assert 58 not in radar_d.tracks
+
+  # Incarnation 2 reuses the same CAN identity for a different object, opening instead of closing.
+  for _ in range(3):
+    sweep(make_radar_data(v_rel=3.0, track_id=58, d_rel=45.0))
+  second = radar_d.tracks[58]
+  assert second is not first
+  assert second.cnt == 3
+  # Seeded from the new object's own vLead, so it reports that object and no phantom acceleration.
+  assert float(second.kf.x[radard.SPEED][0]) == pytest.approx(3.0, abs=1e-6)
+  assert float(second.kf.x[radard.ACCEL][0]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_civic_bosch_coalesced_incarnation_gap_injects_phantom_lead_accel(monkeypatch):
+  # Pins the fragility of the reset above, so a regression cannot quietly widen it.
+  #
+  # radard polls modelV2 at DT_MDL (20 Hz) and reads the LATEST liveTracks through SubMaster, which
+  # keeps no queue; card.py publishes liveTracks once per sweep (RadarInterface.update returns None
+  # without a 0x2FF trigger), i.e. at ~14.35 Hz. The one-sweep gap above therefore survives only
+  # while the sweep interval stays longer than the model period -- nominally true (14.35 Hz median,
+  # p95 16.9 Hz on 000001df) but carried by a single message with no redundancy behind it.
+  #
+  # If that message is coalesced or dropped, radard never sees the identity leave, keeps the Track,
+  # and the settled filter absorbs the identity change as a step. The lead KF has no notion of
+  # incarnation -- the parser computes the boundary and does not propagate it.
+  toggles = make_toggles()
+  monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
+
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
+  sm = FakeSubMaster(live_tracks_frame=1)
+  sweep = _bosch_sweeps(radar_d, sm)
+
+  for _ in range(30):
+    sweep(make_radar_data(v_rel=-12.0, track_id=58, d_rel=70.0))
+  first = radar_d.tracks[58]
+
+  # Same sequence as the test above with the gap message missing, and nothing else changed.
+  accels = []
+  for _ in range(10):
+    sweep(make_radar_data(v_rel=3.0, track_id=58, d_rel=45.0))
+    accels.append(float(radar_d.tracks[58].kf.x[radard.ACCEL][0]))
+
+  assert radar_d.tracks[58] is first, "no gap was observed, so the Track is never reconstructed"
+  assert first.cnt == 40
+
+  # Both objects are at constant velocity: the true lead acceleration is 0 throughout. The filter
+  # reports an acceleration that never happened, ~0.92 m/s^2 per m/s of identity step, peaking near
+  # 0.5 s and taking ~2.2 s to fall back under 0.5 m/s^2. For scale, D-042 records a 6 m/s step
+  # injected by a vision fallback driving a measured -3.51 m/s^2 brake on 000001f3.
+  assert max(accels) > 9.0
+  assert accels[6] == pytest.approx(13.73, abs=0.05)
 
 
 def test_civic_bosch_separates_kf_and_model_lead_probability_timing():
@@ -443,3 +538,163 @@ def test_bosch_full_update_clears_stale_preference_then_strictly_reacquires(monk
   assert radar_d.preferred_stale_track_ids[0] == 27
   assert radar_d.preferred_challenger_stale_counts[0] == 0
   assert radar_d.preferred_gross_distance_stale_counts[0] == 0
+
+
+def make_onpath_track(track_id, *, d0=94.0, v_rel=radard.BOSCH_A_U11_LOW_RAIL_MPS, range_rate=None, seconds=1.05, offsets=(0.6, -0.9, 0.3, -0.4),
+                      t0=100.0, existence=None):
+  """Fresh measured Bosch-A sweeps of one track, with its path offset per sweep (yRel + model y at dRel).
+  `existence`: RadarPoint.existence per sweep (cycled), or None for the unset default (-1)."""
+  track = radard.Track(track_id, 0.0, radard.KalmanParams(radard.HONDA_BOSCH_A_RADAR_TS))
+  rate = v_rel if range_rate is None else range_rate
+  n = int(round(seconds * radard.BOSCH_A_FREQ_HZ)) + 1
+  for i in range(n):
+    t = t0 + i / radard.BOSCH_A_FREQ_HZ
+    d = d0 + rate * (t - t0)
+    track.update(d, 0.0, v_rel, v_rel + 13.5, True, True, t_now=t)
+    track.update_onpath(t, offsets[i % len(offsets)], True, -1.0 if existence is None else existence[i % len(existence)])
+  return track
+
+
+def onpath_leads(tracks, *, v_ego=13.5, lead_msg=None, lead_prob=0.0, preferred_track_id=-1):
+  """(leadOne as HEAD publishes it, radarState.leadOnpath or None), the way RadarD.update() builds them."""
+  lead_one = radard.get_lead(
+    v_ego, True, tracks, lead_msg if lead_msg is not None else make_lead(60.0, probability=lead_prob), v_ego,
+    make_model_data(), False, make_plan(), make_toggles(), lead_prob=lead_prob, low_speed_override=True,
+    preferred_track_id=preferred_track_id, honda_bosch_a_radar=True,
+  )
+  return lead_one, radard.get_onpath_lead(v_ego, tracks, SimpleNamespace(**lead_one), preferred_track_id)
+
+
+def onpath_lead(tracks, **kwargs):
+  return onpath_leads(tracks, **kwargs)[1]
+
+
+def test_bosch_onpath_radar_only_track_is_adopted_after_a_second():
+  # 00000297--f971b5896f 31:06-31:09: track 6, a stopped car on a curve, railed U11 -13.5 (1/64 log units), path offset within
+  # ~1.3 m on single sweeps, model lead prob 0.00-0.28. HEAD published no lead until vision had it at 38 m.
+  track = make_onpath_track(6, offsets=(0.7, -0.6, 1.2, -0.2, 0.4, -0.9, 0.1))
+  lead_one, onpath = onpath_leads({6: track})
+  assert onpath['status'] and onpath['radar'] and onpath['radarTrackId'] == 6
+  # leadOne is exactly what HEAD publishes; the planner decides how much the on-path lead may brake
+  assert not lead_one['status']
+
+
+def test_bosch_onpath_adoption_needs_the_full_second():
+  track = make_onpath_track(6, seconds=0.6)
+  assert onpath_lead({6: track}) is None
+
+
+@pytest.mark.parametrize("kwargs", [
+  {"offsets": (0.3, -0.2, 0.4, 2.4, 0.1, -0.3, 0.2, 0.0, -0.1, 0.3, 0.2, -0.2, 0.1, 0.0, 0.2)},  # one sweep off path
+  {"offsets": (1.1, -1.2, 0.9, 1.3)},                          # beside the path, never centred on it
+  {"v_rel": -1.0, "d0": 60.0},                                 # not closing
+  {"v_rel": -8.0, "range_rate": -1.0, "d0": 60.0},             # ranges flat while U11 says closing
+  {"v_rel": -6.0, "range_rate": -12.0, "d0": 90.0},            # ranges closing twice as fast as an unrailed U11
+])
+def test_bosch_onpath_adoption_rejects(kwargs):
+  track = make_onpath_track(9, **kwargs)
+  assert onpath_lead({9: track}) is None
+
+
+def test_bosch_onpath_adoption_coast_restarts_the_run():
+  track = make_onpath_track(9, seconds=1.05)
+  t = track.onpath_hist[-1][0] + 0.3
+  track.update(track.dRel - 4.0, 0.0, radard.BOSCH_A_U11_LOW_RAIL_MPS, 0.0, False, False, t_now=t)
+  track.update_onpath(t, float('nan'), False)
+  assert onpath_lead({9: track}) is None
+
+
+def test_bosch_onpath_adoption_never_replaces_a_radar_lead_and_needs_a_margin_over_vision():
+  near = make_onpath_track(6, d0=60.0)
+  # 297 46:50: the only lead was vision at 118 m, 4 m to the side of the radar car at 86 m, so they never matched
+
+  def side_lead(d_rel):
+    lead_msg = make_lead(d_rel)
+    lead_msg.y = [4.0]
+    return lead_msg
+
+  lead_one, onpath = onpath_leads({6: near}, lead_msg=side_lead(near.dRel + 10.0), lead_prob=0.9)
+  assert lead_one['status'] and not lead_one['radar']
+  assert onpath['radarTrackId'] == 6
+  lead_one, onpath = onpath_leads({6: near}, lead_msg=side_lead(near.dRel + 3.0), lead_prob=0.9)
+  assert lead_one['status'] and not lead_one['radar'] and onpath is None
+  # a vision-matched radar leadOne (the lift): leadOnpath is withdrawn and leadOne has full authority
+  tracks = {2: make_track(2, 70.0, 10), 6: near}
+  lead_one, onpath = onpath_leads(tracks, lead_msg=make_lead(70.0), lead_prob=0.99)
+  assert lead_one['radarTrackId'] == 2 and onpath is None
+  lead_one, onpath = onpath_leads({6: near}, lead_msg=make_lead(near.dRel), lead_prob=0.99)
+  assert lead_one['radar'] and lead_one['radarTrackId'] == 6 and onpath is None
+
+
+def test_bosch_onpath_lead_is_held_while_it_stays_on_the_path():
+  track = make_onpath_track(6)
+  assert onpath_lead({6: track})['radarTrackId'] == 6
+  # later sweeps widen past the adoption test; the held track needs only its unbroken on-path run
+  t = track.onpath_hist[-1][0]
+  for i in range(1, 10):
+    track.update(track.dRel - 1.0, 0.0, radard.BOSCH_A_U11_LOW_RAIL_MPS, 0.0, True, True, t_now=t + i / radard.BOSCH_A_FREQ_HZ)
+    track.update_onpath(t + i / radard.BOSCH_A_FREQ_HZ, 1.6, True)
+  assert onpath_lead({6: track}) is None
+  assert onpath_lead({6: track}, preferred_track_id=6)['radarTrackId'] == 6
+
+
+# 00000298--c4d2a4acbc 1018.35: track 2, born at 42 m, U11 railed at -13.5 (1/64 log units), ranges closing at -15.96 m/s (band edge
+# -16.00 at 1/64, -14.5 at 1/72), path median 0.76 m (limit 0.8); OBJECT_EXISTENCE_PROBABILITY fell 59 -> 0 over the window (median 0.055).
+BLIP_GEOMETRY = {"d0": 42.1, "v_rel": radard.BOSCH_A_U11_LOW_RAIL_MPS, "range_rate": -15.96, "offsets": (0.76, 0.7, 0.9, 0.5, 0.8, 1.1, 0.6)}
+BLIP_EXISTENCE = tuple(r / 127.0 for r in (59, 50, 40, 30, 20, 12, 7, 5, 3, 1, 0, 0, 0, 0, 0, 0))
+
+
+def test_bosch_onpath_adoption_blocked_by_low_median_existence():
+  track = make_onpath_track(2, existence=BLIP_EXISTENCE, **BLIP_GEOMETRY)
+  lead_one, onpath = onpath_leads({2: track})
+  assert onpath is None
+  # nothing else moves: the track is still there with its measured state, and leadOne is what HEAD publishes
+  assert not lead_one['status'] and track.onpath_hist and not track.onpath_adopted
+
+
+def test_bosch_onpath_existence_negative_control_same_geometry_is_adopted():
+  # the blip's geometry alone passes every other gate, so the block above is the existence gate and nothing else
+  assert onpath_lead({2: make_onpath_track(2, **BLIP_GEOMETRY)})['radarTrackId'] == 2
+  # and a real car's value passes: 263 track 25, the lowest real adoption median seen (0.535)
+  real = make_onpath_track(2, existence=(0.535,), **BLIP_GEOMETRY)
+  assert onpath_lead({2: real})['radarTrackId'] == 2
+
+
+def test_bosch_onpath_existence_uses_the_median_not_one_zero_sweep():
+  # 270 track 63 / 280 track 7: real cars with single sweeps at existence 0 inside a 0.92-0.98 median window
+  ex = (0.976,) * 6 + (0.0,)
+  assert onpath_lead({6: make_onpath_track(6, existence=ex, offsets=(0.7, -0.6, 1.2, -0.2, 0.4, -0.9, 0.1))}) \
+    is not None
+  # boundary: a window median just under the floor blocks, just over adopts
+  floor = radard.ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE
+  assert onpath_lead({6: make_onpath_track(6, existence=(floor - 0.01,))}) is None
+  assert onpath_lead({6: make_onpath_track(6, existence=(floor + 0.01,))})['radarTrackId'] == 6
+
+
+def test_bosch_onpath_existence_does_not_drop_a_held_lead():
+  track = make_onpath_track(6, existence=(0.98,))
+  assert onpath_lead({6: track})['radarTrackId'] == 6
+  # existence collapses on the next second of on-path sweeps: a held lead is not re-checked
+  t = track.onpath_hist[-1][0]
+  for i in range(1, 16):
+    tt = t + i / radard.BOSCH_A_FREQ_HZ
+    track.update(track.dRel - 1.0, 0.0, radard.BOSCH_A_U11_LOW_RAIL_MPS, 0.0, True, True, t_now=tt)
+    track.update_onpath(tt, 0.3, True, 0.0)
+  assert onpath_lead({6: track}, preferred_track_id=6)['radarTrackId'] == 6
+  # the same window would not be NEWLY adopted
+  assert onpath_lead({6: track}) is None
+
+
+def test_bosch_onpath_existence_unset_keeps_the_old_behaviour():
+  # -1 (every other radar, and logs recorded before RadarPoint.existence) is ignored, so the blip is adopted as before
+  assert onpath_lead({2: make_onpath_track(2, existence=(-1.0,), **BLIP_GEOMETRY)})['radarTrackId'] == 2
+  # a window where only some sweeps carry a value uses those values only
+  mixed = make_onpath_track(6, existence=(-1.0, -1.0, 0.9))
+  assert onpath_lead({6: mixed})['radarTrackId'] == 6
+  mixed_low = make_onpath_track(6, existence=(-1.0, -1.0, 0.05))
+  assert onpath_lead({6: mixed_low}) is None
+
+
+def test_bosch_onpath_adoption_is_not_used_below_the_low_speed_override_speed():
+  track = make_onpath_track(6, d0=45.0, v_rel=-3.0)
+  assert onpath_lead({6: track}, v_ego=3.0) is None
