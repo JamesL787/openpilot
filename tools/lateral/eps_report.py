@@ -73,7 +73,7 @@ def rlog_files(paths):
 
 
 def read(files):
-  R = {k: [] for k in ('vsa', 'cs', 'cc', 'ctl', 'lp', 'pose', 'model')}
+  R = {k: [] for k in ('vsa', 'cs', 'cc', 'ctl', 'lp', 'pose', 'model', 'cmd')}
   vsa = {}
   info = {}
   # Each route's logMonoTime restarts at its device boot, so a later route can run backwards from an earlier one.
@@ -114,6 +114,10 @@ def read(files):
           R['pose'].append((t, e.livePose.angularVelocityDevice.z))
         elif w == 'modelV2':
           R['model'].append((t, e.modelV2.action.desiredCurvature))
+        elif w == 'starpilotLateralState':
+          st = e.starpilotLateralState
+          # a build from before these fields reads 0 for both: no calibration name means not logged, not "no delay"
+          R['cmd'].append((t, st.epsCommandDelay if st.epsCalibration else math.nan))
         elif w == 'initData':
           info.setdefault('branch', e.initData.gitBranch)
           info.setdefault('commit', e.initData.gitCommit[:10])
@@ -150,6 +154,7 @@ def build(R, info):
   s['yaw'] = np.radians(counts * vsa_deg_s + right_loss)  # rad/s, RIGHT-positive like openpilot curvature (yaw_rate.yaw_rate_deg_s)
   s['k'] = np.convolve(s['yaw'], np.ones(10) / 10, 'same') / np.maximum(s['v'], 0.1)
   s['gyro'] = at(R['pose'], 1)
+  s['cmd'] = at(R['cmd'], 1)  # command delay the controller applied (NaN where not logged)
 
   cal = calibration_for(info)
   inverse = get_honda_vgr_inverse(int(info.get('flags', 0)))
@@ -245,18 +250,24 @@ def delivery(s):
 
 def timing(s, model, info):
   bp, vals = shipped_delay_schedule(info)
-  print(f'\ntiming: car curvature behind the model action   (on-time delay = lag - {PIPELINE_OFFSET:.3f})')
+  print(f'\ntiming: car curvature behind the model action   (on-time delay = lag - {PIPELINE_OFFSET:.3f} - the command delay applied)')
   if len(model) < 100:
     return
   for vlo, vhi in SPEED_BANDS:
     m = s['ok'] & (s['bl'] < .5) & (s['v'] >= vlo) & (s['v'] < vhi) & (np.abs(s['k']) > (0.001 if vlo >= 15 else 0.004))
     if m.sum() < 600:
       continue
-    on_time = best_lag(s['t'], s['k'], model[:, 0], model[:, 1], np.flatnonzero(m)[::5]) - PIPELINE_OFFSET
+    lag = best_lag(s['t'], s['k'], model[:, 0], model[:, 1], np.flatnonzero(m)[::5])
+    # the command delay sits inside the measured lag but is not part of what the model should be told
+    cmd = s['cmd'][m]
+    cmd = float(np.nanmedian(cmd)) if np.isfinite(cmd).any() else math.nan
+    on_time = lag - PIPELINE_OFFSET - (0.0 if math.isnan(cmd) else cmd)
+    cmd_note = 'command delay not logged, not subtracted' if math.isnan(cmd) else f'command delay {cmd:.2f} s'
     sched = float(np.interp((vlo + vhi) / 2, bp, vals)) if bp else math.nan
     verdict = f"car {'late' if on_time > sched else 'early'} {abs(on_time - sched) * 1000:.0f} ms"
     note = '   (includes lane centering)' if vlo >= 15 else ''
-    print(f'  {vlo:4.1f}-{vhi:<4.0f} on-time {on_time:.2f} s, schedule {sched:.2f} s: {verdict} ({m.sum() / FRAMES_PER_MIN:.1f} min){note}')
+    print(f'  {vlo:4.1f}-{vhi:<4.0f} on-time {on_time:.2f} s, schedule {sched:.2f} s: {verdict} ({m.sum() / FRAMES_PER_MIN:.1f} min, '
+          + f'{cmd_note}){note}')
 
 
 def left_right(s, des_s, ang_s):
