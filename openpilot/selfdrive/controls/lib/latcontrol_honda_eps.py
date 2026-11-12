@@ -44,12 +44,15 @@ from openpilot.selfdrive.controls.lib.honda_eps_calibrations import (
   provenance_summary,
   select_eps_firmware_calibration,
 )
+from openpilot.selfdrive.controls.lib.honda_eps_driver_yield import DriverYield, torque_sensor
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import (
   HondaEpsFirmwareFeedforward,
   HondaEpsLateralCore,
   EpsFirmwareCalibration,
   OVERRIDE_FADE_UP_S_DEFAULT,
   command_delay,
+  firmware_output,
+  r5_from_output,
 )
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
@@ -188,7 +191,7 @@ def get_rack_map(CP, calibration: EpsFirmwareCalibration | None) -> HondaEpsRack
 
 
 EPS_STATE_FIELDS = ("epsFfActive", "epsFfFeedforward", "epsFfR5", "epsFfLoad", "epsFfDesiredRate", "epsFfWeight",
-                    "epsCalibration", "epsCommandDelay", "epsModelDelay")
+                    "epsCalibration", "epsCommandDelay", "epsModelDelay", "epsDriverTorque", "epsYieldEvidence", "epsYieldAuthority")
 
 
 def write_eps_state(dst, src) -> None:
@@ -215,6 +218,9 @@ class LatControlHondaEps(LatControl):
     self.rack_map = get_rack_map(CP, self.calibration)
     assert self.rack_map is not None, f"no rack map for {self.calibration.name}"
     self.cmd_delay = CommandDelay(dt, self.calibration.cmd_delay_s)
+    # Shadow only: what a proportional yield to the driver would do. Logged, never applied to the output.
+    self.driver_yield = DriverYield(dt, torque_sensor(self.calibration.name))
+    self.sent_output: float | None = None
     self.lateral_source = "unknown"
     self.cmd_delay_scale = 1.0
     self.frame = -1
@@ -240,6 +246,20 @@ class LatControlHondaEps(LatControl):
     """controlsd: where the model's steering comes from (modeld's ModelLateralSource param)."""
     self.lateral_source = str(source)
 
+  def update_sent_output(self, output: float) -> None:
+    """controlsd: the torque the car controller sent last frame (carOutput), after its override cut and fade."""
+    self.sent_output = float(output)
+
+  def _shadow_driver_yield(self, active: bool, CS, angle_error: float, angle_no_offset: float) -> None:
+    sent = self.sent_output if self.sent_output is not None else self.core.output
+    rate = float(CS.steeringRateDeg)
+    output = firmware_output(r5_from_output(sent, CS.vEgo, self.calibration), rate, self.calibration, angle_no_offset) if active else 0.0
+    self.driver_yield.measure(float(getattr(CS, "steeringTorque", 0.0)), output, rate)
+    if active:
+      self.driver_yield.update(angle_error, rate)
+    else:
+      self.driver_yield.evidence, self.driver_yield.authority = 0.0, 1.0
+
   def _command_delay(self, v_ego: float) -> float:
     target = CMD_DELAY_SCALE_BY_SOURCE.get(self.lateral_source, 1.0)
     step = self.dt / CMD_DELAY_RAMP_S
@@ -257,6 +277,8 @@ class LatControlHondaEps(LatControl):
     self.core.reset()
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
+    self.driver_yield.reset()
+    self.sent_output = None
 
   def _desired_angle_no_offset(self, VM, v_ego, roll, desired_curvature):
     # The calibration's rack map is the geometry: fitted against the car's own yaw sensor, or predicted from its
@@ -313,6 +335,7 @@ class LatControlHondaEps(LatControl):
       pid_log.saturated = bool(self._check_saturation(self.steer_max - abs(output) < 1e-3, CS, steer_limited_by_safety,
                                                       curvature_limited))
 
+    self._shadow_driver_yield(bool(active), CS, pid_log.angleError, CS.steeringAngleDeg - params.angleOffsetDeg)
     ff = self.core.ff
     state = self.starpilot_lateral_state
     state.epsFfActive = bool(active)
@@ -324,4 +347,7 @@ class LatControlHondaEps(LatControl):
     state.epsCalibration = self.calibration.name
     state.epsCommandDelay = float(cmd_delay)
     state.epsModelDelay = float(lat_delay)
+    state.epsDriverTorque = float(self.driver_yield.driver_torque)
+    state.epsYieldEvidence = float(self.driver_yield.evidence)
+    state.epsYieldAuthority = float(self.driver_yield.authority)
     return output, angle_des, pid_log
