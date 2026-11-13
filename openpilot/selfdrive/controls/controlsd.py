@@ -641,9 +641,6 @@ class Controls:
           bool(self.sm.valid['starpilotCarState'] and self.sm.valid['carOutput'] and self.sm.alive['carOutput']), int(self.sm.logMonoTime['carState']))
       else:
         self.steer_limited_by_safety = abs(CC.actuators.torque - CO.actuatorsOutput.torque) > 1e-2
-        lac = getattr(self, 'LaC', None)  # publish-timing tests run this on a Controls stand-in without one
-        if isinstance(lac, LatControlHondaEps):
-          lac.update_sent_output(CO.actuatorsOutput.torque)  # for its shadow driver-yield estimate only
 
     else:
       self.steer_limited_by_safety = False

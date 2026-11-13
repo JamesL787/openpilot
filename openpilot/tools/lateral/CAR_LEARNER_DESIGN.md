@@ -101,8 +101,11 @@ whatever the car does, because that offset is itself fitted to the yaw.
 
 ### Torque sensor (reported only)
 
-`steeringTorque` with nobody on the wheel, regressed on the firmware output and the motion. See the replay report for
-what it says about override logic.
+`steeringTorque` with quiet hands, regressed on what moving the wheel puts on the torsion bar: wheel inertia, the
+column's friction (which remembers the way the wheel last moved) and the wheel's imbalance, plus an offset. The terms
+come through the shadow driver yield's own filter (`honda_eps_driver_yield.DriverYield.terms`), so a fitted car's
+numbers can go straight into its `TorqueSensor`. Nothing in the fit is the EPS command. Frames are kept when the reading
+is quiet 0.5-3 s to either side and the default sensor leaves under 300 counts of them. See the replay report.
 
 ## Wiring
 

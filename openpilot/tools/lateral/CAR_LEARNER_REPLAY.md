@@ -173,26 +173,43 @@ number is the same slope at 4-12°.
   fitted to the yaw. A pooled fit against a fixed offset with roll ignored reads lower than these (0.33-0.68 on the
   A220), because road crown moves the wheel without turning the car.
 
-## Torque sensor: the EPS's share of `steeringTorque`
+## Torque sensor: what the EPS puts on `steeringTorque`
 
-Over frames with nobody on the wheel (no reading above 400 within ±1.5 s):
+Revised 2026-11-12. The first version of this section regressed the reading on the firmware output over frames with no
+reading above 400 within ±1.5 s. That selection throws out every reading the EPS makes above 400, and the "share of
+the firmware output" it found (0.12-0.13) was mostly standing in for column friction.
 
-| | offset | per count of firmware output | per deg/s² | rms before → after |
-|---|---|---|---|---|
-| A040 (59 min) | +124 | +0.130 | −0.59 | 81 → 49 counts |
-| A220 (19 min) | +90 | +0.122 | −0.70 | 75 → 44 counts |
+The sensor is a torsion bar under the wheel, and the EPS motor is below it. The bar carries what it takes to move the
+wheel and the column above it, whoever moves them:
 
-- The EPS's own share is small: its 99th percentile is 230-670 counts by speed band. The 600-1,900-count readings on
-  unpressed frames are the driver. Subtracting the EPS share does not change how often 600 is exceeded (28.4% to
-  27.9% at 5-9 m/s on the A220).
-- So compensation alone will not stop the A220's override chatter at the 2000 threshold. It does take the hands-off
-  noise from ~190 to ~75 counts at the 95th percentile, and the sensor offset is 4-6% of the threshold, on one side.
-- What a better detector could use, none of it built here:
-  - the driver estimate `tq − offset − 0.13·output − j·thdd` in place of the raw reading
-  - its integral over 0.2-0.3 s with hysteresis, in place of single samples at a threshold
-  - whether the driver's torque is pushing the wheel *away* from the target (an override) or dragging against its
-    motion (a resting hand)
-  - the yaw sensor against the planned curvature as confirmation
+`reading = driver + offset + inertia × wheel acceleration + friction × memory + imbalance × sin(wheel angle)`
+
+Memory is the way the wheel last moved (a stop over 0.1° of travel). Fitted over frames with quiet readings 0.5-3 s to
+either side and nothing selected between, with the shadow yield's own filter:
+
+| car | min | offset | inertia, per deg/s² | friction | imbalance | quiet reading rms, before → after | R² |
+|---|---|---|---|---|---|---|---|
+| Clarity TRW-A020 | 245 | −54 | −0.20 | −91 | −127 | 94 → 37 | 0.84 |
+| CR-V TLA-A040 | 59 | +121 | −0.26 | −65 | −203 | 74 → 38 | 0.74 |
+| CR-V TLA-A220 | 35 | +84 | −0.21 | −56 | −197 | 65 → 37 | 0.68 |
+| Civic TGG-A120 | 72 | +20 | −0.20 | −107 | −209 | 115 → 53 | 0.79 |
+| Civic TEG-A010 | 84 | −117 | −0.26 | −91 | −157 | 93 → 40 | 0.81 |
+| Insight TXM-A040 | 65 | +60 | −0.24 | −50 | −160 | 61 → 33 | 0.71 |
+| Ridgeline T6Z-A110 | 14 | −92 | −0.28 | −10 | −22 | 45 → 42 | 0.13 |
+
+- In a steady hold the reading follows the way the wheel last moved, not the size of the command: on the Clarity it is
+  +17 counts along the command when the wheel last moved the command's way and +134 when it last moved the other way.
+- Plain friction on wheel speed explains 41-57% of the quiet reading on the first six cars, friction with memory
+  67-81%. Adding the firmware output on top of that gives 3-12 points more, at 0.06-0.12 per count: a resting hand or
+  something real, the logs cannot tell.
+- The inertia is known to roughly a factor of two. The wheel-rate signal is coarse, which pulls a fit down; these are
+  the values that fit this filter.
+- Not fitted: the RDX (its logs are of a shaking wheel) and the Civic C020 (10 min).
+- "Quiet" is a stand-in for hands off. The logs have no ground truth; a deliberate hands-off drive would give one.
+
+The shadow driver yield (`selfdrive/controls/lib/honda_eps_driver_yield.py`) takes these terms out of the reading. It
+needs no EPS calibration, so it holds for any Honda with this sensor; a car that is not in its table takes the middle
+of these.
 
 ## Cost
 

@@ -178,8 +178,8 @@ def report(learner, frozen_at, scorer, cal):
         f'; shipped {cal.lat_delay_schedule}')
   if res['torque_sensor']:
     t = res['torque_sensor']
-    print(f"\ntorque sensor with nobody on the wheel ({t['minutes']} min): {t['offset']:+.0f} counts offset, {t['firmware_output']:+.3f} per count of " +
-          f"firmware output, {t['thdd']:+.3f} per deg/s^2; rms {t['rms_counts']} -> {t['rms_after']} counts once those are taken out (R^2 {t['r2']})")
+    print(f"\ntorque sensor with quiet hands ({t['minutes']} min): {t['offset']:+.0f} counts offset, {t['inertia']:+.3f} per deg/s^2, friction " +
+          f"{t['friction']:+.0f}, imbalance {t['imbalance']:+.0f}; rms {t['rms_counts']} -> {t['rms_after']} counts once those are taken out (R^2 {t['r2']})")
   return res
 
 

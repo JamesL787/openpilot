@@ -51,8 +51,6 @@ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import (
   EpsFirmwareCalibration,
   OVERRIDE_FADE_UP_S_DEFAULT,
   command_delay,
-  firmware_output,
-  r5_from_output,
 )
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
@@ -220,7 +218,6 @@ class LatControlHondaEps(LatControl):
     self.cmd_delay = CommandDelay(dt, self.calibration.cmd_delay_s)
     # Shadow only: what a proportional yield to the driver would do. Logged, never applied to the output.
     self.driver_yield = DriverYield(dt, torque_sensor(self.calibration.name))
-    self.sent_output: float | None = None
     self.lateral_source = "unknown"
     self.cmd_delay_scale = 1.0
     self.frame = -1
@@ -246,15 +243,9 @@ class LatControlHondaEps(LatControl):
     """controlsd: where the model's steering comes from (modeld's ModelLateralSource param)."""
     self.lateral_source = str(source)
 
-  def update_sent_output(self, output: float) -> None:
-    """controlsd: the torque the car controller sent last frame (carOutput), after its override cut and fade."""
-    self.sent_output = float(output)
-
   def _shadow_driver_yield(self, active: bool, CS, angle_error: float, angle_no_offset: float) -> None:
-    sent = self.sent_output if self.sent_output is not None else self.core.output
     rate = float(CS.steeringRateDeg)
-    output = firmware_output(r5_from_output(sent, CS.vEgo, self.calibration), rate, self.calibration, angle_no_offset) if active else 0.0
-    self.driver_yield.measure(float(getattr(CS, "steeringTorque", 0.0)), output, rate)
+    self.driver_yield.measure(float(getattr(CS, "steeringTorque", 0.0)), angle_no_offset, rate)
     if active:
       self.driver_yield.update(angle_error, rate)
     else:
@@ -278,7 +269,6 @@ class LatControlHondaEps(LatControl):
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
     self.driver_yield.reset()
-    self.sent_output = None
 
   def _desired_angle_no_offset(self, VM, v_ego, roll, desired_curvature):
     # The calibration's rack map is the geometry: fitted against the car's own yaw sensor, or predicted from its

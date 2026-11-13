@@ -883,7 +883,7 @@ struct StarPilotLateralState @0xc2243c65e0340384 {
   epsCommandDelay @20 :Float32;    # s, command delay applied this frame (the calibration's, faded with speed)
   epsModelDelay @21 :Float32;      # s, lateral delay controlsd handed over (the delay told to the model + smoothing)
   # Driver yield, SHADOW (selfdrive/controls/lib/honda_eps_driver_yield.py): computed and logged, never applied
-  epsDriverTorque @22 :Float32;    # counts: steeringTorque less the sensor offset, the EPS's own share and wheel inertia
+  epsDriverTorque @22 :Float32;    # counts: steeringTorque less the sensor offset, wheel inertia, column friction and wheel imbalance
   epsYieldEvidence @23 :Float32;   # count-seconds of driver torque against the controller, leaking away
   epsYieldAuthority @24 :Float32;  # 0..1, the share of its command the controller would keep
   struct FeedbackConsumption {

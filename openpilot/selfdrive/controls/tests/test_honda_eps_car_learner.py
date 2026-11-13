@@ -14,6 +14,7 @@ from opendbc.car.honda import steer_ratio as sr
 from opendbc.car.honda.values import CAR
 from opendbc.car.honda.yaw_rate import LEARN_FRAMES, SETTLE_FRAMES, yaw_rate_deg_s
 from openpilot.selfdrive.controls.lib.honda_eps_column_plant import Plant
+from openpilot.selfdrive.controls.lib.honda_eps_driver_yield import FRICTION_WIDTH
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 from openpilot.selfdrive.controls.tests.test_honda_eps_firmware_ff import _params
 
@@ -329,19 +330,24 @@ def test_the_model_delay_part_measures_town_bands():
 
 # ---- torque sensor
 
-def test_the_torque_sensor_model_finds_what_the_eps_puts_on_the_bar():
+def test_the_torque_sensor_model_finds_what_moving_the_wheel_puts_on_the_bar():
   model = L.TorqueSensorModel()
   rng = np.random.default_rng(0)
   for _ in range(3):
     t = np.arange(N) * L.DT
     angle = 20 * np.sin(2 * np.pi * t / 5) + 4 * np.sin(2 * np.pi * t / 1.3)
     rate = np.gradient(angle, L.DT)
-    y = 600 * np.sin(2 * np.pi * t / 5 + 0.4) + rng.normal(0, 30, N)
-    acc = L.smooth(np.gradient(L.smooth(rate, 5), t), 5)
-    model.add_chunk(chunk(angle=angle, rate=rate, tq=90 + 0.12 * y - 0.6 * acc + rng.normal(0, 20, N)), y)
+    stop, s = np.zeros(N), 0.0
+    for k in range(N):
+      s = stop[k] = min(max(s + rate[k] * L.DT / FRICTION_WIDTH, -1.0), 1.0)
+    tq = 90 - 0.25 * np.gradient(rate, L.DT) - 80 * stop - 150 * np.sin(np.radians(angle)) + rng.normal(0, 20, N)
+    tq[2000:2040] += 1500   # a nudge between quiet flanks: the wheel's motion does not explain it, so it is left out
+    tq[4000:4400] += 1500   # a long hold: its frames and the 3 s around them are left out
+    model.add_chunk(chunk(angle=angle, rate=rate, tq=tq))
   out = model.result()
-  assert out['offset'] == pytest.approx(90, abs=3) and out['firmware_output'] == pytest.approx(0.12, abs=0.01)
-  assert out['thdd'] == pytest.approx(-0.6, abs=0.05) and out['rms_after'] < 0.5 * out['rms_counts']
+  assert out['offset'] == pytest.approx(90, abs=4) and out['inertia'] == pytest.approx(-0.25, abs=0.03)
+  assert out['friction'] == pytest.approx(-80, abs=8) and out['imbalance'] == pytest.approx(-150, abs=20)
+  assert 1.5 < out['minutes'] < 2.8 and out['r2'] > 0.9
 
 
 # ---- the whole learner: result and saved state

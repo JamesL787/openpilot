@@ -9,13 +9,11 @@ the car would have driven with it. Where the log carries the controller's own sh
 replay is checked against it.
 """
 import argparse
-import struct
 import sys
 
 import numpy as np
 
 from openpilot.selfdrive.controls.lib import honda_eps_driver_yield as Y
-from openpilot.selfdrive.controls.lib import honda_eps_firmware_ff as eps_ff
 from openpilot.selfdrive.controls.lib.honda_eps_calibrations import select_eps_firmware_calibration
 from openpilot.tools.lateral.replay_car_learner import car_info, events, routes_in
 
@@ -23,7 +21,9 @@ DT = 0.01
 REPRESS_FRAMES = 150   # a press this soon after the last one is chatter
 HOLD_COUNTS = 1200.0   # a sustained hold against the controller: this much ...
 HOLD_FRAMES = 50       # ... for this long
-QUIET_COUNTS = 400.0   # hands off: no reading above this within +-1.5 s
+QUIET_COUNTS = 400.0   # quiet hands: no reading above this within +-1.5 s
+WHEEL_COUNTS = (600.0, 1200.0)   # the wheel's own motion reading this much with the sensor's inertia alone: the EPS, or a yank
+AFTER_PRESS_FRAMES = 150
 
 
 def runs(mask):
@@ -31,18 +31,14 @@ def runs(mask):
   return list(zip(np.flatnonzero(d == 1), np.flatnonzero(d == -1), strict=True))
 
 
-def read_route(files, cal, sensor):
+def read_route(files, sensor):
   """Per carState frame: what today's logic did, and the shadow yield replayed with the controller's own class."""
-  st = {'lat': False, 'e4': 0.0, 'des': np.nan, 'off': 0.0, 'online': np.nan}
+  st = {'lat': False, 'des': np.nan, 'off': 0.0, 'online': np.nan}
   shadow = Y.DriverYield(DT, sensor)
   rows = []
   for f in files:
     for which, e in events(f):
-      if which == 'sendcan':
-        for m in e.sendcan:
-          if m.address == 0xE4:
-            st['e4'] = struct.unpack('>h', m.dat[0:2])[0]
-      elif which == 'carControl':
+      if which == 'carControl':
         st['lat'] = bool(e.carControl.latActive)
       elif which in ('vehicleParameters', 'liveParameters'):
         st['off'] = getattr(e, which).angleOffsetDeg
@@ -57,23 +53,19 @@ def read_route(files, cal, sensor):
       elif which == 'carState':
         c = e.carState
         active = st['lat'] and np.isfinite(st['des'])
-        output = 0.0
-        if active:
-          sent = -st['e4'] / cal.e4_per_output
-          output = eps_ff.firmware_output(eps_ff.r5_from_output(sent, c.vEgo, cal), c.steeringRateDeg, cal, c.steeringAngleDeg - st['off'])
-        driver = shadow.measure(c.steeringTorque, output, c.steeringRateDeg)
+        driver = shadow.measure(c.steeringTorque, c.steeringAngleDeg - st['off'], c.steeringRateDeg)
         error = st['des'] - c.steeringAngleDeg if active else 0.0
         if active:
           shadow.update(error, c.steeringRateDeg)
         else:
           shadow.reset()
-        rows.append((float(active), c.steeringTorque, float(c.steeringPressed), driver, error, shadow.authority, st['online']))
-  return np.array(rows, float).reshape(-1, 7)
+        rows.append((float(active), c.steeringTorque, float(c.steeringPressed), driver, error, shadow.authority, st['online'], sensor.inertia * shadow.accel))
+  return np.array(rows, float).reshape(-1, 8)
 
 
 def score(R):
   active, tq, pressed, driver, error = R[:, 0] > 0.5, R[:, 1], R[:, 2] > 0.5, R[:, 3], R[:, 4]
-  authority, online = R[:, 5], R[:, 6]
+  authority, online, inertial = R[:, 5], R[:, 6], R[:, 7]
   against = np.where(np.abs(error) > Y.ERROR_MIN, -driver * np.sign(error), 0.0)
   presses, yields = runs(pressed & active), runs((authority < 0.5) & active)
   out = {'minutes': active.sum() * DT / 60, 'presses': len(presses), 'yields': len(yields),
@@ -89,6 +81,12 @@ def score(R):
         out['missed'] += 1
   quiet = (np.convolve((np.abs(tq) > QUIET_COUNTS).astype(float), np.ones(301), 'same') == 0) & active
   out['quiet_minutes'], out['quiet_yielding'] = quiet.sum() * DT / 60, int(((authority < 1.0) & quiet).sum())
+  after = np.convolve(pressed.astype(float), np.r_[np.zeros(AFTER_PRESS_FRAMES), np.ones(AFTER_PRESS_FRAMES + 1)], 'same') > 0
+  for k in WHEEL_COUNTS:
+    ev = runs((np.abs(inertial) > k) & active)
+    span = [slice(max(a - 10, 0), b + 10) for a, b in ev]
+    out[f'wheel_{k:.0f}'] = np.array([len(ev), sum(bool(after[a]) for a, _ in ev), sum(bool(pressed[w].any()) for w in span),
+                                      sum(bool((authority[w] < 1.0).any()) for w in span)])
   both = np.isfinite(online) & active & (online > 0)  # an unset field reads 0
   out['online_frames'] = int(both.sum())
   out['online_diff'] = float(np.abs(online[both] - authority[both]).max()) if both.any() else float('nan')
@@ -106,7 +104,11 @@ def show(name, s):
   if len(lat) or s['missed']:
     print(f"  holds against the controller (> {HOLD_COUNTS:.0f} counts for {HOLD_FRAMES * DT:.1f} s): {len(lat) + s['missed']}, authority under 50% after " +
           (f"{np.median(lat):.2f} s median, {np.percentile(lat, 90):.2f} s p90" if len(lat) else '-') + f", never in {s['missed']}")
-  print(f"  hands off ({s['quiet_minutes']:.1f} min): authority below 1 on {s['quiet_yielding']} frames")
+  print(f"  quiet hands ({s['quiet_minutes']:.1f} min): authority below 1 on {s['quiet_yielding']} frames")
+  for k in WHEEL_COUNTS:
+    n, aft, pr, lost = s[f'wheel_{k:.0f}']
+    print(f"  wheel inertia alone reading over {k:.0f}: {n} times, {aft} of them within 1.5 s after a press ended; today pressed in {pr}, " +
+          f"the shadow gave up any authority in {lost}")
   if s['online_frames']:
     print(f"  the controller's own shadow value is in this log: {s['online_frames']} frames, largest difference from this replay {s['online_diff']:.3f}")
 
@@ -121,16 +123,17 @@ def main():
   for name, files in routes.items():
     info = car_info(files)
     cal = select_eps_firmware_calibration(info['fingerprint'], info['eps_fw']) if info and info['eps_fw'] else None
-    if cal is None:
-      print(f'{name}: no EPS calibration for this car')
+    sensor = Y.torque_sensor(cal.name if cal else '')
+    rows = read_route(files, sensor)
+    if len(rows) < 1000:
+      print(f'{name}: under 10 s of log')
       continue
-    sensor = Y.torque_sensor(cal.name)
-    s = score(read_route(files, cal, sensor))
-    show(f'{name} ({cal.name}, sensor offset {sensor.offset:g})', s)
+    s = score(rows)
+    show(f"{name} ({cal.name if cal else 'no EPS calibration'}, sensor offset {sensor.offset:g}, inertia {sensor.inertia:g})", s)
     if total is None:
       total = s
     else:
-      total = {k: (total[k] + v if k != 'online_diff' else np.nanmax([total[k], v])) for k, v in s.items()}
+      total = {k: (total[k] + v if k != 'online_diff' else float(np.fmax(total[k], v))) for k, v in s.items()}
   if total is not None and len(routes) > 1:
     show('all routes', total)
 

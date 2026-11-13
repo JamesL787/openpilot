@@ -21,9 +21,10 @@ import numpy as np
 from opendbc.car.honda.yaw_rate import RIGHT_LOSS_BP
 from openpilot.selfdrive.controls.lib import honda_eps_firmware_ff as eps_ff
 from openpilot.selfdrive.controls.lib.honda_eps_column_plant import OPEN_LOOP_FRAMES, Plant, open_loop_window
+from openpilot.selfdrive.controls.lib.honda_eps_driver_yield import TORQUE_SENSOR_DEFAULT, DriverYield
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import GRAVITY, HondaEpsRackMap
 
-LEARNER_VERSION = 3
+LEARNER_VERSION = 4
 CHUNK_S = 60.0
 DT = 0.01
 
@@ -1051,14 +1052,16 @@ class PlanTimingLearner(Part):
 # ---------------------------------------------------------------------------------------------------------------
 # torque sensor (reported only): what steeringTorque reads with nobody on the wheel
 
-TORQUE_NAMES = ('firmware_output', 'thdd', 'thd', 'friction', 'offset')
-TORQUE_QUIET = 400.0                 # no |steeringTorque| above this within +-TORQUE_QUIET_S
-TORQUE_QUIET_S = 1.5
+TORQUE_NAMES = ('inertia', 'friction', 'imbalance', 'offset')
+TORQUE_QUIET = 350.0                 # counts: no reading above this from TORQUE_NEAR_S to TORQUE_FAR_S on both sides
+TORQUE_NEAR_S, TORQUE_FAR_S = 0.5, 3.0   # the reading itself is not selected on between, so one the EPS makes is kept
+TORQUE_EXPLAINED = 300.0             # counts the default sensor may leave of a frame: more than that is a hand
 
 
 class TorqueSensorModel(Part):
-  """The torsion bar also twists when the EPS moves the column under a free wheel. Over frames with nobody on the wheel
-  the reading is regressed on the firmware output and the motion; what is left of a reading after that is the driver."""
+  """The torsion bar carries what it takes to move the wheel and the column above it. Over frames with quiet hands the
+  reading is regressed on the terms the shadow driver yield takes out of it (honda_eps_driver_yield.TorqueSensor),
+  computed by that module's own filter; what is left of a reading after that is the driver."""
   ARRAYS = ('XtX', 'Xty', 'misc')
   META = ()
 
@@ -1066,18 +1069,26 @@ class TorqueSensorModel(Part):
     p = len(TORQUE_NAMES)
     self.XtX, self.Xty, self.misc = np.zeros((p, p)), np.zeros(p), np.zeros(3)  # misc: sum of tq^2, tq, n
 
-  def add_chunk(self, c, y):
-    t = c['t']
-    rate = smooth(c['rate'], 5)
-    acc = smooth(np.gradient(rate, t), 5)
-    span = int(round(TORQUE_QUIET_S / DT))
-    quiet = np.convolve((np.abs(c['tq']) > TORQUE_QUIET) | (c['pressed'] > 0.5), np.ones(2 * span + 1), 'same') == 0
-    idx = np.flatnonzero(quiet & (c['lat'] > 0.5) & (c['eps_ok'] > 0.5) & (c['v'] > 1.0) & np.isfinite(y))
-    idx = idx[(idx > 5) & (idx < len(t) - 5)]
+  def add_chunk(self, c):
+    n = len(c['t'])
+    near, far = int(round(TORQUE_NEAR_S / DT)), int(round(TORQUE_FAR_S / DT))
+    if n < 2 * far + 100:
+      return 'thin'
+    est = DriverYield(DT)
+    T = np.array([est.terms(*x) for x in zip(c['tq'].tolist(), (c['ang'] - c['off']).tolist(), c['rate'].tolist(), strict=True)])
+    ok = (c['lat'] > 0.5) & (c['eps_ok'] > 0.5) & (c['v'] > 1.0)
+    loud = np.r_[0, np.cumsum((np.abs(c['tq']) > TORQUE_QUIET) | (c['pressed'] > 0.5) | ~ok)]
+    i = np.arange(n)
+    before = loud[np.maximum(i - near, 0)] - loud[np.maximum(i - far, 0)]
+    after = loud[np.minimum(i + far, n)] - loud[np.minimum(i + near, n)]
+    idx = np.flatnonzero(ok & (i >= far) & (i + far <= n) & (before == 0) & (after == 0))
     if len(idx) == 0:
       return 'thin'
-    X = np.column_stack([y[idx], acc[idx], rate[idx], np.tanh(rate[idx] / 2.0), np.ones(len(idx))])
-    tq = c['tq'][idx]
+    d = TORQUE_SENSOR_DEFAULT
+    left = T[idx, 0] - (d.inertia * T[idx, 1] + d.friction * T[idx, 2] + d.imbalance * T[idx, 3])
+    idx = idx[np.abs(left - np.median(left)) < TORQUE_EXPLAINED]
+    X = np.column_stack([T[idx, 1], T[idx, 2], T[idx, 3], np.ones(len(idx))])
+    tq = T[idx, 0]
     self.XtX += X.T @ X
     self.Xty += X.T @ tq
     self.misc += [tq @ tq, tq.sum(), len(idx)]
@@ -1135,7 +1146,7 @@ class HondaEpsCarLearner:
     self.chunks += 1
     self.seconds += float(c['t'][-1] - c['t'][0])
     y = self.last_target = firmware_target(c['e4'], c['v'], c['rate'], c['ang'] - c['off'], self.cal)
-    out = {'load': self.load.add_chunk(c, y, i), 'torque': self.torque.add_chunk(c, y)}
+    out = {'load': self.load.add_chunk(c, y, i), 'torque': self.torque.add_chunk(c)}
     yaw = np.full(len(c['t']), np.nan)
     if self.yaw is not None:
       out['yaw'] = self.yaw.add_chunk(c, i)
