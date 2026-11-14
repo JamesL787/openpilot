@@ -6,6 +6,7 @@ from dataclasses import replace
 import numpy as np
 
 import openpilot.cereal.messaging as messaging
+from openpilot.cereal import log
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -42,7 +43,8 @@ from openpilot.starpilot.longitudinal.lead_approach import LeadApproach, LeadApp
 from openpilot.starpilot.longitudinal import human_acceleration, human_following
 from openpilot.starpilot.longitudinal.honda_bosch_a_long import HondaBoschALongEnhancement
 from openpilot.starpilot.longitudinal.bosch_a_onset_ramp import BoschAOnsetRamp
-from openpilot.starpilot.longitudinal.bosch_a_smooth import BoschASmooth
+from openpilot.starpilot.longitudinal.bosch_a_smooth import BoschASmooth, GHOST_ARM as BOSCH_A_GHOST_ARM
+from openpilot.starpilot.longitudinal.honda_bosch_a_long import _model_lead0
 from openpilot.starpilot.longitudinal.bosch_a_turnoff import raw_track_y
 from openpilot.starpilot.longitudinal.bosch_a_coast_first import BoschACoastFirst
 from openpilot.starpilot.longitudinal.bosch_a_release_coast import BoschAReleaseCoast
@@ -522,15 +524,20 @@ class LongitudinalPlanner:
     output_a_target = self.bosch_a_coast_first.step(
       lead_one=planner_radar_state.leadOne, lead_two=planner_radar_state.leadTwo, target=float(output_a_target),
       v_ego=v_ego, follow_s=float(base_follow), fcw=bool(self.fcw), reset_state=bool(reset_state))
-    output_a_target = self.bosch_a_release_coast.update(
-      lead_one=planner_radar_state.leadOne, target=float(output_a_target),
-      lane_change_state=sm['modelV2'].meta.laneChangeState, left_blinker=bool(sm['carState'].leftBlinker),
-      right_blinker=bool(sm['carState'].rightBlinker), gas_pressed=bool(sm['carState'].gasPressed),
-      reset_state=bool(reset_state))
+    if not BOSCH_A_GHOST_ARM:  # the ghost let-off in bosch_a_smooth replaces the release coast
+      output_a_target = self.bosch_a_release_coast.update(
+        lead_one=planner_radar_state.leadOne, target=float(output_a_target),
+        lane_change_state=sm['modelV2'].meta.laneChangeState, left_blinker=bool(sm['carState'].leftBlinker),
+        right_blinker=bool(sm['carState'].rightBlinker), gas_pressed=bool(sm['carState'].gasPressed),
+        reset_state=bool(reset_state))
+    ghost_skip = (sm['modelV2'].meta.laneChangeState != log.LaneChangeState.off or bool(sm['carState'].leftBlinker) or
+                  bool(sm['carState'].rightBlinker) or bool(sm['carState'].gasPressed))
     output_a_target = self.bosch_a_smooth.step(float(a_prev), float(output_a_target),
                                                reset=bool(reset_state or sm['carState'].standstill),
                                                lead_one=planner_radar_state.leadOne,
-                                               raw_y=raw_track_y(sm) if self.bosch_a_smooth.radar else None)
+                                               raw_y=raw_track_y(sm) if self.bosch_a_smooth.radar else None,
+                                               v_ego=float(v_ego), model_lead0=_model_lead0(sm['modelV2']),
+                                               skip=bool(ghost_skip))
     output_a_target = self.bosch_a_onset_ramp.step(
       lead_one=planner_radar_state.leadOne, lead_two=planner_radar_state.leadTwo, prev=float(a_prev),
       target=float(output_a_target), fcw=bool(self.fcw),

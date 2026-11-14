@@ -85,6 +85,7 @@ def test_raw_track_y():
 def _smooth(monkeypatch, radar=True):
   import openpilot.starpilot.longitudinal.bosch_a_smooth as bs
   monkeypatch.setattr(bs, 'vehicle_supported', lambda CP: True)
+  monkeypatch.setattr(bs, 'GHOST_ARM', False)  # these pin the FastLetoff path; the ghost let-off has its own tests
   return BoschASmooth(SimpleNamespace(radarUnavailable=not radar), DT)
 
 
@@ -122,3 +123,50 @@ def test_smooth_step_without_lead_keeps_base(monkeypatch):
     nxt = sm.step(prev, 0.8, False)
     assert nxt - prev <= BRAKE_RELEASE_JERK * DT + 1e-6
     prev = nxt
+
+
+def glead(tid=22, d=20.0, v=-5.0, y=-0.8, v_lead=8.0, a_lead=-1.0, present=True):
+  return SimpleNamespace(present=present, radarTrackId=tid, dRel=d, vRel=v, yRel=y, vLeadK=v_lead, aLeadK=a_lead)
+
+
+GGONE = glead(present=False, tid=-1, d=0.0, v=0.0, y=0.0, v_lead=0.0, a_lead=0.0)
+
+
+def _ghost_smooth(monkeypatch, radar=True):
+  import openpilot.starpilot.longitudinal.bosch_a_smooth as bs
+  monkeypatch.setattr(bs, 'vehicle_supported', lambda CP: True)
+  monkeypatch.setattr(bs, 'GHOST_ARM', True)
+  return BoschASmooth(SimpleNamespace(radarUnavailable=not radar), DT)
+
+
+def test_smooth_ghost_turner_lets_off_fast_without_gas(monkeypatch):
+  # cc shape through the bridge smoother: braking lead released, raw track then moves out past 1.5 m
+  sm = _ghost_smooth(monkeypatch)
+  prev = sm.step(-3.0, -3.0, False, lead_one=glead(), raw_y={22: -0.8}, v_ego=13.0, model_lead0=(0.9, 21.5))
+  prev = sm.step(prev, 0.8, False, lead_one=GGONE, raw_y={22: -0.9}, v_ego=13.0, model_lead0=(0.9, 21.5))
+  assert prev <= -3.0 + 1e-6  # no clear yet: dwell holds the first rise tick
+  out = sm.step(prev, 0.8, False, lead_one=GGONE, raw_y={22: -1.6}, v_ego=13.0, model_lead0=(0.9, 21.5))
+  assert out - prev > BRAKE_RELEASE_JERK * DT + 1e-6 and out <= 0.0  # cleared: faster than base, still no gas
+  assert sm.ghost.no_gas
+
+
+def test_smooth_ghost_dropout_keeps_base(monkeypatch):
+  # 84 s7 shape: raw track vanishes near the lane, camera still sees it: base let-off only, no gas
+  sm = _ghost_smooth(monkeypatch)
+  prev = sm.step(-3.0, -3.0, False, lead_one=glead(d=12.5, v=-8.0, v_lead=6.0), raw_y={22: -1.19}, v_ego=14.0,
+                 model_lead0=(0.9, 14.0))
+  for _ in range(10):
+    nxt = sm.step(prev, 0.5, False, lead_one=GGONE, raw_y={}, v_ego=14.0, model_lead0=(0.9, 14.0))
+    assert nxt <= max(prev + BRAKE_RELEASE_JERK * DT, -1e9) and nxt <= 0.0
+    prev = nxt
+
+
+def test_smooth_ghost_runs_without_radar(monkeypatch):
+  # camera-only lead (tid -1), camera clears for 0.3 s: fast let-off with radar off
+  sm = _ghost_smooth(monkeypatch, radar=False)
+  prev = sm.step(-3.0, -3.0, False, lead_one=glead(tid=-1), raw_y={}, v_ego=13.0, model_lead0=(0.9, 21.5))
+  outs = []
+  for _ in range(8):
+    prev = sm.step(prev, 0.5, False, lead_one=GGONE, raw_y={}, v_ego=13.0, model_lead0=(0.1, 80.0))
+    outs.append(prev)
+  assert outs[-1] - outs[-2] > BRAKE_RELEASE_JERK * DT + 1e-6
