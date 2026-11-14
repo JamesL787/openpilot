@@ -251,7 +251,7 @@ def test_large_camera_paint_is_unchanged(monkeypatch, request):
   state = OnroadState(True, True, 20, 80, SpeedLimitObservation())
   session.view.camera_layer(rl.Rectangle(0, 0, 2160, 1080), state)
   kwargs = camera.render_camera_model_layer.call_args.kwargs
-  assert set(kwargs) == {'road_style', 'camera_view', 'reverse_driver'}
+  assert set(kwargs) == {'road_style', 'camera_view', 'reverse_driver', 'radar_points'}
   assert kwargs['camera_view'] == state.appearance.camera_view
   assert kwargs['reverse_driver'] == state.reverse_driver_camera
   assert 'paint' not in kwargs

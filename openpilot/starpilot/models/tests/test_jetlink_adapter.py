@@ -2,7 +2,7 @@ import ast
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -90,8 +90,12 @@ def test_one_action_call_for_every_small_model():
   previous = object()
   with patch.object(runner, "action_from_outputs", return_value="catalog") as catalog:
     assert small.get_action_from_model(outputs, previous, .4, .7, 12.) == "catalog"
-  catalog.assert_called_once_with(outputs, "v9", previous, .4, .7, 12., modeld.LAT_SMOOTH_SECONDS, modeld.LONG_SMOOTH_SECONDS)
+  catalog.assert_called_once_with(outputs, "v9", previous, .4, .7, 12., modeld.LAT_SMOOTH_SECONDS, modeld.LONG_SMOOTH_SECONDS, None)
   assert catalog.call_args.args[0] is outputs and catalog.call_args.args[2] is previous
+  blendful = Mock()
+  with patch.object(runner, "action_from_outputs", return_value="catalog") as catalog:
+    assert small.get_action_from_model(outputs, previous, .4, .7, 12., blendful=blendful) == "catalog"
+  assert catalog.call_args.args[-1] is blendful
   assert modeld.ModelState.get_action_from_model is modeld.get_action_from_model
 
 
