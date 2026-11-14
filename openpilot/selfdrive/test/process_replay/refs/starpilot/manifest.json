@@ -1541,6 +1541,48 @@
 "segment": "regen6170C8C9A35|2025-04-08--22-57-46--0",
 "process": "card",
 "file": "regen6170C8C9A35_2025-04-08--22-57-46--0_card.zst",
+"bytes": 319036,
+"sha256": "4cddc04d0cc3460a6242ec941cabb061ee8ff58ef686a6ec3fb87e2870fd76ae",
+"input_sha256": "fc9ab2b4fd9702ceb8e3342186076dc6a85dbd6a3bd859ac6b965234bcc65c69",
+"input_bytes": 10419375,
+"official_baseline_commit": "ec95db3f1fa19f76940497fedfdb62e09ea19912",
+"official_artifact_commit": "9ae451c262c7402c9623f3baa1580c6242d6777b",
+"official_baseline_url": "https://raw.githubusercontent.com/commaai/ci-artifacts/9ae451c262c7402c9623f3baa1580c6242d6777b/regen6170C8C9A35_2025-04-08--22-57-46--0_card_ec95db3f1fa19f76940497fedfdb62e09ea19912.zst",
+"official_baseline_bytes": 269746,
+"official_baseline_sha256": "5c4b0d7f7679666a15ce14956a6952fba116873994aadcb3264be15b221c2b38",
+"config_sha256": "560c1060f4d2e43810e7bbd55d5f361a828bdb027d60f308b2e1d614222a2078",
+"car_fingerprint": "HONDA_ACCORD",
+"contract": "Honda Bosch cluster lane lines (PR #99, commit 3cdce15d95): on Bosch Hondas that are not radarless or CAN FD, LKAS_HUD (0x33D, 829) sets DASHED_LANES whenever steering is available and SOLID_LANES only while openpilot steers and the driver has not been turning the wheel (0.5 s on, 1 s off). On this Accord recording exactly 590 sendcan messages change, all 0x33D bus 0: byte 1 gains DASHED_LANES (0x40) in 515 and drops SOLID_LANES (0x04) during driver override in 75, plus the checksum nibble in byte 4. All other messages and fields, including the Bosch-A radarTracks from the previous expectation, are retained. Display only; no steering, brake or gas command changes. Replay evidence only; not road validated.",
+"hosted_evidence_run": 43649154945,
+"intentional_change_commit": "3cdce15d95ecc0eaa39dddb59682fdbb3fcdf3cb",
+"review_evidence": {
+"ci_run": 43649154945,
+"ci_job": 132615215390,
+"head": "d75285ef6bcf01b7dd3c6e1659d1615ce026367d",
+"tested_merge_ref": "dd270904f305403eee6a88d98b86528a7348f408",
+"comparison_reference_sha256": "e83f98ca931d996f5e7b35c7bdcaaad0baead3c894d426357c08b5793aa481ec",
+"actual_CI_sha256": "4cddc04d0cc3460a6242ec941cabb061ee8ff58ef686a6ec3fb87e2870fd76ae",
+"difference_count": 590,
+"difference_fields": {
+"sendcan.2.dat": 590
+},
+"behavior_proof": {
+"changed_messages": "only address 829 (0x33D, LKAS_HUD) bus 0, 5 bytes",
+"byte1_transitions": {
+"0x04 -> 0x44": 309,
+"0x05 -> 0x45": 206,
+"0x05 -> 0x41": 9,
+"0x04 -> 0x40": 66
+},
+"bits": "byte1 bit6 = DASHED_LANES (start bit 14), bit2 = SOLID_LANES (start bit 10), per _lkas_hud_5byte.dbc; bytes 0, 2, 3 and the upper nibble of byte 4 never change"
+},
+"decoded_comparison": "Both logs decoded with LogReader (18793 messages each, 5897 sendcan each, identical order); compare_logs with the card ignore list returns exactly these 590 sendcan.2.dat changes; no other process differs (1 changed, 27 passed, 0 errors).",
+"no_new_ignores_or_tolerances": true
+},
+"previous_reviewed_expectation": {
+"segment": "regen6170C8C9A35|2025-04-08--22-57-46--0",
+"process": "card",
+"file": "regen6170C8C9A35_2025-04-08--22-57-46--0_card.zst",
 "bytes": 319136,
 "sha256": "e83f98ca931d996f5e7b35c7bdcaaad0baead3c894d426357c08b5793aa481ec",
 "input_sha256": "fc9ab2b4fd9702ceb8e3342186076dc6a85dbd6a3bd859ac6b965234bcc65c69",
@@ -1554,6 +1596,7 @@
 "car_fingerprint": "HONDA_ACCORD",
 "contract": "Bosch-A radar for the 10th-gen Accord (PR #45): CarParams.radarUnavailable changes from True (official baseline) to False, so card publishes radarTracks from the Bosch-A parser. On this recording radarTracks drops from 1200 to 894 messages; carState (6000), carOutput (6000), sendcan (5897) and carParams (2) counts are unchanged. Replay evidence only; not road validated.",
 "hosted_evidence_run": 42165925975
+}
 }
 ],
 "source_snapshots": {
