@@ -172,6 +172,12 @@ assert.deepEqual(SettingsPage.computed.visibleRows.call(page).map(({ index }) =>
 page.state.query = "lane"
 assert.deepEqual(SettingsPage.computed.visibleRows.call(page).map(({ index }) => index), [2])
 
+// The Night Star page (modified-EPS override settings) lists under Lateral, like on the device's Driving Controls.
+const nightStar = { initialPage: "hub", activeSection: lateral, state: { query: "", data: { page: "hub", rows: [
+  { label: "Wheel Controls", page: "wheel" }, { label: "Night Star", page: "night_star" },
+] } } }
+assert.deepEqual(SettingsPage.computed.visibleRows.call(nightStar).map(({ index }) => index), [1])
+
 // Single-page sections open their controls in one tap, including when moving
 // from another section's child page. Multi-page sections still use the hub.
 const destinations = []

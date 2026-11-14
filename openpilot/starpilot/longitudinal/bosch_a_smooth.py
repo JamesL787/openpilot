@@ -13,6 +13,7 @@ a different planner. Here the evidence is static and unit tests only.
 """
 from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.longitudinal.bosch_a_toggles import vehicle_supported
+from openpilot.starpilot.longitudinal.bosch_a_turnoff import FastLetoff
 
 BRAKE_RELEASE_JERK = 2.5  # m/s^3
 BRAKE_RELEASE_DWELL_TICKS = 2  # 0.1 s at DT_MDL
@@ -45,17 +46,28 @@ def planner_action_t(actuator_delay: float, enabled: bool) -> float:
 class BoschASmooth:
   def __init__(self, CP, dt: float = DT_MDL):
     self.enabled = vehicle_supported(CP)
+    self.radar = self.enabled and not bool(getattr(CP, 'radarUnavailable', True))
     self.dt = dt
     self.rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
+    self.fast_letoff = FastLetoff(dt)  # turn-off let-off (route cc 15:25); radar on only; bosch_a_turnoff.py
 
   def action_t(self, actuator_delay: float) -> float:
     return planner_action_t(actuator_delay, self.enabled)
 
-  def step(self, prev: float, target: float, reset: bool) -> float:
-    """Last shaper before the final clip. `prev` is last cycle's published target. `reset` covers disengaged and standstill."""
+  def step(self, prev: float, target: float, reset: bool, lead_one=None, raw_y: dict[int, float] | None = None) -> float:
+    """Last shaper before the final clip. `prev` is last cycle's published target. `reset` covers disengaged and standstill.
+    `lead_one` and `raw_y` feed the turn-off let-off; a caller that passes no lead_one keeps the base let-off."""
     if not self.enabled or reset:
       self.rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
+      self.fast_letoff.reset()
       return float(target)
+    if self.radar and lead_one is not None:
+      fast_jerk = self.fast_letoff.update(lead_one, float(prev), raw_y or {})
+      if self.fast_letoff.no_gas:
+        target = min(float(target), 0.0)
+      if fast_jerk is not None:
+        self.rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
+        return float(target) if prev >= 0.0 else float(min(target, prev + fast_jerk * self.dt))
     target = brake_release_limited_target(prev, target, self.dt)
     target, self.rise_ticks = brake_release_dwell_target(prev, target, self.rise_ticks)
     return target

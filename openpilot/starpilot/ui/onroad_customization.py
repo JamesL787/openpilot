@@ -492,6 +492,10 @@ def validate_document(value):
     fields.add('showMaxSpeed')
     if type(value['showMaxSpeed']) is not bool:
       raise ValueError('Invalid MAX speed preference')
+  if 'radarPoints' in value:
+    fields.add('radarPoints')
+    if type(value['radarPoints']) is not bool:
+      raise ValueError('Invalid radar point preference')
   if set(value) != fields:
     raise ValueError("Invalid customization fields")
   palette, layouts = value["palette"], value["layouts"]
@@ -693,6 +697,8 @@ def validate_document(value):
     result['clock24Hour'] = value['clock24Hour']
   if 'showMaxSpeed' in value:
     result['showMaxSpeed'] = value['showMaxSpeed']
+  if 'radarPoints' in value:
+    result['radarPoints'] = value['radarPoints']
   if value['version'] < 10:
     migrate_large_sign_layout(result['layouts']['large'], PROFILES['large']['bounds'], extra_height=sources_extent(result))
   if value['version'] < 8:

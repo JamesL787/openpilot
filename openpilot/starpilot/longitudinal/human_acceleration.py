@@ -8,7 +8,15 @@ CP.startingState, so it never affected the Civic, and it would change other cars
 """
 import numpy as np
 
+from openpilot.cereal import log
+
 CITY_SPEED_LIMIT = 25.  # m/s, FrogPilot CITY_SPEED_LIMIT
+
+
+def applies(personality) -> bool:
+  """Relaxed and standard only (owner, 2026-11-10): aggressive keeps the planner's own max accel. AccelBoost is
+  not gated here and runs in every personality."""
+  return personality != log.LongitudinalPersonality.aggressive
 
 
 def get_max_accel_low_speeds(max_accel: float, v_cruise: float) -> float:

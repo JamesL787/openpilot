@@ -67,6 +67,7 @@ from openpilot.starpilot.ui.volt_radar_feature import VoltRadarFeature
 from openpilot.starpilot.ui.panda_wake_feature import PandaWakeFeature
 from openpilot.starpilot.panda_wake import KEYS as PANDA_WAKE_KEYS
 from openpilot.starpilot.saved_document import commit_exact
+from openpilot.starpilot.ui import blendful_settings
 from openpilot.starpilot.curve_speed.preferences import (
   DOCUMENT_KEY as CURVE_DOCUMENT_KEY, LEGACY_KEY as CURVE_LEGACY_KEY,
   MASTER_KEY as CURVE_MASTER_KEY, NO_LEAD_KEY as CURVE_NO_LEAD_KEY,
@@ -91,7 +92,7 @@ BOOL_DEFAULTS = {
   "SpeedLimitController": False, "ShowSpeedLimits": True,
   "SLCConfirmation": False,
   "PauseLateralOnSignal": False,
-  "LaneCentering": True, "LaneCenteringPauseOnSignal": True,
+  "LaneCentering": True, "LaneCenteringPauseOnSignal": True, "Blendful": False,
   "CustomPersonalities": False, PLANNER_SELECTION_KEY: True,
   **dict.fromkeys(BOSCH_A_KEYS, False),
   LEAD_APPROACH_KEY: False,
@@ -129,7 +130,7 @@ AOL_THRESHOLD = "AolBrakePauseSpeedMps"
 AOL_LEGACY_THRESHOLD = "PauseAOLOnBrake"
 TORQUE_NUMBERS = LEGACY_KEYS
 LANE_LIVE_KEYS = frozenset(("LaneCentering", "LaneCenteringPauseOnSignal", "LaneCenterOffset",
-                            "LaneCenteringE2EAuthority", "LaneCenteringStrength"))
+                            "LaneCenteringE2EAuthority", "LaneCenteringStrength", "Blendful"))
 CURVE_KEYS = frozenset((CURVE_MASTER_KEY, CURVE_NO_LEAD_KEY))
 CURVE_PAGE_KEYS = CURVE_KEYS | {"ShowCSCStatus"}
 CRUISE_KEYS = frozenset(("CustomCruise", "CustomCruiseLong"))
@@ -1178,6 +1179,7 @@ class FeatureSettingsOwner:
                           minimum=33, maximum=round(STRENGTH_MAX / STRENGTH_BASELINE * 100), step=1 if strength_row.step > 0 else 0,
                           reason="100% is normal; lower values reduce centering and higher values strengthen it" if strength_supported else
                           "Not available with this vehicle configuration"))
+      rows.append(blendful_settings.row(self, allowed))
     elif page == FeaturePage.LANE_CHANGE:
       title = "Lane Changes"
       rows.extend(self.lane_changes.rows(parked))
@@ -1366,6 +1368,8 @@ class FeatureSettingsOwner:
 
   def _apply(self, request: FeatureSettingsRequest, *, reset_default: bool = False) -> bool:
     key = request.key
+    if key in ("LaneCentering", "Blendful"):
+      return blendful_settings.apply_toggle(self, request)
     if key == "AlwaysOnLateral" and request.value == "Off":
       def authorized_off():
         return (self.authority("preferences") and self._readable(key) and

@@ -23,13 +23,5 @@ class Header():
     def values(self):
         return self._values
 
-    def generate(self):
-        value = self._header_prefix
-        for value in values:
-            value += value.generate()
-        value += self._header_suffix
-
-        return value
-
     def __str__(self):
         return "{} = {}".format(self._id, str([str(v) for v in self._values]))

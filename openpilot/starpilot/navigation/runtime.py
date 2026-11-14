@@ -26,11 +26,16 @@ def location(sm, now_ns: int, phone_fix=None):
 
 
 class RouteRuntime:
-  def __init__(self, owner: NavigationOwner, engine=None, executor=None):
+  def __init__(self, owner: NavigationOwner, engine=None, executor=None, road_limit=None):
     self.owner = owner
     if engine is None:
       from openpilot.starpilot.navigation.mapbox_budget import MonthlyBudget
+      from openpilot.starpilot.navigation.road_limit import MapboxMatcher, RoadLimit
+      from openpilot.starpilot.navigation.owner import ROAD_SPEED_LIMIT
       engine = MapboxRouteEngine(owner.session, MonthlyBudget('directions', owner.root / 'mapbox-usage'))
+      road_limit = RoadLimit(MapboxMatcher(owner.session, MonthlyBudget('mapMatching', owner.root / 'mapbox-usage')),
+                             lambda settings: settings[ROAD_SPEED_LIMIT])
+    self.road_limit = road_limit  # StarPilot add-on: road speed limit without a destination (road_limit.py)
     self.engine = engine
     self.executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix='route')
     self.key = None
@@ -73,7 +78,7 @@ class RouteRuntime:
     result = {'sessionId': self.session, 'frameMonoTime': now_ns, 'startedMonoTime': drive_id,
                   'revision': settings['revision'], 'enabled': settings['enabled'], 'status': base_status,
                   'destinationName': (settings['destination'] or {}).get('name', ''), 'instruction': {}, 'nextManeuver': {},
-                  'route': [], 'locationMonoTime': 0, 'controlValid': False}
+                  'route': [], 'locationMonoTime': 0, 'controlValid': False, 'speedLimit': 0.}
     if self.future is not None and self.future.done():
       try:
         route = self.future.result()
@@ -95,6 +100,8 @@ class RouteRuntime:
       if selected_route is not self.route:
         self.off_route_since = self.arrived_since = 0
       self.route = selected_route
+    if base_status == 'noDestination' and self.road_limit is not None:
+      result.update(self.road_limit.update(now_ns, settings, position, drive_id))
     if base_status != 'waitingForLocation':
       return result
     if position is None:
@@ -132,7 +139,8 @@ class RouteRuntime:
       self._end_route(settings['revision'])
     result.update(status='arrived' if arrived else 'guiding', instruction=progress.instruction,
                   nextManeuver=progress.next_maneuver, route=self.route.preview(),
-                  controlValid=bool(speed is not None and fresh and drive_id > 0 and not progress.off_route and not progress.arrived and stamp >= drive_id))
+                  controlValid=bool(speed is not None and fresh and drive_id > 0 and not progress.off_route and not progress.arrived and stamp >= drive_id),
+                  speedLimit=progress.speed_limit_mps or 0.)
     return result
 
   def _end_route(self, revision: str) -> None:

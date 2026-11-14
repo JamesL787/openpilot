@@ -1,0 +1,25 @@
+name: restore native build
+description: >-
+  Restore the scons cache that this run's native build job filled, so the next `scons` copies its outputs instead
+  of compiling them again. The job's own `scons` still decides what is up to date; anything the cache does not hold,
+  or every target if the native build failed, compiles as before.
+runs:
+  using: composite
+  steps:
+  - name: Download this run's native build cache
+    continue-on-error: true
+    uses: actions/download-artifact@v4
+    with:
+      name: native-build-cache-${{ github.run_attempt }}
+      path: ${{ runner.temp }}/native-build
+  - name: Unpack it as the scons cache
+    shell: bash
+    run: |
+      archive="$RUNNER_TEMP/native-build/scons-cache.tar.zst"
+      if [ -f "$archive" ]; then
+        zstd -dc "$archive" | tar -C /tmp -xf -
+        rm -f "$archive"
+        echo "Restored $(du -sh /tmp/scons_cache | cut -f1) of scons cache"
+      else
+        echo "No native build cache for this run; scons compiles everything"
+      fi

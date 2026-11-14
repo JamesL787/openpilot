@@ -11,6 +11,10 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from tools.ci.supported_vehicles import supported
+
 RUNNER = ROOT / 'tools/test_runner.py'
 EXTRA_PYTEST_FILES = (
   'openpilot/system/tests/test_sentry.py',
@@ -28,6 +32,8 @@ def pytest_files(root=ROOT):
   files = []
   for path in sorted((root / 'openpilot/starpilot').rglob('test_*.py')):
     module = ast.parse(path.read_text(), filename=str(path))
+    if not supported(path.relative_to(root).as_posix()):
+      continue  # another brand's tests: tools/ci/supported_vehicles.py
     if any((isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test_')) or
            (isinstance(node, ast.ClassDef) and node.name.startswith('Test') and not node.bases)
            for node in module.body):

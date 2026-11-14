@@ -50,6 +50,26 @@ host validation. Host tests do not replace the device build, native firmware
 qualification, device startup checks, or physical vehicle testing. GitHub also
 runs platform-specific build, replay and rendering jobs.
 
+## Supported vehicles
+
+The fork supports the `honda` brand: every Honda and Acura platform, with stock or modified EPS and stock or
+openpilot longitudinal. `opendbc/car/supported_brands.py` is the one list. `get_car` puts every other brand in
+dashcam mode before and after the startup hook, so such a car is fingerprinted and logged but never controlled.
+A platform the Honda interface already holds in dashcam (an unrecognised modified EPS, for example) stays there.
+
+CI follows the same list through `tools/ci/supported_vehicles.py`. A test file that sits in another brand's car
+directory, or whose path carries one of that brand's names, is left out of the vehicle suites
+(`run_vehicle_tests.py`), the custom pytest catalog, and directory sweeps by `tools/test_runner.py`. The files stay
+in the tree because they arrive through upstream syncs; naming one explicitly still runs it. Brand-neutral tests,
+including the ones that walk every platform, always run. `targets_for()` still returns the whole catalog and
+`supported_targets_for()` what a suite runs.
+
+Process replay replays the Honda segments as vehicles. The Hyundai and Toyota segments remain only as recorded
+inputs for the brand-neutral processes, which are replayed on nothing else, and `card` is not replayed on them.
+
+To support another brand, add it to `SUPPORTED_BRANDS` in both files (a test keeps them equal), remove its words
+from `UNSUPPORTED_WORDS`, and raise the shard counts in `.github/workflows/tests.yaml` if the suites outgrow them.
+
 ## Vehicle contract checks
 
 Run the rebuilt feature and CI tests locally after building native dependencies:

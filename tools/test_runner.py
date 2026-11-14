@@ -15,6 +15,7 @@ import warnings
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.ci import worker_diagnostics
+from tools.ci.supported_vehicles import supported, unsupported_test_name
 
 IGNORED = (
   ROOT / "openpilot/selfdrive/test/process_replay/test_processes.py",
@@ -149,6 +150,7 @@ def collect(targets, keyword):
   tests = []
   errors = []
   names = []
+  swept = set()
   for target in targets:
     path_text, *nodes = target.split("::")
     path = Path(path_text)
@@ -157,7 +159,10 @@ def collect(targets, keyword):
         files = sorted(path.rglob("test_*.py"))
         if use_ignores:
           files = [f for f in files if not any(f.resolve().is_relative_to(i) for i in IGNORED)]
+        # A directory sweep leaves out other brands' tests; naming a file still runs it.
+        files = [f for f in files if supported(f.resolve().as_posix())]
         names.extend(module_name(file) for file in files)
+        swept.update(module_name(file) for file in files)
       elif path.is_file():
         names.append(".".join((module_name(path), *nodes)))
       elif "/" in path_text or path_text.endswith(".py"):
@@ -180,6 +185,8 @@ def collect(targets, keyword):
         continue
       if cls.__dict__.get("__unittest_skip_why__", "") == "parameterized base class":
         continue
+      if name in swept and unsupported_test_name(test.id().rsplit(".", 1)[-1]):
+        continue  # another brand's case inside a brand-neutral file
       if not keyword or keyword.lower() in test.id().lower():
         tests.append(test)
   return list({test.id(): test for test in tests}.values()), errors

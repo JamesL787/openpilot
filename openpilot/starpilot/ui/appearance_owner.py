@@ -11,6 +11,11 @@ from openpilot.starpilot.ui.appearance_preferences import (CAMERA_LABELS, DEFAUL
                                                           RETIRED_DISPLAY_KEYS, read_camera_view, read_lead_info, read_visibility)
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow, FeatureSettingsRequest, FeatureSettingsState
 from openpilot.starpilot.ui.presentation import Profile
+from openpilot.starpilot.ui.radar_points import DOCUMENT_KEY as RADAR_POINTS_KEY, radar_points_enabled
+
+RADAR_POINTS_ROW = "RadarPoints"
+# Switches kept in the onroad layout document rather than in a param of their own: row key -> document field.
+DOCUMENT_SWITCHES = {"ReduceMotion": "reduceMotion", RADAR_POINTS_ROW: RADAR_POINTS_KEY}
 
 
 # Widget visibility, the stopped timer and Rainbow Road live in the onroad customization document.
@@ -93,16 +98,22 @@ class AppearanceOwner:
                           ('On' if document.get('reduceMotion') else 'Off') if document is not None else 'Unavailable', source=raw,
                           choices=('Off', 'On'), available=parked and document is not None, default_value='Off',
                           reason='Show Quick Select without transitions' if document is not None else 'Repair the saved layout in Colors & Layout'),)
+    raw, document = self._motion_source()
+    rows += (FeatureRow(RADAR_POINTS_ROW, 'Radar Point Display',
+                        ('On' if radar_points_enabled(document) else 'Off') if document is not None else 'Unavailable', source=raw,
+                        choices=('Off', 'On'), available=parked and document is not None, default_value='Off',
+                        reason='Draws a dot on the road view for every point the radar reports' if document is not None else
+                               'Repair the saved layout in Colors & Layout'),)
     return FeatureSettingsState(page="appearance", title="Onroad HUD" if profile == Profile.LARGE else "Visuals",
                                 subtitle="Display preferences; border highlights apply to C4 only.",
                                 rows=tuple(rows), parked=parked)
 
   def apply(self, request: FeatureSettingsRequest) -> bool:
-    if request.key == 'ReduceMotion':
+    if request.key in DOCUMENT_SWITCHES:
       raw, document = self._motion_source()
       if document is None or request.expected != raw or request.value not in ('Off', 'On'):
         return False
-      document['reduceMotion'] = request.value == 'On'
+      document[DOCUMENT_SWITCHES[request.key]] = request.value == 'On'
       result = commit_exact(self.params, key=PARAM_KEY, max_bytes=MAX_BYTES,
                             raw=json.dumps(document, separators=(',', ':')).encode(), expected=raw,
                             authorized=self.parked, temp_prefix='.appearance-')

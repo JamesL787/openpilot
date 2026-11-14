@@ -44,6 +44,7 @@ from openpilot.starpilot.ui.pip_preferences import read_pip
 from openpilot.starpilot.ui.pip_render import PiPRenderer
 from openpilot.starpilot.ui.pip_sidecam import Signals, Rect
 from openpilot.starpilot.ui.onroad_customization import CAMERA_WIDGETS, fit_to_road, placement, widget_size
+from openpilot.starpilot.ui.radar_points import radar_points_enabled
 from openpilot.starpilot.ui.layout_preview_sidebar import SIDEBAR_WIDTH
 from openpilot.starpilot.ui.pip_warning import PiPWarningSource
 from openpilot.starpilot.spot_monitor.preferences import read_preferences as read_vasm_preferences
@@ -177,11 +178,13 @@ class StarShellSession:
                                                  lead_info_mode=state.appearance.lead_info_mode,
                                                  lead_info_metric=state.appearance.lead_info_metric,
                                                  lateral_active=state.lateral_active,
-                                                 road_style=state.customization["roadColors"]["compact"], paint=self.camera_paint)
+                                                 road_style=state.customization["roadColors"]["compact"], paint=self.camera_paint,
+                                                 radar_points=radar_points_enabled(state.customization))
         else:
           camera_owner.render_camera_model_layer(rect, camera_view=state.appearance.camera_view,
                                                  reverse_driver=state.reverse_driver_camera,
-                                                 road_style=state.customization["roadColors"]["large"])
+                                                 road_style=state.customization["roadColors"]["large"],
+                                                 radar_points=radar_points_enabled(state.customization))
       self.view = ShellView(self.fonts, Path(__file__).parents[2] / "selfdrive/assets",
                             camera_layer=camera_layer,
                             pip_layer=self._render_pip)

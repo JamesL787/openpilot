@@ -56,6 +56,8 @@ vm.state.profile = 'large'
 assert.deepEqual(vm.state.draft.layouts, savedLayouts)
 assert.equal(validDocument(vm.state.draft, data.metadata), true)
 assert.equal(validDocument({...vm.state.draft, reduceMotion: 'true'}, data.metadata), false)
+assert.equal(validDocument({...vm.state.draft, radarPoints: true}, data.metadata), true)
+assert.equal(validDocument({...vm.state.draft, radarPoints: 'true'}, data.metadata), false)
 const malformedShelves = structuredClone(data)
 malformedShelves.metadata.profiles.large.quickSelectShelves[0].width = NaN
 assert.equal(validSnapshot(malformedShelves), false)

@@ -140,6 +140,10 @@ class TestGlobalFeaturePresentation(unittest.TestCase):
         self.assertFalse(_qualified(AuthorityContext(False, cp, None), 'switchback_wheel'))
 
   def test_every_lane_control_matches_runtime_and_rechecks_before_writing(self):
+    # Blendful is available only with a non-Default model, so select a custom one to exercise its row too.
+    custom = mock.patch("openpilot.starpilot.models.manager.preferences", return_value={"small": "custom-small", "big": ""})
+    custom.start()
+    self.addCleanup(custom.stop)
     self.params.put_bool("LaneCentering", False, block=True)
     cp = params_for(ToyotaCar.TOYOTA_RAV4_TSS2)
     owner = FeatureSettingsOwner(self.params, lambda _group: True,
@@ -153,6 +157,7 @@ class TestGlobalFeaturePresentation(unittest.TestCase):
     self.assertTrue(owner.apply(request))
     self.assertTrue(self.params.get_bool('LaneCentering'))
     rows = owner.snapshot('lane', parked=True, system_long=True, lateral_context=True, metric=False).rows
+    self.assertIn("Blendful", {row.key for row in rows})
     self.assertTrue(all(row.available for row in rows if row.key in LANE_LIVE_KEYS))
     requests = [FeatureSettingsRequest(row.key, row.source, row.value, vehicle_fingerprint=row.vehicle_fingerprint)
                 for row in rows if row.key in LANE_LIVE_KEYS]
@@ -165,6 +170,18 @@ class TestGlobalFeaturePresentation(unittest.TestCase):
     after = {key: Path(self.params.get_param_path(key)).read_bytes()
              if Path(self.params.get_param_path(key)).exists() else None for key in LANE_LIVE_KEYS}
     self.assertEqual(before, after)
+
+  def test_blendful_row_needs_a_custom_model(self):
+    cp = params_for(ToyotaCar.TOYOTA_RAV4_TSS2)
+    owner = FeatureSettingsOwner(self.params, lambda _group: True,
+      vehicle_fingerprint=lambda: cp.carFingerprint, vehicle_params=lambda: cp)
+    def blendful_row():
+      return next(row for row in owner.snapshot('lane', parked=True, system_long=True, lateral_context=True, metric=False).rows
+                  if row.key == "Blendful")
+    with mock.patch("openpilot.starpilot.models.manager.preferences", return_value={"small": "rdf43", "big": ""}):
+      self.assertFalse(blendful_row().available)
+    with mock.patch("openpilot.starpilot.models.manager.preferences", return_value={"small": "custom-small", "big": ""}):
+      self.assertTrue(blendful_row().available)
 
   def test_reported_distance_actions_do_not_depend_on_aol_policy(self):
     nissan = params_for(NissanCar.NISSAN_ROGUE)

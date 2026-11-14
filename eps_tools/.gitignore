@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+# Firmware is supplied locally, never distributed by this tooling repository.
+*.[rR][wW][dD]
+user.bin
+user_patched.bin
+user_patched.enc
+
+.ruff_cache/

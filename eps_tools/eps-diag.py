@@ -2,7 +2,7 @@
 EPS CAN bus diagnostic tool for Honda/Acura EPS ECUs.
 
 Checks whether the EPS (Electric Power Steering) ECU is alive on the CAN bus
-after a potentially bad flash. Runs three checks:
+for a routine communication sanity check or recovery troubleshooting. Runs three checks:
 
   1. Passive sniff  – listen for any raw CAN traffic from the EPS physical addr
   2. UDS ping       – send Tester Present and wait for a positive response
@@ -12,24 +12,25 @@ after a potentially bad flash. Runs three checks:
 By default checks buses 0 and 1. Pass --bus to pin to a single bus.
 
 Usage (on the comma device via SSH):
-  python eps-diag.py            # check buses 0 and 1, address 0x18DA30F1
-  python eps-diag.py -b 1       # pin to bus 1
-  python eps-diag.py --scan     # brute-force scan all common Honda ECU addrs
+  python3 eps-diag.py            # check buses 0 and 1, address 0x18DA30F1
+  python3 eps-diag.py -b 1       # pin to bus 1
+  python3 eps-diag.py --scan     # brute-force scan all common Honda ECU addrs
 """
+
+from __future__ import annotations
 
 import argparse
 import os
 import sys
 import time
 
-from panda import Panda
-from opendbc.car.structs import CarParams
-from opendbc.car.uds import (
-  UdsClient,
-  SESSION_TYPE,
-  DATA_IDENTIFIER_TYPE,
-  NegativeResponseError,
-)
+DEPENDENCY_ERROR = None
+try:
+  from panda import Panda
+  from opendbc.car.structs import CarParams
+  from opendbc.car.uds import UdsClient, SESSION_TYPE, DATA_IDENTIFIER_TYPE, NegativeResponseError, MessageTimeoutError
+except ImportError as e:
+  DEPENDENCY_ERROR = e
 
 # ── addresses ────────────────────────────────────────────────────────────────
 EPS_ADDR = 0x18DA30F1   # tester → EPS  (29-bit, ISO 15765-4 physical)
@@ -58,8 +59,15 @@ UDS_TIMEOUT_S    = 3.0   # seconds to wait for each UDS response
 
 def connect_panda() -> Panda:
   p = Panda(disable_checks=True)
-  p.set_safety_mode(CarParams.SafetyModel.elm327)
-  print(f"  Connected to Panda (serial: {p.get_serial()})")
+  try:
+    p.set_safety_mode(CarParams.SafetyModel.elm327)
+    print(f"  Connected to Panda (serial: {p.get_serial()})")
+  except Exception:
+    try:
+      p.close()
+    except Exception as e:
+      print(f"  Cleanup: could not close Panda ({e})")
+    raise
   return p
 
 
@@ -106,8 +114,11 @@ def passive_sniff(panda: Panda, buses: list[int], resp_addr: int,
   print(f"[1/3] Passive CAN sniff on bus(es) {label} for {duration:.0f}s …")
   print(f"      Watching for frames from 0x{resp_addr:08X} (EPS response addr)")
 
+  print("      Passive silence is inconclusive: this diagnostic address is not a periodic heartbeat.")
+  # can_clear(bus) only drops queued TX; 0xFFFF drops buffered RX so stale frames aren't counted.
   for bus in bus_list:
     panda.can_clear(bus)
+  panda.can_clear(0xFFFF)
 
   deadline = time.monotonic() + duration
   eps_counts = {b: 0 for b in bus_list}
@@ -133,7 +144,7 @@ def passive_sniff(panda: Panda, buses: list[int], resp_addr: int,
       print(f"  RESULT bus {bus}: No frames from EPS response addr")
       ext = all_extended[bus]
       if ext:
-        print(f"    Other 29-bit addresses seen: " +
+        print("    Other 29-bit addresses seen: " +
               ", ".join(f"0x{a:08X}" for a in sorted(ext)))
       else:
         print("    No 29-bit extended frames seen on this bus.")
@@ -141,207 +152,137 @@ def passive_sniff(panda: Panda, buses: list[int], resp_addr: int,
   return results
 
 
-def uds_tester_present(uds: UdsClient, bus: int) -> bool:
-  """Send a single Tester Present and check whether the EPS is present on this bus.
-
-  A negative response still means the ECU is alive (same idea as flash.py probe).
-  """
-  print(f"\n{'='*60}")
-  print(f"[2/3] UDS Tester Present ping (bus {bus}) …")
+def request(label, operation):
+  """Separate communication evidence from support for a requested operation."""
   try:
-    uds.tester_present()
-    print("  RESULT: EPS acknowledged Tester Present  ✓")
-    return True
+    data = operation()
+    print(f"  {label}: accepted")
+    return True, True, data
   except NegativeResponseError as e:
-    print(f"  RESULT: EPS present (negative response): {e}")
-    return True
-  except Exception as e:
-    print(f"  RESULT: No response / timeout: {e}")
-    return False
+    print(f"  {label}: ECU responded; request rejected ({e})")
+    return True, False, None
+  except MessageTimeoutError:
+    print(f"  {label}: no response within timeout")
+    return False, False, None
 
 
-def uds_session_and_id(uds: UdsClient, bus: int) -> tuple[bool, str | None]:
-  """Try default → extended session and read the software part number.
-
-  Returns (session_ok, app_id_or_None).
-  """
-  print(f"\n{'='*60}")
-  print(f"[3/3] UDS session + Application Software ID read (bus {bus}) …")
-  app_id = None
-
-  # Default session (0x01) — most ECUs come up here even after a bad flash
-  try:
-    uds.diagnostic_session_control(SESSION_TYPE.DEFAULT)
-    print("  Default session: OK")
-  except Exception as e:
-    print(f"  Default session failed: {e}")
-
-  # Try reading the part number in default session first
-  for did, label in [
-    (DATA_IDENTIFIER_TYPE.APPLICATION_SOFTWARE_IDENTIFICATION, "Application SW ID (F181)"),
-    (DATA_IDENTIFIER_TYPE.VIN,                                 "VIN (F190)"),
-  ]:
-    try:
-      data = uds.read_data_by_identifier(did)
-      print(f"  {label}: {data!r}")
-      if did == DATA_IDENTIFIER_TYPE.APPLICATION_SOFTWARE_IDENTIFICATION:
-        app_id = format_app_id(data) or app_id
-    except NegativeResponseError as e:
-      print(f"  {label}: negative response – {e}")
-    except Exception as e:
-      print(f"  {label}: timeout/error – {e}")
-
-  # Extended diagnostic session
-  try:
-    uds.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC)
-    print("  Extended diagnostic session: OK")
-
-    try:
-      data = uds.read_data_by_identifier(DATA_IDENTIFIER_TYPE.APPLICATION_SOFTWARE_IDENTIFICATION)
-      print(f"  Application SW ID (extended): {data!r}")
-      app_id = format_app_id(data) or app_id
-      return True, app_id
-    except Exception as e:
-      print(f"  Application SW ID (extended): {e}")
-  except Exception as e:
-    print(f"  Extended diagnostic session failed: {e}")
-
-  return False, app_id
+def uds_tester_present(uds, bus):
+  received, _, _ = request(f"Tester Present (bus {bus})", uds.tester_present)
+  return received
 
 
-def scan_all(panda: Panda, bus: int):
-  """Probe every common Honda ECU address with a Tester Present."""
-  print(f"\n{'='*60}")
-  print(f"Scanning all common Honda UDS addresses on bus {bus} …\n")
+def uds_session_and_id(uds, bus):
+  received, accepted, _ = request(f"Default session (bus {bus})",
+    lambda: uds.diagnostic_session_control(SESSION_TYPE.DEFAULT))
+  result = {"responded": received, "default": accepted, "extended": False, "app_id": None}
+  for extended in (False, True):
+    if extended:
+      received, accepted, _ = request("Extended session",
+        lambda: uds.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC))
+      result["responded"] |= received
+      result["extended"] = accepted
+      if not accepted:
+        continue
+    received, accepted, data = request("Application Software ID",
+      lambda: uds.read_data_by_identifier(DATA_IDENTIFIER_TYPE.APPLICATION_SOFTWARE_IDENTIFICATION))
+    result["responded"] |= received
+    if accepted:
+      result["app_id"] = format_app_id(data) or result["app_id"]
+    if result["app_id"]:
+      break
+  return result
+
+
+def scan_all(panda, bus):
+  print(f"Scanning common Honda ECU addresses on bus {bus}")
+  responding = False
   for addr, name in HONDA_SCAN_ADDRS:
     uds = UdsClient(panda, addr, bus=bus, timeout=1.5)
-    try:
-      uds.tester_present()
-      print(f"  0x{addr:08X}  {name:<25}  ALIVE ✓")
-    except NegativeResponseError as e:
-      print(f"  0x{addr:08X}  {name:<25}  negative response: {e}")
-    except Exception:
-      print(f"  0x{addr:08X}  {name:<25}  no response")
+    received, _, _ = request(f"0x{addr:08X} {name}", uds.tester_present)
+    responding |= received
+  return responding
 
 
-def print_recovery_advice(kind: str, detected_eps: str | None):
-  """Print next-step guidance without inventing a specific .rwd filename."""
-  if kind == "dead":
-    print("""
-DIAGNOSIS: EPS is not responding at all on the checked bus(es).
-  Possible causes:
-    - Ignition/ACC not on — EPS needs power (key in ON position)
-    - EPS is bricked (bad flash left it in bootloader with no CAN output)
-    - Wiring / Panda connection issue
-    - Wrong bus (if you pinned --bus, try without it to check 0 and 1)
-
-  Next steps:
-    1. Confirm ignition is ON (not just ACC) — some Bosch EPS needs full ON
-    2. Re-run without --bus to check buses 0 and 1
-    3. Run a full scan:  python3 eps-diag.py --scan
-    4. If completely unresponsive, the EPS may need a bench flash via OBD2
-       with the ECU powered independently from the car battery.
-""")
-    return
-
-  if kind == "bootloader":
-    print("""
-DIAGNOSIS: EPS is broadcasting CAN frames but not responding to UDS.
-  This is consistent with a bad flash that left the bootloader active
-  but the application layer non-functional. The ECU is alive but stuck.
-""")
+def print_recovery_advice(confirmed, detected_eps=None):
+  print("\nRecovery troubleshooting (requested with --recovery):")
+  if confirmed:
+    print("  ECU communication was observed. This does not establish firmware or steering operation.")
   else:
-    print("""
-DIAGNOSIS: EPS is responding — try the flash again.
-  The previous timeout may have been transient.
-""")
-
+    print("  Communication was not confirmed; this alone does not diagnose a brick or bootloader fault.")
+  print("  Check ignition ON, Panda connection, selected bus/address, and the original flash output.")
+  print("  If troubleshooting a failed flash, retain the matching stock recovery image.")
+  print("  Use python3 flash.py for a deliberate recovery attempt; recovery is not guaranteed.")
   if detected_eps:
-    print(f"  Detected EPS: {detected_eps}")
-  print("""  Next step: python3 flash.py
-  For recovery, choose the stock image matching your EPS part number
-  (not a modified image). flash.py will list compatible options.
-  Manual path: re-run eps-update.py with the same .rwd you were already using
-  (or the matching stock image) and --danger.
-""")
+    print(f"  Cached EPS identifier (not live confirmation): {detected_eps}")
 
 
-def main():
-  ap = argparse.ArgumentParser(description="Honda/Acura EPS CAN bus diagnostic")
+def main(argv=None):
+  ap = argparse.ArgumentParser(description="Honda/Acura EPS communication sanity check")
   ap.add_argument("-b", "--bus", default=None, type=lambda x: int(x, 0),
-                  help="Pin to a single CAN bus (default: check buses 0 and 1)")
-  ap.add_argument("--addr", default=EPS_ADDR, type=lambda x: int(x, 0),
-                  help=f"EPS UDS address (default: 0x{EPS_ADDR:08X})")
-  ap.add_argument("--scan", action="store_true",
-                  help="Scan all common Honda ECU addresses")
-  ap.add_argument("--sniff-only", action="store_true",
-                  help="Only run the passive sniff, skip UDS probes")
-  args = ap.parse_args()
-
+                  help="Pin a CAN bus (default: check 0 and 1)")
+  ap.add_argument("--addr", default=EPS_ADDR, type=lambda x: int(x, 0), help="EPS UDS request address")
+  ap.add_argument("--scan", action="store_true", help="Scan common ECUs; success does not specifically confirm EPS")
+  ap.add_argument("--sniff-only", action="store_true", help="Passive only; silence is inconclusive")
+  ap.add_argument("--recovery", action="store_true", help="Include failed-flash troubleshooting guidance")
+  args = ap.parse_args(argv)
   buses = [args.bus] if args.bus is not None else list(DEFAULT_BUSES)
-  resp_addr = response_addr_for(args.addr)
-
-  print("Honda/Acura EPS diagnostic")
-  print(f"  Bus(es):    {', '.join(str(b) for b in buses)}")
-  print(f"  EPS addr:   0x{args.addr:08X}  (response 0x{resp_addr:08X})")
-
+  panda = None
+  clients = []
+  print("Honda/Acura EPS communication sanity check")
+  print("Communication results do not verify firmware correctness or steering operation.")
   try:
+    if DEPENDENCY_ERROR is not None:
+      raise RuntimeError(f"Openpilot dependencies unavailable: {DEPENDENCY_ERROR}")
     panda = connect_panda()
+    if args.scan:
+      results = [scan_all(panda, bus) for bus in buses]
+      confirmed = any(results)
+      print("Scan communication confirmed (not necessarily EPS)." if confirmed else "Scan communication not confirmed.")
+      return 0 if confirmed else 1
+    sniff = passive_sniff(panda, buses, response_addr_for(args.addr))
+    confirmed = any(sniff.values())
+    live_id = None
+    if not args.sniff_only:
+      for bus in buses:
+        uds = UdsClient(panda, args.addr, bus=bus, timeout=UDS_TIMEOUT_S)
+        clients.append(uds)
+        ping = uds_tester_present(uds, bus)
+        result = uds_session_and_id(uds, bus)
+        if not (ping or result["responded"]):
+          # Nothing answered on this bus: restoring its session would only time
+          # out and print a misleading power-cycle warning.
+          clients.remove(uds)
+        confirmed |= ping or result["responded"]
+        live_id = live_id or result["app_id"]
+        print(f"  Bus {bus}: default session accepted={result['default']}, "
+              f"extended session accepted={result['extended']}, software ID read={bool(result['app_id'])}")
+    print("\nEPS communication confirmed." if confirmed else "\nEPS communication not confirmed.")
+    cached = None
+    if live_id:
+      print(f"  EPS software ID read live: {live_id}")
+    else:
+      cached = car_eps_fw_from_params()
+      if cached:
+        print(f"  Cached CarParams EPS identifier (not current firmware confirmation): {cached}")
+    if args.recovery:
+      print_recovery_advice(confirmed, cached)
+    return 0 if confirmed else 1
   except Exception as e:
-    print(f"\nFailed to connect to Panda: {e}")
-    print("Make sure the Panda is connected via USB and the car is in ACC ON / ignition.")
-    return
-
-  if args.scan:
-    for bus in buses:
-      scan_all(panda, bus)
-    return
-
-  # ── check 1: passive sniff ─────────────────────────────────────────────────
-  sniff_by_bus = passive_sniff(panda, buses, resp_addr)
-  eps_alive_passive = any(sniff_by_bus.values())
-
-  if args.sniff_only:
-    return
-
-  # ── checks 2 & 3: UDS probes (per bus) ─────────────────────────────────────
-  ping_by_bus: dict[int, bool] = {}
-  session_by_bus: dict[int, bool] = {}
-  app_id = None
-
-  for bus in buses:
-    uds = UdsClient(panda, args.addr, bus=bus, timeout=UDS_TIMEOUT_S)
-    ping_by_bus[bus] = uds_tester_present(uds, bus)
-    ok, found_id = uds_session_and_id(uds, bus)
-    session_by_bus[bus] = ok
-    if found_id and not app_id:
-      app_id = found_id
-
-  eps_alive_ping = any(ping_by_bus.values())
-  eps_alive_session = any(session_by_bus.values())
-  detected_eps = app_id or car_eps_fw_from_params()
-
-  # ── summary ────────────────────────────────────────────────────────────────
-  print(f"\n{'='*60}")
-  print("SUMMARY")
-  for bus in buses:
-    print(f"  Bus {bus}:")
-    print(f"    Passive CAN frames:      {'YES' if sniff_by_bus.get(bus) else 'NO'}")
-    print(f"    Tester Present:          {'YES' if ping_by_bus.get(bus) else 'NO'}")
-    print(f"    UDS session/ID read:     {'YES' if session_by_bus.get(bus) else 'NO'}")
-  responding = [b for b in buses if sniff_by_bus.get(b) or ping_by_bus.get(b) or session_by_bus.get(b)]
-  if responding:
-    print(f"  EPS activity seen on bus(es): {', '.join(str(b) for b in responding)}")
-  if detected_eps:
-    print(f"  Detected EPS part number:   {detected_eps}")
-
-  if not any([eps_alive_passive, eps_alive_ping, eps_alive_session]):
-    print_recovery_advice("dead", detected_eps)
-  elif eps_alive_passive and not eps_alive_ping:
-    print_recovery_advice("bootloader", detected_eps)
-  else:
-    print_recovery_advice("alive", detected_eps)
+    print(f"\nEPS check could not run: {e}")
+    print("Check dependencies, Panda connection, ignition ON, and that openpilot has released the Panda.")
+    return 2
+  finally:
+    for uds in clients:
+      try:
+        uds.diagnostic_session_control(SESSION_TYPE.DEFAULT)
+      except Exception as e:
+        print(f"  Cleanup: could not restore default session ({e}); power-cycle before resuming use.")
+    if panda is not None:
+      try:
+        panda.close()
+      except Exception as e:
+        print(f"  Cleanup: could not close Panda ({e})")
 
 
 if __name__ == "__main__":
-  main()
+  sys.exit(main())

@@ -16,6 +16,7 @@ from openpilot.starpilot.speed_limits import speed_domain as sd
 from openpilot.starpilot.speed_limits.runtime_settings import Settings
 from openpilot.starpilot.speed_limits.map_observation import MapSource, copy_frame
 from openpilot.starpilot.speed_limits.advance import Advance
+from openpilot.starpilot.speed_limits.navigation_observation import navigation_observation
 from openpilot.starpilot.speed_limits.vision.observation import clock_pair_ns, vision_observation
 
 
@@ -378,6 +379,9 @@ class Runtime:
       else:
         self.map_source.reset()
         values[sel.Source.MAP] = acc.Observation(acc.ObservationKind.STALE)
+    if self.settings.selection.online_fallback:
+      values[sel.Source.ONLINE] = navigation_observation(sm, now_ns=now_ns, drive_session=self.session_id,
+                                                         car_fingerprint=str(CP.carFingerprint))
     # Vision still requires its independent source-specific qualification.
     return values
 

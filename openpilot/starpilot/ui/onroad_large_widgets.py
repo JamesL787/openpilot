@@ -49,7 +49,7 @@ class UnifiedSpeedWidget:
       draw_text(self.fonts, text, FontRole.NORMAL, 26, rect.x + (rect.width - width) / 2, rect.y + 22, rl.WHITE)
       return
     active = state.speed_limit.source if str(state.speed_limit.kind) == 'valid' else state.speed_limit.accepted_source
-    labels = {'dashboard': 'Dash', 'map': 'Map', 'vision': 'Vision', 'online': 'Online'}
+    labels = {'dashboard': 'Dash', 'map': 'Map', 'vision': 'Vision', 'online': 'Nav'}
     cell = (rect.width - 2 * PADDING) / len(rows)
     for index, row in enumerate(rows):
       color = rl.WHITE if row.source == active else rl.Color(170, 179, 174, 255)

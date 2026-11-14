@@ -8,6 +8,8 @@ from openpilot.starpilot.navigation.owner import ValidationError, response_json
 
 EARTH_RADIUS = 6371007.2
 MAX_POINTS = 20000
+SPEED_UNITS = {'km/h': 1 / 3.6, 'mph': 0.44704}
+MAX_SPEED_LIMIT_MPS = 160 / 3.6
 
 
 def point(value) -> tuple[float, float]:
@@ -44,6 +46,29 @@ def modifier(value) -> str:
     'sharp left', 'sharpLeft').replace('sharp right', 'sharpRight')
 
 
+def max_speeds(data: dict, segments: int) -> list[float | None]:
+  """Posted limit per route segment from Mapbox's maxspeed annotation, in m/s.
+
+  Mapbox gives one entry per geometry segment: {'speed', 'unit'}, {'unknown': true}
+  or {'none': true} (no posted limit). Only a numeric posted limit counts; a
+  missing, short or malformed annotation leaves every segment unknown.
+  """
+  try:
+    rows = data['legs'][0]['annotation']['maxspeed']
+  except (KeyError, TypeError, IndexError):
+    return [None] * segments
+  if not isinstance(rows, list) or len(rows) != segments:
+    return [None] * segments
+  limits = []
+  for row in rows:
+    speed = row.get('speed') if isinstance(row, dict) else None
+    factor = SPEED_UNITS.get(row.get('unit')) if isinstance(row, dict) else None
+    ok = isinstance(speed, (int, float)) and not isinstance(speed, bool) and factor is not None and math.isfinite(speed)
+    mps = speed * factor if ok else None
+    limits.append(mps if mps is not None and 0 < mps <= MAX_SPEED_LIMIT_MPS else None)
+  return limits
+
+
 @dataclass(frozen=True)
 class Step:
   start: float
@@ -60,6 +85,7 @@ class Progress:
   next_maneuver: dict
   off_route: bool
   arrived: bool
+  speed_limit_mps: float | None = None  # Mapbox posted limit on the matched segment
 
 
 class NavigationRoute:
@@ -92,6 +118,7 @@ class NavigationRoute:
       if self.total_distance < 1 or offset < 1:
         raise ValidationError('The route is empty')
       self.starts = [step.start for step in self.steps]
+      self.speed_limits = max_speeds(data, len(self.points) - 1)
     except (KeyError, TypeError, IndexError, AttributeError):
       raise ValidationError('The map service returned an incomplete route') from None
 
@@ -137,7 +164,9 @@ class NavigationRoute:
                               math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(delta)))
       misaligned = abs((direction - bearing + 180) % 360 - 180) > 75
     arrived = known_speed and speed < 2 and distance(position, self.points[-1]) < 40 and instruction['remainingDistanceMeters'] < 40
-    return Progress(instruction, next_maneuver, separation > threshold or misaligned, arrived)
+    off_route = separation > threshold or misaligned
+    return Progress(instruction, next_maneuver, off_route, arrived,
+                    None if off_route else self.speed_limits[segment])
 
 
 class MapboxRouteEngine:
@@ -151,7 +180,8 @@ class MapboxRouteEngine:
       self.budget.spend(enforce=False)  # upstream routing: counted for Setup, never refused
     url = ('https://api.mapbox.com/directions/v5/mapbox/driving-traffic/' +
            f'{position[0]},{position[1]};{destination["longitude"]},{destination["latitude"]}')
-    params = {'access_token': token, 'geometries': 'geojson', 'steps': 'true', 'overview': 'full', 'banner_instructions': 'true', 'alternatives': 'true'}
+    params = {'access_token': token, 'geometries': 'geojson', 'steps': 'true', 'overview': 'full', 'banner_instructions': 'true', 'alternatives': 'true',
+              'annotations': 'maxspeed'}
     if exclusions:
       params['exclude'] = ','.join(exclusions)
     if bearing is not None:

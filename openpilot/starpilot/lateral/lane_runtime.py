@@ -47,6 +47,17 @@ def runtime_supported(CP) -> bool:
   return os.getenv('LANE_CENTERING_REPLAY_RUNTIME') == '1' or lateral_supported(CP)
 
 
+def blendful_preferred(params) -> bool:
+  """Blendful's half of the mutual exclusion with starpilot Lane Centering.
+
+  Read on the host's refresh cadence; the file read matches read_settings.
+  """
+  try:
+    return Path(params.get_param_path('Blendful')).read_bytes() == b'1'
+  except (FileNotFoundError, OSError, UnknownKeyName):
+    return False
+
+
 class LaneCenteringHost:
   REFRESH_NS = 1_000_000_000
   MAX_TICK_NS = 50_000_000
@@ -56,6 +67,7 @@ class LaneCenteringHost:
   def __init__(self, params):
     self.params = params
     self.settings = LaneCenteringSettings()
+    self.blendful_active = False
     self.last_refresh_ns: int | None = None
     self.last_tick_ns: int | None = None
     self.last_refusal = 'inactive'
@@ -78,7 +90,11 @@ class LaneCenteringHost:
       return None
     if self.last_refresh_ns is None or now_ns < self.last_refresh_ns or now_ns - self.last_refresh_ns >= self.REFRESH_NS:
       self.settings = read_settings(self.params)
+      self.blendful_active = blendful_preferred(self.params)
       self.last_refresh_ns = now_ns
+    if self.blendful_active:
+      self.last_refusal = 'blendful_active'
+      return None
     if not self.settings.enabled:
       self.last_refusal = 'host_disabled'
       return None

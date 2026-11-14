@@ -41,6 +41,7 @@ MAX_FAVORITES = 100
 MAX_RECENTS = 10
 FAVORITE_LABELS = ('home', 'work')
 ROUTE_AVOIDANCES = {'avoidTolls': 'toll', 'avoidHighways': 'motorway', 'avoidFerries': 'ferry'}
+ROAD_SPEED_LIMIT = 'roadSpeedLimit'  # Mapbox limit without a destination (road_limit.py); on unless turned off
 # Fixed provider styles matching Galaxy; cache entries are separate for each theme.
 MAP_STYLES = {'light': 'mapbox/light-v11', 'dark': 'mapbox/dark-v11'}
 
@@ -147,7 +148,7 @@ class NavigationOwner:
       info = os.stat(self.path)
     except FileNotFoundError:
       return {'version': 1, 'revision': '0', 'enabled': False, 'token': '', 'destination': None, 'favorites': [], 'recents': [], 'gpsSource': 'backup',
-              **dict.fromkeys(ROUTE_AVOIDANCES, False)}
+              **dict.fromkeys(ROUTE_AVOIDANCES, False), ROAD_SPEED_LIMIT: True}
     key = (info.st_ino, info.st_mtime_ns, info.st_size)
     cached = getattr(self, '_read_cache', None)
     if cached is not None and cached[0] == key:
@@ -157,7 +158,7 @@ class NavigationOwner:
         raw = source.read(MAX_DOCUMENT + 1)
     except FileNotFoundError:
       return {'version': 1, 'revision': '0', 'enabled': False, 'token': '', 'destination': None, 'favorites': [], 'recents': [], 'gpsSource': 'backup',
-              **dict.fromkeys(ROUTE_AVOIDANCES, False)}
+              **dict.fromkeys(ROUTE_AVOIDANCES, False), ROAD_SPEED_LIMIT: True}
     try:
       value = json.loads(raw)
       if (len(raw) > MAX_DOCUMENT or not isinstance(value, dict) or value.get('version') != 1 or
@@ -176,6 +177,8 @@ class NavigationOwner:
       for setting in ROUTE_AVOIDANCES:
         if type(value.setdefault(setting, False)) is not bool:
           raise ValueError
+      if type(value.setdefault(ROAD_SPEED_LIMIT, True)) is not bool:
+        raise ValueError
       if value.setdefault('gpsSource', 'backup') not in GPS_MODES:
         raise ValueError
     except (ValueError, TypeError, KeyError):
@@ -336,6 +339,7 @@ class NavigationOwner:
     result['gpsSource'] = document['gpsSource']
     from openpilot.starpilot.gps.phone import phone_gps_status
     result['phoneGps'] = phone_gps_status()
+    result[ROAD_SPEED_LIMIT] = document[ROAD_SPEED_LIMIT]
     # Home and Work lead, then places in the order they were saved.
     result['favorites'] = sorted(document['favorites'], key=lambda row: FAVORITE_LABELS.index(row['label']) if 'label' in row else 2)
     from openpilot.starpilot.navigation.mapbox_budget import read_usage
@@ -484,13 +488,13 @@ class NavigationOwner:
         self._tile_bytes -= len(tile)
 
   def configure(self, patch: dict, expected_revision: str, authorized) -> dict:
-    if not isinstance(patch, dict) or not patch or set(patch) - ({'enabled', 'token', 'gpsSource'} | ROUTE_AVOIDANCES.keys()):
+    if not isinstance(patch, dict) or not patch or set(patch) - ({'enabled', 'token', 'gpsSource', ROAD_SPEED_LIMIT} | ROUTE_AVOIDANCES.keys()):
       raise ValidationError('Unknown navigation setting')
     if 'gpsSource' in patch and patch['gpsSource'] not in GPS_MODES:
       raise ValidationError('Choose a GPS source')
     if 'enabled' in patch and type(patch['enabled']) is not bool:
       raise ValidationError('Navigation enabled must be on or off')
-    if any(type(patch[key]) is not bool for key in ROUTE_AVOIDANCES if key in patch):
+    if any(type(patch[key]) is not bool for key in (*ROUTE_AVOIDANCES, ROAD_SPEED_LIMIT) if key in patch):
       raise ValidationError('Route avoidance settings must be on or off')
     if 'token' in patch and (not isinstance(patch['token'], str) or len(patch['token']) > 2048 or
                              any(ch.isspace() for ch in patch['token'])):
@@ -501,7 +505,7 @@ class NavigationOwner:
       if any(key in patch and patch[key] != value[key] for key in ROUTE_AVOIDANCES):
         value['routeChoice'] = 0
       value.update(patch)
-    result = self._change(update, expected_revision, authorized, preserve_active=set(patch) <= ROUTE_AVOIDANCES.keys() | {'gpsSource'})
+    result = self._change(update, expected_revision, authorized, preserve_active=set(patch) <= ROUTE_AVOIDANCES.keys() | {'gpsSource', ROAD_SPEED_LIMIT})
     if 'token' in patch:
       with self._tile_lock:
         self._tiles.clear()

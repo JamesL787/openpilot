@@ -280,24 +280,34 @@ def test_real_child_death_leaves_failed_receipt_and_durable_node(tmp_path, monke
 @pytest.mark.parametrize('module,cases,shard_count', [('test_legacy_advert_callers.py', 126, 3),
                                                       ('test_legacy_sdsu_callers.py', 240, 3),
                                                       ('test_2aa_forwarded_copy_callers.py', 60, 2)])
-def test_real_plugin_exact_parameter_assignment_across_shards(tmp_path, module, cases, shard_count):
-  path = tmp_path / 'openpilot/starpilot/car/toyota/tests' / module
-  path.parent.mkdir(parents=True)
-  path.write_text(f'import pytest\n@pytest.mark.parametrize("value", range({cases}))\ndef test_independent(value):\n assert 0 <= value < {cases}\n')
-  outcomes = []
-  for index in range(shard_count):
-    output = tmp_path / f'shard-{index}'
-    env = dict(os.environ, PYTHONPATH=str(shards.ROOT), PYTEST_DISABLE_PLUGIN_AUTOLOAD='1')
-    command = [sys.executable, '-m', 'pytest', '-q', '-p', 'tools.ci.custom_pytest_shards',
-               f'--custom-shard-index={index}', f'--custom-shard-count={shard_count}', f'--custom-shard-output={output}', str(path)]
-    child = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=20, check=False)
-    assert child.returncode == 0, child.stdout.decode() + child.stderr.decode()
-    outcomes.append(json.loads((output / 'outcomes.json').read_text()))
-  seen = [node for outcome in outcomes for node in outcome['selected']]
+def test_heavy_module_exact_parameter_assignment_across_shards(module, cases, shard_count):
+  # These heavy modules are Toyota, so the real plugin now deselects them (tools/ci/supported_vehicles.py).
+  # The heavy-case splitting itself is checked on partition() directly.
+  path = f'openpilot/starpilot/car/toyota/tests/{module}'
+  catalog = [f'{path}::test_independent[{value}]' for value in range(cases)]
+  assignment, _ = shards.partition(catalog, shard_count)
+  seen = [node for shard in assignment for node in shard]
   assert len(seen) == len(set(seen)) == cases
-  assert set(seen) == set(outcomes[0]['catalog'])
-  for outcome in outcomes:
-    shards.validate_outcomes(outcome['selected'], outcome['reports'])
+  assert set(seen) == set(catalog)
+  assert all(assignment)
+
+
+def test_real_plugin_deselects_other_brand_modules(tmp_path):
+  for brand in ('honda', 'toyota'):
+    path = tmp_path / f'openpilot/starpilot/car/{brand}/tests/test_{brand}_cases.py'
+    path.parent.mkdir(parents=True)
+    path.write_text('import pytest\n@pytest.mark.parametrize("value", range(4))\ndef test_independent(value):\n assert value < 4\n')
+  output = tmp_path / 'shard-0'
+  env = dict(os.environ, PYTHONPATH=str(shards.ROOT), PYTEST_DISABLE_PLUGIN_AUTOLOAD='1')
+  command = [sys.executable, '-m', 'pytest', '-q', '-p', 'tools.ci.custom_pytest_shards', '--custom-shard-index=0',
+             '--custom-shard-count=1', f'--custom-shard-output={output}', 'openpilot']
+  child = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=20, check=False)
+  assert child.returncode == 0, child.stdout.decode() + child.stderr.decode()
+  outcome = json.loads((output / 'outcomes.json').read_text())
+  assert len(outcome['catalog']) == 4
+  assert all(node.startswith('openpilot/starpilot/car/honda/') for node in outcome['catalog'])
+  assert outcome['selected'] == outcome['catalog']
+  shards.validate_outcomes(outcome['selected'], outcome['reports'])
 
 
 def test_forged_catalog_in_all_outcomes_denied_by_actual_collection_witness(jobs):
@@ -498,7 +508,8 @@ def test_real_pytest_all20_audited_guards_have_skipped_junit_not_passes(tmp_path
   package.mkdir(parents=True)
   (tmp_path / 'tools/__init__.py').touch()
   (package / '__init__.py').touch()
-  for name in ('custom_pytest_shards.py', 'lifecycle_shards.py', 'pytest_progress.py', 'worker_diagnostics.py'):
+  for name in ('custom_pytest_shards.py', 'lifecycle_shards.py', 'pytest_progress.py', 'supported_vehicles.py',
+               'worker_diagnostics.py'):
     shutil.copyfile(shards.ROOT / 'tools/ci' / name, package / name)
   config = shards.policy()
   by_module = {}

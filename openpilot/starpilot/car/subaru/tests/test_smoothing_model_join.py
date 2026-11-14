@@ -3,6 +3,7 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 import math
+from functools import partial
 import numpy as np
 import pytest
 from openpilot.cereal import log
@@ -47,7 +48,9 @@ def test_actual_common_join_once_and_acceleration_unchanged(owner, tau, monkeypa
   outputs = {'action': np.array([[.08, .5]])}
   baseline = function(outputs, previous, .2, .2, 2.)
   scope = {'model': SimpleNamespace(get_action_from_model=function), 'model_output': outputs, 'prev_action': previous,
-           'lat_action_t': .2, 'long_action_t': .2, 'v_ego': 2., 'subaru_tau': tau, 'filter_action': filter_action}
+           'lat_action_t': .2, 'long_action_t': .2, 'v_ego': 2., 'subaru_tau': tau, 'filter_action': filter_action,
+           'partial': partial, 'blendful': SimpleNamespace(update=lambda *args, **kwargs: 0.),
+           'blendful_active': False, 'blendful_enabled': False}
   exec(common_join(), scope)
   action = scope['action']
   alpha = 1. - math.exp(-.05 / tau) if tau > 0. else 1.

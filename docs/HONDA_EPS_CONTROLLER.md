@@ -1,7 +1,7 @@
 # Honda EPS controller (`LatControlHondaEps`)
 
 The lateral controller for Hondas whose EPS runs a PTM (Proper Torque Mod) image: Clarity TRW-A020, Civic TBA-C020 /
-TBA-C120 / TGG-A120 / TBA-A030 / TEG-A010, Insight TXM-A040, CR-V TLA-A040 / TLA-A220, Acura RDX 3G TJB-A220 (2019-21 and 2022+), Ridgeline T6Z-A110 (rev b5). Every one of those images runs
+TBA-C120 / TGG-A120 / TBA-A030 / TEG-A010, Insight TXM-A040, CR-V TLA-A040 / TLA-A220, Acura RDX 3G TJB-A220 (2019-21 and 2022+), Ridgeline T6Z-A110 (rev b5), Odyssey THR-A020 (2018-20). Every one of those images runs
 the same firmware control law with its own tables (the Ridgeline's V850 image in the same form, see below), so one controller serves them all; what differs per car lives in
 one calibration record per EPS image.
 
@@ -90,6 +90,11 @@ them apart: `REQUIRED_PTM_RWD` names the build each calibration models, and the 
   -4.0 per published deg/s from centre to lock), so its linear map is the identity and R6 is -128 per deg/s, flat. Only
   rev b5 reports 39990-T6Z,A110 (dash, comma); the earlier T6Z builds report 39990,T6Z,A110 and stay dashcam. Its load
   is in its own LKAS counts (full motor command +-2457) and lands on the Clarity's column in percent of full scale.
+- **The Odyssey.** Its THR-A020 is the RDX's TJB-A220 code parent, and its PTM (2026-11-10) is the RDX car build ported
+  to it at mapped addresses, so it takes the RDX's law, target map, clamps, D, R6 and trims. Only Kp differs: the same rule
+  (the Clarity's P per key, / 16) evaluated on THR's own knots, within 0.62 counts of the Clarity's curve. No Odyssey has
+  driven it: the rack and the load are spec (Honda's constant-ratio 14.35:1 rack, 2.97 turns), and R6 takes the RDX
+  car's rate word, 7.8 per deg/s, until a drive measures the Odyssey's.
 - **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
   front-axle mass / R0^2 for an image with no sibling (holds within ~12%, turn rates ~15%, held out).
 - **Command delay.** The curvature the car executes is delayed by the calibration's `cmd_delay_s` below 10 m/s and
@@ -118,15 +123,16 @@ them apart: `REQUIRED_PTM_RWD` names the build each calibration models, and the 
   0-3) tops out at 3841/4096 = 0.9377 (key 1663 is 3840.6 E4 counts, rounded up); a car sent its own clamp (the Clarity,
   the Civics, the Insight, the RDX) at 1.0; the Ridgeline's target is flat from E4 3732, so it stops at 0.91. The residual PID is
   clamped to the same ceiling so its integrator cannot wind into 0xE4 the map ignores.
-- **Dropouts (RDX only).** A one-frame STEER_STATUS fault drops latActive for a frame, and controlsd resets the controller
+- **Dropouts (RDX and Odyssey).** A one-frame STEER_STATUS fault drops latActive for a frame, and controlsd resets the controller
   on every inactive frame. The RDX's NO_TORQUE_ALERT_1 (STEER_STATUS=2) trips when the EPS's torque signal passes 768 of its own
   counts, which are half the Clarity's: 768 x 2 = 1536 in the Clarity's internal units, and the 0x18F packer scales those
   by 1000/512, so it shows as |STEER_TORQUE_SENSOR| of about 3000 on the CAN bus (flipping at about 3000 on the RDX logs;
   the Clarity's own trip is the same 3000, measured onset 3048-3064). Its rise debounce is about 3 ticks where the
   Clarity's is 50, so the status flips within one 10 ms frame of the crossing, and one hard torque spike is enough. A
   dropout shorter than `RIDE_THROUGH_S` (0.1 s) sends nothing but keeps the feedforward and tracks with the integrator
-  held; a longer one resets as before. Only the RDX has the window (`RIDE_THROUGH_CARS`, the fingerprints of its
-  "39990-TJB-A220" calibration, both 3G fingerprints): the fault is the RDX's and no other car has been road-checked with it,
+  held; a longer one resets as before. Only the RDX and the Odyssey have the window (`RIDE_THROUGH_CARS`, the fingerprints of
+  the "39990-TJB-A220" calibration, both 3G fingerprints, and of "39990-THR-A020"): the fault is the TJB code's, THR is
+  that code's parent with the same debounce of 3 (the PTM main build keeps it), and no other car has been road-checked with it,
   so every other car resets on every inactive frame exactly as before (`ride_through_frames` is 0). In the closed-loop replay of the turn that prompted it (route
   412ed2539bfc2c42/000000cc): feedforward off 250 -> 0 ms, worst error 11 -> 8 deg.
 - **Disengage** (a dropout past the ride-through) resets the PID and the feedforward.

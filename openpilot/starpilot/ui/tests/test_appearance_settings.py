@@ -52,10 +52,11 @@ class AppearanceSettingsTests(unittest.TestCase):
   def test_absent_defaults_are_read_only_and_match_both_views(self):
     self.assertEqual(onroad_appearance(self.params), OnroadAppearance())
     self.assertEqual(tuple(row.key for row in self.owner.snapshot(Profile.LARGE).rows),
-                     ("DeveloperSidebar", "HidePersonalityAlerts", "ShowBrakeStatus", "BlindSpotMetrics", "SignalMetrics", "ReduceMotion"))
+                     ("DeveloperSidebar", "HidePersonalityAlerts", "ShowBrakeStatus", "BlindSpotMetrics", "SignalMetrics", "ReduceMotion",
+                      "RadarPoints"))
     self.assertEqual(tuple(row.key for row in self.owner.snapshot(Profile.COMPACT).rows),
                      ("CameraView", "DriverCamera", "StockConfidenceBallWidget", "HidePersonalityAlerts", "ShowBrakeStatus",
-                      "HideLeadMarker", "LeadInfo", "SignalMetrics", "BlindSpotMetrics"))
+                      "HideLeadMarker", "LeadInfo", "SignalMetrics", "BlindSpotMetrics", "RadarPoints"))
     # Widget visibility, the stopped timer and Rainbow Road moved into the onroad layout.
     for profile in Profile:
       self.assertFalse(set(RETIRED_DISPLAY_KEYS) & {row.key for row in self.owner.snapshot(profile).rows})

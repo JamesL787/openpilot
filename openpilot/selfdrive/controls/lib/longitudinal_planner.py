@@ -43,6 +43,7 @@ from openpilot.starpilot.longitudinal import human_acceleration, human_following
 from openpilot.starpilot.longitudinal.honda_bosch_a_long import HondaBoschALongEnhancement
 from openpilot.starpilot.longitudinal.bosch_a_onset_ramp import BoschAOnsetRamp
 from openpilot.starpilot.longitudinal.bosch_a_smooth import BoschASmooth
+from openpilot.starpilot.longitudinal.bosch_a_turnoff import raw_track_y
 from openpilot.starpilot.longitudinal.bosch_a_coast_first import BoschACoastFirst
 from openpilot.starpilot.longitudinal.bosch_a_release_coast import BoschAReleaseCoast
 from openpilot.starpilot.longitudinal.bosch_a_stop_gap import BoschAStopGap
@@ -293,7 +294,8 @@ class LongitudinalPlanner:
     # HumanAcceleration scales the planner's own max accel (profile, else the stock cruise curve).
     human_accel_base = acceleration_cap if acceleration_cap is not None else (
       ACCEL_MAX if sm['selfdriveState'].experimentalMode else get_max_accel(v_ego))
-    if self.human_driving:
+    human_accel_on = self.human_driving and human_acceleration.applies(sm['selfdriveState'].personality)
+    if human_accel_on:
       acceleration_cap = human_acceleration.cap(human_accel_base, v_cruise, v_ego)
     # D-080/implausible-drop (a2 seg 50): the MPC and the enhancement's stock-feel law read the same bounded leads.
     planner_radar_state = self.bosch_a_long.planner_radar_state(sm['radarState'], float(sm['carState'].aEgo),
@@ -499,11 +501,11 @@ class LongitudinalPlanner:
         sm, now_ns=sample_now_ns, drive_id=drive_id, target=float(output_a_target),
         stopping=self.output_should_stop, accel_min=ACCEL_MIN,
         active=profile_eligible and not reset_state and self.mpc.solution_status == 0)
-    if preap_acceleration_cap is not None:
-      output_a_target = min(output_a_target, preap_acceleration_cap)
-    if self.human_driving:
+    if human_accel_on:
       # Throttle side only: the cap is >= 0, so a braking target passes through.
       output_a_target = min(output_a_target, human_acceleration.cap(human_accel_base, v_cruise, v_ego))
+    if preap_acceleration_cap is not None:
+      output_a_target = min(output_a_target, preap_acceleration_cap)
     if self.bosch_a_long.stock_feel and reset_state:
       # Engage init (Stock Brake Feel only, Bosch-A via active_for): while long is off, a_cruise starts the first
       # engaged frame at min(aEgo, cruise target) instead of aEgo (jerk-limited around aEgo), so it does not ramp down
@@ -526,7 +528,9 @@ class LongitudinalPlanner:
       right_blinker=bool(sm['carState'].rightBlinker), gas_pressed=bool(sm['carState'].gasPressed),
       reset_state=bool(reset_state))
     output_a_target = self.bosch_a_smooth.step(float(a_prev), float(output_a_target),
-                                               reset=bool(reset_state or sm['carState'].standstill))
+                                               reset=bool(reset_state or sm['carState'].standstill),
+                                               lead_one=planner_radar_state.leadOne,
+                                               raw_y=raw_track_y(sm) if self.bosch_a_smooth.radar else None)
     output_a_target = self.bosch_a_onset_ramp.step(
       lead_one=planner_radar_state.leadOne, lead_two=planner_radar_state.leadTwo, prev=float(a_prev),
       target=float(output_a_target), fcw=bool(self.fcw),
@@ -536,6 +540,9 @@ class LongitudinalPlanner:
       lead_one=planner_radar_state.leadOne, lead_two=planner_radar_state.leadTwo, target=float(output_a_target),
       should_stop=bool(self.output_should_stop), v_ego=v_ego, standstill=bool(sm['carState'].standstill),
       reset_state=bool(reset_state))
+    output_a_target = self.bosch_a_long.need_floor(
+      lead_one=planner_radar_state.leadOne, lead_two=planner_radar_state.leadTwo, target=float(output_a_target),
+      v_ego=v_ego, reset_state=bool(reset_state))
     if self.ford_stop_approach is not None:
       output_a_target, self.output_should_stop = self.ford_stop_approach.sample(
         sm, now_ns=sample_now_ns, drive_id=drive_id, target=float(output_a_target),

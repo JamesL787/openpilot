@@ -113,8 +113,8 @@ def test_both_renderers_show_small_latest_sign_and_offset(profile):
 @pytest.mark.parametrize('vienna', [False, True])
 @pytest.mark.parametrize('offset', [False, True])
 @pytest.mark.parametrize('source, heading', [
-  ('dashboard', 'DASH'), ('map', 'OSM'), ('vision', 'VISION'), ('mapbox', 'NAV'),
-  ('online', 'SPEED'), ('unknown', 'SPEED'), ('none', 'SPEED'),
+  ('dashboard', 'DASH'), ('map', 'OSM'), ('vision', 'VISION'), ('online', 'NAV'),
+  ('unknown', 'SPEED'), ('none', 'SPEED'),
 ])
 def test_sign_heading_identifies_the_displayed_source(profile, pending, vienna, offset, source, heading):
   current = state(show_slc_offset=offset)
@@ -233,7 +233,7 @@ def test_only_set_speed_override_draws_cross(profile, drawing):
 @pytest.mark.parametrize('vienna', [False, True])
 @pytest.mark.parametrize('latest_received', [False, True])
 @pytest.mark.parametrize('offset', [False, True])
-@pytest.mark.parametrize('source,heading', [('map', 'OSM'), ('vision', 'VISION'), ('dashboard', 'DASH'), ('mapbox', 'NAV')])
+@pytest.mark.parametrize('source,heading', [('map', 'OSM'), ('vision', 'VISION'), ('dashboard', 'DASH'), ('online', 'NAV')])
 def test_retained_limits_keep_original_source_and_have_no_actions(profile, vienna, latest_received, offset, source, heading, drawing):
   current = state(show_slc_offset=offset)
   observation = replace(current.speed_limit, kind=ObservationKind.STALE, source='none', speed_limit_mps=None,

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, cast
 import base64
 import ctypes
 import gc
-from functools import cached_property
+from functools import cached_property, partial
 import os
 os.environ['GMMU'] = '0' # for chestnut fast loading, noop for qcom
 os.environ.setdefault('AM_POWER_LIMIT', '100')
@@ -43,6 +43,8 @@ from openpilot.common.transformations.model import get_warp_matrix
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.starpilot.lateral.lane_change_preferences import LiveLaneChangePolicy
 from openpilot.starpilot.lateral.auto_lane_change import ClockEpochGuard, auto_evidence, paired_clocks_ns, session_policy, steering_capable
+from openpilot.starpilot.lateral.blendful import Blendful
+from openpilot.starpilot.lateral.blendful_feedback import feedback_message
 from openpilot.starpilot.lateral.lane_change_status_wire import (
   Direction as StatusDirection, LaneChangeStatus, Phase as StatusPhase, encode_optional as encode_lane_status,
 )
@@ -71,7 +73,8 @@ BIG_MODEL_TIMEOUT = 120
 
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
-                          lat_action_t: float, long_action_t: float, v_ego: float) -> log.ModelDataV2.Action:
+                          lat_action_t: float, long_action_t: float, v_ego: float,
+                          blendful: Callable[[float], float] | None = None) -> log.ModelDataV2.Action:
   if 'action' not in model_output:
     plan = model_output['plan'][0]
     desired_accel = get_accel_from_plan(plan[:,Plan.VELOCITY][:,0],
@@ -86,6 +89,8 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
   else:
     desired_accel = model_output['action'][0,1]
     desired_curvature = model_output['action'][0,0] / (max(2.5, v_ego))**2
+  if blendful is not None:
+    desired_curvature += blendful(desired_curvature)
   stop = should_stop(v_ego, desired_accel)
   desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, LONG_SMOOTH_SECONDS)
   if v_ego > MIN_LAT_CONTROL_SPEED:
@@ -479,7 +484,7 @@ def main(demo=False):
   config_realtime_process(7, 54)
 
   # messaging
-  pub_socks = ["modelIdentity", "modelV2", "drivingModelData", "cameraOdometry", "laneChangeAssistWire"] + \
+  pub_socks = ["modelIdentity", "modelV2", "drivingModelData", "cameraOdometry", "laneChangeAssistWire", "starpilotBlendfulState"] + \
     (["chestnutGpuState"] if CHESTNUT else [])
   pm = PubMaster(pub_socks)
   sm = SubMaster(["deviceState", "carState", "narrowRoadCameraState", "extrinsicsCalibration", "driverMonitoringState",
@@ -518,6 +523,14 @@ def main(demo=False):
   navigation_turn = TurnIntent(params, CP)
   lane_status_session = uuid.uuid4().hex
   lane_status_sequence = 0
+
+  # Blendful lateral policy (sunnypilot PR #2073): a curvature correction blended on top of the model's own
+  # steering. Mutual exclusion with starpilot Lane Centering: enabled only for a custom (non-default) model
+  # while the Blendful param is on and the LaneCentering param is off; the lane centering host refuses in the
+  # opposite state, so the two never apply at the same time.
+  blendful = Blendful()
+  blendful_enabled = False
+  params_ticks = 0
 
   while True:
     # Keep receiving frames until we are at least 1 frame ahead of previous extra frame
@@ -561,6 +574,11 @@ def main(demo=False):
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["narrowRoadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
+    if params_ticks % 60 == 0:
+      model_id = getattr(model, "model_id", None)
+      custom_model = isinstance(model_id, str) and model_id not in (DEFAULT_SMALL, BUNDLED_CURRENT)
+      blendful_enabled = params.get_bool("Blendful") and not params.get_bool("LaneCentering") and custom_model
+    params_ticks += 1
     lateral_delay = scheduled_lateral_delay(lat_delay_schedule, v_ego) if lat_delay_schedule else sm["lateralDelay"].lateralDelay
     subaru_tau = subaru_smooth_seconds(v_ego, subaru_smoothing)
     lat_delay = lateral_delay + LAT_SMOOTH_SECONDS + subaru_tau
@@ -654,7 +672,10 @@ def main(demo=False):
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
 
-      action = model.get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego)
+      blendful_active = desire == log.Desire.none and DH.lane_change_state == log.LaneChangeState.off
+      action = model.get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego,
+                                           blendful=partial(blendful.update, model_output, v_ego, blendful_active,
+                                                            enabled=blendful_enabled))
       filter_action(action, prev_action, v_ego, subaru_tau)
       prev_action = action
       # Night Star port: the Honda EPS command delay follows where the steering comes from. It changes only when the
@@ -711,8 +732,10 @@ def main(demo=False):
 
       fill_driving_model_data(drivingdata_send, modelv2_send)
       fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, extrinsics_calibration_seen)
+      blendful_send = feedback_message(blendful, model_valid=bool(modelv2_send.valid), model_mono_time=modelv2_send.logMonoTime)
       receipt_owner.publish(pm, time.monotonic_ns())
       pm.send('modelV2', modelv2_send)
+      pm.send('starpilotBlendfulState', blendful_send)
       if lane_status_msg is not None:
         pm.send('laneChangeAssistWire', lane_status_msg)
       pm.send('drivingModelData', drivingdata_send)

@@ -5,6 +5,7 @@ from opendbc.car import gen_empty_fingerprint, fw_versions
 from opendbc.car.can_definitions import CanRecvCallable, CanSendCallable
 from opendbc.car.carlog import carlog
 from opendbc.car.structs import CarParams, CarParamsT
+from opendbc.car.supported_brands import limit_to_supported_brands
 from opendbc.car.fingerprints import eliminate_incompatible_cars, all_legacy_fingerprint_cars
 from opendbc.car.fw_versions import (ObdCallback, get_fw_versions, get_fw_versions_ordered,
                                      get_present_ecus, match_fw_to_car)
@@ -241,7 +242,9 @@ def fingerprint(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_mu
 
 def get_car(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multiplexing: ObdCallback, alpha_long_allowed: bool,
             is_release: bool, cached_params: CarParamsT | None = None, pre_create_hook=None,
-            forced_candidate: str | None = None):
+            forced_candidate: str | None = None, *, supported_brands_only: bool = True):
+  # supported_brands_only is False only in the process replay harness, which feeds recordings from other brands
+  # to the brand-neutral processes. Anything that talks to a car leaves it True.
   if forced_candidate is not None and forced_candidate not in interfaces:
     raise ValueError('forced vehicle is not registered')
   if forced_candidate is not None and cached_params is not None and cached_params.carFingerprint != forced_candidate:
@@ -292,8 +295,16 @@ def get_car(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multip
   CP.fingerprintSource = source
   CP.fuzzyFingerprint = not exact_match
 
+  # Before the hook, so startup preparation sees dashcam and starts nothing on an unsupported brand.
+  if supported_brands_only:
+    CP = limit_to_supported_brands(CP)
+
   if pre_create_hook is not None:
     CP = pre_create_hook(CP, candidate, fingerprints, car_fw)
+
+  # And after it, so no startup preference can lift an unsupported brand out of dashcam.
+  if supported_brands_only:
+    CP = limit_to_supported_brands(CP)
 
   return interfaces[CP.carFingerprint](CP)
 

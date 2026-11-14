@@ -1,0 +1,8 @@
+# Standalone tools support Python 3.9 and use stdlib unittest for hardware-free checks.
+target-version = "py39"
+line-length = 160
+# rwd_xray/ is reference-only upstream Python 2 code.
+extend-exclude = ["rwd_xray"]
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B"]

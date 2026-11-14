@@ -53,6 +53,9 @@ mounting position on actual hardware before treating a design as validated.
 - Reduce Quick Select motion is available for Large UI in native Appearance and Galaxy Colors
   & Layout. The optional `reduceMotion` boolean uses the existing validated layout
   document without a version bump. See [the design notes](QUICK_SELECT_DESIGN.md).
+- Radar Point Display (off by default) draws a dot on the road view for every `radarTracks`
+  point, on both UIs. It is the optional `radarPoints` boolean in the same layout document,
+  set from native Appearance, so it needs no new param key. `radar_points.py` owns it.
 - `ui_state.py` in `selfdrive/ui` follows hardwared's effective started state.
   Physical ignition remains separate. Camera reception, model filters and
   transition updates must continue when a settled opaque settings page skips

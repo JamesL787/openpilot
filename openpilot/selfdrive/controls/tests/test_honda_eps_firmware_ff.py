@@ -535,14 +535,17 @@ ALL_PROFILES = [p for _, _, p in CALIBRATION_CARS]
 NON_RDX_CARS = [(c, fw) for c, fw, _ in CALIBRATION_CARS]
 
 
-def test_the_ride_through_window_is_the_rdx_only(monkeypatch):
-  # the window is the "39990-TJB-A220" calibration's fingerprints and nobody else's
-  assert set(honda_eps.RIDE_THROUGH_CARS) == set(eps_cal.EPS_FIRMWARE_CALIBRATIONS["39990-TJB-A220"][0])
+def test_the_ride_through_window_is_the_tjb_codes_only(monkeypatch):
+  # the window is the "39990-TJB-A220" and "39990-THR-A020" (its code parent) calibrations' fingerprints and nobody else's
+  assert set(honda_eps.RIDE_THROUGH_CARS) == {*eps_cal.EPS_FIRMWARE_CALIBRATIONS["39990-TJB-A220"][0],
+                                              eps_cal.EPS_FIRMWARE_CALIBRATIONS["39990-THR-A020"][0]}
   window = int(round(honda_eps.RIDE_THROUGH_S / DT_CTRL))
   assert window > 0
   for candidate in (CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR):   # both RDX fingerprints get it
     lac, _, _ = _rdx_controller(monkeypatch, candidate)
     assert lac.ride_through_frames == window, candidate
+  lac, _, _ = _controller(monkeypatch, fw=b'39990-THR,A020\x00\x00', candidate=CAR.HONDA_ODYSSEY)
+  assert lac.ride_through_frames == window
   for candidate, fw in NON_RDX_CARS:                              # no other calibrated car does
     lac, _, _ = _controller(monkeypatch, fw=fw, candidate=candidate)
     assert lac.ride_through_frames == 0, candidate
@@ -772,7 +775,7 @@ def test_the_civics_hold_their_command_delay_on_the_highway():
 
 def test_every_vehicle_has_its_own_command_delay():
   delays = {cal.name: cal.cmd_delay_s for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()}
-  measured = {"clarity_trw_a020": 0.20, "civic_tba_c020": 0.15, "civic_teg_a010": 0.15}
+  measured = {"clarity_trw_a020": 0.20, "civic_tba_c020": 0.15, "civic_teg_a010": 0.15, "crv_tla_a040": 0.18}
   same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15}
   inferred = {"insight_txm_a040": 0.15, "civic_tba_a030": 0.15}  # the A030: the TEG's (same Nidec image family)
   for name, delay in delays.items():

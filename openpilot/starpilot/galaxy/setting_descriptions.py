@@ -9,6 +9,8 @@ from openpilot.starpilot.ui.feature_settings_state import SLC_OFFSET_KEYS
 DESCRIPTIONS = {
   'DisengageOnAccelerator': 'When enabled, pressing the accelerator pedal will disengage openpilot.',
   'ReduceMotion': 'Reduces interface animations for a steadier display.',
+  'RadarPoints': ('Draws a dot on the road view for every point the radar reports, on vehicles whose radar is read. ' +
+                  'Display only; it does not change how the car drives.'),
   'IsMetric': 'On displays speed and distance in kilometers; Off uses miles. Saved speed-limit offsets keep their physical values.',
   'IsRhdDetected': 'Sets the initial steering-wheel side used by driver monitoring. Applies next drive; automatic side detection continues.',
   'lane_change:turn_signal_guidance': 'Uses your turn signal to help the model choose a turning path at intersections.',
@@ -31,6 +33,8 @@ DESCRIPTIONS = {
   'LaneCenterOffset': 'Moves the lane-centering target left or right of the detected lane center.',
   'LaneCenteringE2EAuthority': 'Lets a confident driving-model path reduce lane-centering correction when the model path differs from the lane center.',
   'LaneCenteringStrength': 'Sets the strength of lane-centering correction. 100% is normal; higher values strengthen it.',
+  'Blendful': ('Adds a gentle nudge toward lane center on top of the driving model steering, stronger when lane lines are clear. ' +
+               'Yields around obstacles. Not available with the Default model, and turns Lane Centering off.'),
   'PauseLateralSpeed': 'Pauses steering assistance below this speed. Zero disables the speed-based pause.',
   'PauseLateralOnSignal': 'Limits the low-speed steering pause to times when a turn signal is on.',
   'LateralResumeDelay': 'Waits before resuming steering after signaling ends, if speed fell below half the steering-pause threshold.',

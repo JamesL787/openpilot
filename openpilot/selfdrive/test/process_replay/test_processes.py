@@ -18,6 +18,7 @@ from openpilot.selfdrive.test.process_replay.process_replay import CONFIGS, PROC
 from openpilot.tools.lib.filereader import FileReader
 from openpilot.tools.lib.logreader import LogReader, save_log
 from openpilot.tools.lib.url_file import URLFile
+from opendbc.car.supported_brands import brand_supported
 from tools.ci.process_replay_coverage import replay_coverage, write_coverage
 from tools.ci.run_vehicle_tests import targets_for
 from tools.ci.replay_references import reviewed_reference
@@ -46,25 +47,16 @@ source_segments = [
   #("VOLKSWAGEN2", "3cfdec54aa035f3f|2022-07-19--23-45-10--2"),  # VOLKSWAGEN.VOLKSWAGEN_PASSAT_NMS
 ]
 
+# Honda is the brand this fork supports (opendbc.car.supported_brands), so its segments are the vehicles under
+# test. The Hyundai and Toyota segments stay only as recorded inputs for the brand-neutral processes, which upstream
+# replays on nothing else; card is not replayed on them because the car itself would now start in dashcam mode.
+# The other brands' segments only ever replayed card, controlsd and lagd and are no longer run.
+SHARED_PROCESS_INPUTS = ("HYUNDAI", "TOYOTA")
 segments = [
   ("HYUNDAI", "regenAA0FC4ED71E|2025-04-08--22-57-50--0"),
-  ("HYUNDAI2", "regenAFB9780D823|2025-04-08--23-00-34--0"),
   ("TOYOTA", "regen218A4DCFAA1|2025-04-08--22-57-51--0"),
-  # TODO: get new RAV4 route without enableDsu
-  # ("TOYOTA2", "regen107352E20EB|2025-04-08--22-57-46--0"),
-  ("TOYOTA3", "regen1455E3B4BDF|2025-04-09--03-26-06--0"),
   ("HONDA", "regenB328FF8BA0A|2025-04-08--22-57-45--0"),
   ("HONDA2", "regen6170C8C9A35|2025-04-08--22-57-46--0"),
-  ("CHRYSLER", "regen5B28FC2A437|2025-04-08--23-04-24--0"),
-  ("RAM", "regenBF81EA96E08|2025-04-08--23-06-54--0"),
-  ("SUBARU", "regen7366F13F6A1|2025-04-08--23-07-07--0"),
-  ("GM", "regen1271097D038|2025-04-09--03-26-00--0"),
-  ("NISSAN", "regen15D60604EAB|2025-04-08--23-06-59--0"),
-  ("VOLKSWAGEN", "regen0F2F06C9539|2025-04-08--23-06-56--0"),
-  ("MAZDA", "regenACF84CCF482|2024-08-30--03-21-55--0"),
-  ("FORD", "regen755D8CB1E1F|2025-04-08--23-13-43--0"),
-  ("RIVIAN", "regen5FCAC896BBE|2025-04-08--23-13-35--0"),
-  ("TESLA", "aebd8f1d4ea16066|000002d8--5850d3ea5c--2"),
 ]
 
 # dashcamOnly makes don't need to be tested until a full port is done
@@ -177,7 +169,8 @@ if __name__ == "__main__":
 
   active_platforms = {brand: sorted(str(platform) for platform in platforms
                                   if not interfaces[platform].get_non_essential_params(platform).dashcamOnly)
-                      for brand, platforms in interface_names.items() if brand not in excluded_interfaces}
+                      for brand, platforms in interface_names.items()
+                      if brand not in excluded_interfaces and brand_supported(brand)}
   coverage = replay_coverage(active_platforms, tested_cars,
                              {suite: targets_for(suite) for suite in ("interfaces", "safety-debug", "safety-release")},
                              full_test=full_test)
@@ -217,7 +210,9 @@ if __name__ == "__main__":
           continue
 
         # to speed things up, we only test all segments on card
-        if cfg.proc_name not in ('card', 'controlsd', 'lagd') and car_brand not in ('HYUNDAI', 'TOYOTA'):
+        if cfg.proc_name not in ('card', 'controlsd', 'lagd') and car_brand not in SHARED_PROCESS_INPUTS:
+          continue
+        if cfg.proc_name == 'card' and car_brand in SHARED_PROCESS_INPUTS:
           continue
 
         cur_log_fn = os.path.join(FAKEDATA, f"{segment}_{cfg.proc_name}_{cur_commit}.zst".replace("|", "_"))

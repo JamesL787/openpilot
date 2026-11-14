@@ -70,7 +70,8 @@ def parse(values: Mapping[str, object]) -> Settings:
                         display_only=not control)
     offsets = document.schedule()
     # SLCOverride remains a validated legacy preference; only set-speed changes override SLC.
-    return Settings(control, display, sel.SelectionPolicy(mode, slots, False), policy, offsets,
+    # Online = the Mapbox route's posted limit while navigating; used only when both slots have none.
+    return Settings(control, display, sel.SelectionPolicy(mode, slots, True), policy, offsets,
                     requested=control, advance_seconds=advance)
   except (ValueError, OverflowError) as error:
     return _disabled(str(error))

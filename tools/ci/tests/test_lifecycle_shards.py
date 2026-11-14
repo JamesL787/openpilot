@@ -303,14 +303,14 @@ class LifecycleShardTests(unittest.TestCase):
       self.assertEqual(verdict['cases_skipped'], 1)
       self.assertEqual(verdict['cases_total'], len(full))
 
-  def test_release_workflow_binds_sixteen_workers_to_runner_and_aggregate(self):
+  def test_release_workflow_binds_its_workers_to_runner_and_aggregate(self):
     workflow = Path(__file__).parents[3].joinpath('.github/workflows/tests.yaml').read_text()
     jobs = dict(re.findall(r'^  ([a-z_]+):\n(.*?)(?=^  [a-z_]+:|\Z)', workflow, re.M | re.S))
     workers = jobs['safety_release_contracts']
     aggregate = jobs['safety_release_complete']
-    self.assertIn('shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]', workers)
-    self.assertRegex(workers, r'--suite safety-release .*--shard-count 16\b')
-    self.assertRegex(aggregate, r'--suite safety-release --count 16\b')
+    self.assertIn('shard: [0, 1]\n', workers)
+    self.assertRegex(workers, r'--suite safety-release .*--shard-count 2\b')
+    self.assertRegex(aggregate, r'--suite safety-release --count 2\b')
     self.assertIn('    timeout-minutes: 35\n', workers)
     self.assertIn('      timeout-minutes: 20\n', workers)
     self.assertIn('      fail-fast: false\n', workers)

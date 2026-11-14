@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tools import test_runner
-from tools.ci import lifecycle_shards, vehicle_pytest
+from tools.ci import lifecycle_shards, supported_vehicles, vehicle_pytest
 
 FORD_BLUEPILOT_TARGETS = (
   'openpilot/starpilot/tests/test_ford_bluepilot_library_lifecycle.py',
@@ -580,6 +580,11 @@ def sha256(path):
   return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def supported_targets_for(suite):
+  """What a suite runs: its catalog without the brands this fork leaves in dashcam mode (tools/ci/supported_vehicles.py)."""
+  return supported_vehicles.supported_targets(targets_for(suite))
+
+
 def targets_for(suite):
   if suite == "aol-lifecycle":
     return list(AOL_LIFECYCLE_TARGETS + FORD_BLUEPILOT_TARGETS)
@@ -769,7 +774,7 @@ def run(suite, output, collect_only=False, shard_index=None, shard_count=4):
     plan["uncovered"].append("full release-mode behavioral safety suite; only explicit selected classes run")
   (output / "plan.json").write_text(json.dumps(plan, sort_keys=True, indent=2) + "\n")
   try:
-    plan["targets"] = targets_for(suite)
+    plan["targets"] = supported_targets_for(suite)
     plan["source"] = source_provenance()
     if suite in ("aol-lifecycle", "safety-release"):
       plan["source"]["build_identity"] = lifecycle_shards.build_identity(ROOT)

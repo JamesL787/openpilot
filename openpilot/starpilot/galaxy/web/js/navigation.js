@@ -45,6 +45,7 @@ export function validNavigation(value) {
       !Number.isInteger(value.selectedRoute) || value.selectedRoute < 0 || value.selectedRoute > 2)) return false
   return !!value && typeof value.enabled === "boolean" && typeof value.isMetric === "boolean" && typeof value.hasKey === "boolean" && STATUS.has(value.status) &&
     ROUTE_AVOIDANCES.every(({ key }) => value[key] === undefined || typeof value[key] === "boolean") &&
+    (value.roadSpeedLimit === undefined || typeof value.roadSpeedLimit === "boolean") &&
     (value.gpsSource === undefined || GPS_MODES.some((mode) => mode.value === value.gpsSource)) &&
     (value.network === undefined || ["online", "offline", "unknown"].includes(value.network)) &&
     typeof value.revision === "string" && value.revision.length > 0 && value.revision.length <= 128 &&
@@ -340,7 +341,7 @@ export const NavigationPage = {
     usageRows() {
       const usage = this.data?.mapboxUsage
       if (!usage) return []
-      return [["searchSessions", "Searches"], ["geocoding", "Address lookups"], ["directions", "Routes"], ["staticTiles", "Map views"]]
+      return [["searchSessions", "Searches"], ["geocoding", "Address lookups"], ["directions", "Routes"], ["staticTiles", "Map views"], ["mapMatching", "Road speed limits"]]
         .filter(([key]) => usage[key]).map(([key, label]) => ({ key, label, ...usage[key] }))
     },
     path() { return routePath(this.data?.route) },
@@ -542,12 +543,18 @@ export const NavigationPage = {
             <label class="gx-switch"><input type="checkbox" role="switch" :aria-label="option.label" :checked="!!data?.[option.key]"
               :disabled="!available" @change="reportSave(() => client.action('configure', {patch: {[option.key]: $event.target.checked}}))"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label>
           </div>
+          <div class="gx-row">
+            <span class="gx-row__info gx-row__label">Speed limits without a destination</span>
+            <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Speed limits without a destination" :checked="data?.roadSpeedLimit !== false"
+              :disabled="!available" @change="reportSave(() => client.action('configure', {patch: {roadSpeedLimit: $event.target.checked}}))"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label>
+          </div>
+          <p class="gx-note">When no destination is set, ask Mapbox every 10 seconds for the posted limit of the road you're on. Speed Limit Controller uses it only when your chosen sources have no limit. Off: Mapbox limits come only from an active route.</p>
         </section>
         <section class="gx-card gx-navigation__section">
           <div class="gx-section__header"><i class="bi bi-map" aria-hidden="true"></i><span class="gx-section__title">Mapbox</span></div>
           <p>One public Mapbox access token (starting with pk.) handles the map, place and address search, and routes. A separate secret token is not needed.</p>
           <p>Save your token while parked. Galaxy keeps it on your comma and never displays it after saving. Address searches use temporary geocoding. Search suggestions are temporary and used only for the current route. Favorites and recent destinations are also kept on your comma; going to one skips search, so it uses none of your search allowance. URL-restricted keys may reject map requests.</p>
-          <p class="gx-note">Typing suggestions, address lookups and offline road maps stop just short of their free monthly allowances and resume on the 1st. Routes, full place searches and map views are counted but not limited. These counts cover this comma only; Mapbox bills total account usage, including other apps and devices.</p>
+          <p class="gx-note">Typing suggestions, address lookups, offline road maps and road speed limit lookups stop just short of their free monthly allowances and resume on the 1st. Routes, full place searches and map views are counted but not limited. These counts cover this comma only; Mapbox bills total account usage, including other apps and devices.</p>
           <dl v-if="usageRows.length" class="gx-navigation__usage" aria-label="Mapbox use this month">
             <template v-for="row in usageRows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.used.toLocaleString() }} of {{ row.limit.toLocaleString() }} free this month</dd></template>
           </dl>

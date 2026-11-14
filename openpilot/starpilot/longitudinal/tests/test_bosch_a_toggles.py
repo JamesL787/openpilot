@@ -74,7 +74,7 @@ class RecordingSolver:
     return np.array([self.x0[0] + stage, self.x0[1] + 0.1 * stage * a, a])
 
 
-def submaster(frame):
+def submaster(frame, personality=log.LongitudinalPersonality.standard):
   services = ('carControl', 'carState', 'controlsState', 'vehicleParameters', 'radarState', 'modelV2', 'selfdriveState')
   msgs = {name: messaging.new_message(name) for name in services}
   cs = msgs['carState'].carState
@@ -82,7 +82,7 @@ def submaster(frame):
   # Frame 0 is the engage frame: 'off' resets the planner state to vEgo, as on the car.
   msgs['controlsState'].controlsState.longControlState = 'off' if frame == 0 else 'pid'
   ss = msgs['selfdriveState'].selfdriveState
-  ss.enabled, ss.personality = True, log.LongitudinalPersonality.standard
+  ss.enabled, ss.personality = True, personality
   rs = msgs['radarState'].radarState
   d_rels = (32.0 - 0.3 * frame, 60.0)
   for track, (lead, d_rel) in enumerate(zip((rs.leadOne, rs.leadTwo), d_rels, strict=True)):
@@ -105,10 +105,10 @@ def submaster(frame):
   return {name: getattr(msg, name) for name, msg in msgs.items()}
 
 
-def run(planner_obj, frames=6):
+def run(planner_obj, frames=6, personality=log.LongitudinalPersonality.standard):
   out = []
   for frame in range(frames):
-    planner_obj.update(submaster(frame))
+    planner_obj.update(submaster(frame, personality))
     out.append((float(planner_obj.output_a_target), bool(planner_obj.output_should_stop), bool(planner_obj.fcw),
                 planner_obj.v_desired_trajectory.tolist(), planner_obj.a_desired_trajectory.tolist(),
                 planner_obj.j_desired_trajectory.tolist()))
@@ -241,6 +241,23 @@ class TestUpstreamPlanner(unittest.TestCase):
       self.assertTrue(any(path is not None for path in kwargs['lead_paths']))
     np.testing.assert_array_equal(stock.mpc.params[:, 1], seen[-1]['acceleration_max'])
     self.assertNotEqual(outputs, reference)
+
+  def test_human_following_aggressive_personality_runs_without_cap(self):
+    # HumanAcceleration skips aggressive, so no acceleration_max is passed; hook 3/3 must not assume it (plannerd
+    # KeyError on the car, 2026-11-12).
+    from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib import long_mpc
+    with patch.object(long_mpc, 'qualified_model_leads', side_effect=lambda sm, now_ns, history: sm['modelV2']):
+      stock = upstream(BOSCH_A, BoschAToggles(human_following=True))
+    seen = []
+    original = stock.mpc.update
+    def spy(radarstate, personality=None, **kwargs):
+      seen.append(kwargs)
+      return original(radarstate, personality=personality, **kwargs)
+    stock.mpc.update = spy
+    outputs, _ = run(stock, personality=log.LongitudinalPersonality.aggressive)
+    self.assertEqual(len(outputs), 6)
+    for kwargs in seen:
+      self.assertNotIn('acceleration_max', kwargs)
 
   def test_human_following_without_fresh_model_keeps_stock_lead_paths(self):
     stock = upstream(BOSCH_A, BoschAToggles(human_following=True))  # the real freshness check rejects the fake sm

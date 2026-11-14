@@ -7,10 +7,10 @@ wheel along the desired path rather than one it has to be dragged into by error.
 the car's own image (eps_firmware_ff.EpsFirmwareCalibration), picked by the EPS part number in carFw.
 
 Which cars get it: every PTM image with a calibration (Clarity TRW-A020, Civic A030/TEG/C020/C120/TGG-A120, Insight
-TXM-A040, CR-V A040/A220, RDX 3G TJB-A220, Ridgeline T6Z-A110 rev b5), with no setting to turn it off; some of those calibrations carry parts over
-from a related car until a drive measures them. A car with no calibration (TGG-A020, Accord TVA-A150), whose torque map
-is not the linear [0, E4 cap] the calibration expects, or with no firmware A table for its rack map, keeps the
-modified-EPS PID (LatControlHondaModifiedPID).
+TXM-A040, CR-V A040/A220, RDX 3G TJB-A220, Ridgeline T6Z-A110 rev b5, Odyssey THR-A020), with no setting to turn it off;
+some of those calibrations carry parts over from a related car until a drive measures them. A car with no calibration
+(TGG-A020, Accord TVA-A150), whose torque map is not the linear [0, E4 cap] the calibration expects, or with no firmware
+A table for its rack map, keeps the modified-EPS PID (LatControlHondaModifiedPID).
 Per vehicle, from its calibration: the command delay (cmd_delay_s) and the model-delay schedule (lat_delay_schedule),
 every car (measured ones, else a default), and the rack map (rack): yaw-fitted on the car, else predicted from its
 published specs (honda_eps_spec_plant).
@@ -78,10 +78,12 @@ CMD_DELAY_RAMP_S = 1.0  # s, from one source's command delay to the other's when
 # turn at 13 m/s, P alone pushed the other way, and the wheel unwound at 190 deg/s while the error grew past 10 deg.
 # So a dropout this short sends nothing but keeps the controller's state, tracking with the integrator held, and only
 # a longer one resets it. In the closed-loop replay of that turn: feedforward off 250 -> 0 ms, worst error 11 -> 8 deg.
-# RDX only: that fault is the RDX's, and no other car has been road-checked with the window, so every other car still
-# resets on every inactive frame exactly as before (ride_through_frames == 0).
+# The RDX and the Odyssey only: the fault is the TJB code's, and THR-A020 is that code's parent with the same stock
+# debounce of 3 (0x57B16; the PTM main build keeps it, as the RDX car build does). No other car has been road-checked
+# with the window, so every other car still resets on every inactive frame exactly as before (ride_through_frames == 0).
 RIDE_THROUGH_S = 0.1
-RIDE_THROUGH_CARS = ("ACURA_RDX_3G", "ACURA_RDX_3G_MMR")  # the fingerprints of the "39990-TJB-A220" calibration
+# the fingerprints of the "39990-TJB-A220" and "39990-THR-A020" calibrations
+RIDE_THROUGH_CARS = ("ACURA_RDX_3G", "ACURA_RDX_3G_MMR", "HONDA_ODYSSEY")
 
 
 
@@ -245,8 +247,8 @@ class LatControlHondaEps(LatControl):
     return self.cmd_delay_scale * command_delay(self.calibration, v_ego)
 
   def reset(self):
-    # controlsd calls this on every inactive frame. With no ride-through window (every car but the RDX) it is the plain
-    # reset it always was; on the RDX update() decides whether the dropout is long enough to reset
+    # controlsd calls this on every inactive frame. With no ride-through window (every car but the RDX and the Odyssey)
+    # it is the plain reset it always was; on those two update() decides whether the dropout is long enough to reset
     if self.ride_through_frames == 0 or self.inactive_frames > self.ride_through_frames:
       self._hard_reset()
 

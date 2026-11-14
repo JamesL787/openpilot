@@ -37,7 +37,7 @@ class DrawerNativeTest(unittest.TestCase):
       self.assertTrue(rows['map'].enabled)
       self.assertEqual(rows['map'].kind, 'stale')
       self.assertIsNone(rows['map'].speed_mps)
-      self.assertFalse(rows['online'].enabled)
+      self.assertTrue(rows['online'].enabled)  # Mapbox route limit, the fallback behind both slots
       self.assertEqual(obs.source, 'dashboard')
       self.assertEqual(decoded.slcState.sourceReadings[0].source, 'dashboard')
     self.assertEqual(speed_limit_from_message(None).source_readings, ())

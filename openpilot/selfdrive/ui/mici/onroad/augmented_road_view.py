@@ -255,7 +255,7 @@ class AugmentedRoadView(CameraView):
                                 reverse_driver: bool = False, lead_indicator: bool = False,
                                 lead_info_mode: int = 0, lead_info_metric: bool | None = None,
                                 lateral_active: bool = False, road_style: dict | None = None, paint: bool = True,
-                                poll_camera: bool = True) -> None:
+                                poll_camera: bool = True, radar_points: bool = False) -> None:
     """Draw the existing calibrated camera/model without stock HUD or alert."""
     if not ui_state.started and ui_state.replay_clock is None:
       return
@@ -280,6 +280,7 @@ class AugmentedRoadView(CameraView):
     self._update_calibration()
     self._content_rect = rect
     self._model_renderer.road_style = road_style or {}
+    self._model_renderer.radar_points.enabled = radar_points
     gui_app.measure_frame_phase("camera", CameraView._render, self, rect, paint=paint, poll_camera=poll_camera)
     if target != DRIVER_CAM and self.frame is not None:
       gui_app.measure_frame_phase("model", self._model_renderer.render_with_lead, rect, lead_indicator,

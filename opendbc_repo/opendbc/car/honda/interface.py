@@ -230,6 +230,11 @@ class CarInterface(CarInterfaceBase):
     elif candidate == CAR.ACURA_RDX_3G:
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.2], [0.06]]
 
+    elif candidate == CAR.HONDA_ODYSSEY and eps_modified:
+      # 39990-THR,A020 PTM: the RDX car build ported to THR (its code parent), so the same Route-A target (30000 at
+      # E4 4096) and the Clarity's gains carry over. LatControlHondaEps steers it (honda_eps_calibrations ODYSSEY_THR_A020).
+      _modified_eps_tune(ret)
+
     elif candidate == CAR.HONDA_ODYSSEY:
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.28], [0.08]]
 

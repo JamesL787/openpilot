@@ -31,7 +31,7 @@ def publication_program():
   advance = next(node for node in loop.body if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "last_vipc_frame_id")
   program = ast.Module(body=[copy.deepcopy(count), *slice_statements(loop.body), copy.deepcopy(advance)], type_ignores=[])
   services = [node.value.args[0].value for node in ast.walk(program) if sends(node)]
-  assert sorted(services) == sorted(["modelV2", "drivingModelData", "cameraOdometry", "laneChangeAssistWire"])
+  assert sorted(services) == sorted(["modelV2", "drivingModelData", "cameraOdometry", "laneChangeAssistWire", "starpilotBlendfulState"])
   return compile(ast.fix_missing_locations(program), "<actual modeld publication slice>", "exec")
 
 
@@ -43,7 +43,7 @@ class TestModeldPublication(unittest.TestCase):
     program = publication_program()
     for frame in frames:
       namespace["meta_main"] = SimpleNamespace(frame_id=frame)
-      for name in ("modelv2_send", "drivingdata_send", "posenet_send", "lane_status_msg"):
+      for name in ("modelv2_send", "drivingdata_send", "posenet_send", "blendful_send", "lane_status_msg"):
         namespace[name] = (frame, frame * 50_000_000) if name != "lane_status_msg" or lane_status else None
       exec(program, namespace)
       self.assertEqual(namespace["last_vipc_frame_id"], frame)
@@ -52,16 +52,17 @@ class TestModeldPublication(unittest.TestCase):
   def test_recorded_route15_frame_gap_recovers_on_next_frame(self):
     # Original dense route: frame 1900 was skipped; invalid odometry 1901 preceded inputsOK=false.
     emitted = self.replay([1899, 1901, 1902])
-    self.assertEqual(len(emitted), 8)
+    # 2 published frames x (modelV2, Blendful, laneChangeAssistWire, drivingModelData, cameraOdometry)
+    self.assertEqual(len(emitted), 10)
     self.assertEqual({payload[0] for _, payload in emitted}, {1899, 1902})
     self.assertTrue(all(stamp == frame * 50_000_000 for _, (frame, stamp) in emitted))
 
   def test_contiguous_frames_keep_all_publications(self):
-    self.assertEqual(len(self.replay([1899, 1900, 1901])), 12)
+    self.assertEqual(len(self.replay([1899, 1900, 1901])), 15)
 
   def test_continuous_drops_do_not_fabricate_fresh_messages(self):
     emitted = self.replay([1899, 1901, 1903, 1905])
-    self.assertEqual(len(emitted), 4)
+    self.assertEqual(len(emitted), 5)
     self.assertEqual({payload[0] for _, payload in emitted}, {1899})
 
   def test_missing_model_output_never_publishes(self):
@@ -69,8 +70,10 @@ class TestModeldPublication(unittest.TestCase):
 
   def test_optional_lane_status_stays_optional(self):
     emitted = self.replay([1899, 1901, 1902], lane_status=False)
-    self.assertEqual(len(emitted), 6)
+    # Blendful state is unconditional, so only laneChangeAssistWire drops: 2 frames x 4
+    self.assertEqual(len(emitted), 8)
     self.assertNotIn("laneChangeAssistWire", {service for service, _ in emitted})
+    self.assertEqual(sum(service == "starpilotBlendfulState" for service, _ in emitted), 2)
 
   def test_pose_validity_still_rejects_missing_calibration_and_drops(self):
     tree = ast.parse((ROOT / "selfdrive/modeld/fill_model_msg.py").read_text())

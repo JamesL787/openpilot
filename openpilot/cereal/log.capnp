@@ -2664,6 +2664,7 @@ struct Event {
     mapdExtendedOut @143 :Custom.MapdExtendedOut;
     mapdIn @144 :Custom.MapdIn;
     mapdOut @145 :Custom.MapdOut;
+    starpilotBlendfulState @154 :Custom.StarPilotBlendfulState;
 
     # *********** legacy + deprecated ***********
     model @9 :Deprecated.ModelData; # TODO: rename modelV2 and mark this as deprecated

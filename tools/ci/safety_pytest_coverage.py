@@ -1,6 +1,7 @@
 """Run omitted native pytest cases serially against the gate's instrumented library."""
 import argparse
 import ast
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -37,6 +38,20 @@ def targets_for_coverage(root=ROOT):
       selected.add(relative)
   return sorted(selected - RELEASE_ONLY)
 
+
+
+@contextmanager
+def all_brands_supported():
+  """Let every brand start as a drivable car while the cases run.
+
+  The native library qualifies the safety code every brand shares, so the whole catalog has to execute and a line
+  only the Nissan or Rivian end-to-end cases reach (modes/nissan_aol.h) must stay covered. This fork starts every
+  unsupported brand in dashcam mode (opendbc.car.supported_brands), and a dashcam car has no AOL, so those cases
+  would fail there. This does not change what CI runs, only how the car startup path treats the brand.
+  """
+  from opendbc.car import supported_brands
+  with mock.patch.object(supported_brands, 'brand_supported', side_effect=lambda brand: True):
+    yield
 
 
 class InstrumentedLibraries:
@@ -134,7 +149,8 @@ def run(native, output, targets=None):
             'native_path': str(native), 'native_bound_before': Path(libsafety_py.libpath).resolve() == native,
             'nodeids': [], 'records': [], 'collection_errors': [], 'execution_errors': []}
   with (mock.patch.object(libsafety_py, 'load', side_effect=libraries.load),
-        mock.patch.object(libsafety_py, '_build_libsafety', side_effect=libraries.build)):
+        mock.patch.object(libsafety_py, '_build_libsafety', side_effect=libraries.build),
+        all_brands_supported()):
     nodeids, errors = vehicle_pytest.collect(targets)
     report.update(nodeids=nodeids, collection_errors=errors)
     if not errors:

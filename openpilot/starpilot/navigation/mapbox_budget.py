@@ -24,9 +24,11 @@ FREE = {
   "staticTiles": 200_000,      # Static Tiles API (Galaxy's map pictures)
   "directions": 100_000,       # Directions API (routes)
   "vectorTiles": 200_000,      # Vector Tiles API (offline road maps)
+  "mapMatching": 100_000,      # Map Matching API (road speed limit without a destination)
 }
 STOP_FRACTION = 0.99
-LABELS = {"searchSessions": "searches", "geocoding": "address lookups", "staticTiles": "map views", "directions": "routes", "vectorTiles": "offline map tiles"}
+LABELS = {"searchSessions": "searches", "geocoding": "address lookups", "staticTiles": "map views", "directions": "routes", "vectorTiles": "offline map tiles",
+          "mapMatching": "road speed limit lookups"}
 
 
 class BudgetExhausted(RuntimeError):
@@ -113,7 +115,7 @@ def read_usage(root: Path | None = None, clock=time.time) -> dict:  # noqa: TID2
   root = Path(root if root is not None else usage_root())
   month = _month(clock())
   result = {}
-  for service in ("searchSessions", "geocoding", "staticTiles", "directions"):
+  for service in ("searchSessions", "geocoding", "staticTiles", "directions", "mapMatching"):
     used = 0
     try:
       value = json.loads((root / f"{service}.json").read_text())

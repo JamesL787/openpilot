@@ -391,9 +391,10 @@ class Compositor:
                                          lead_indicator=state.appearance.show_lead_indicator and state.lead_indicator_source_fresh,
                                          lead_info_mode=state.appearance.lead_info_mode, lead_info_metric=state.appearance.lead_info_metric,
                                          lateral_active=state.lateral_active, road_style=state.customization['roadColors']['compact'],
-                                         poll_camera=False)
+                                         poll_camera=False, radar_points=state.customization.get('radarPoints') is True)
       else:
-        self.camera.render_camera_model_layer(rect, road_style=state.customization['roadColors']['large'], poll_camera=False)
+        self.camera.render_camera_model_layer(rect, road_style=state.customization['roadColors']['large'], poll_camera=False,
+                                              radar_points=state.customization.get('radarPoints') is True)
     finally:
       sm.updated = original
     self.render_receipts.update({name: receipts[name] for name in flags.read if name in receipts})

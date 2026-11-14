@@ -74,6 +74,10 @@ CRV_2017_SPEC = HondaSteeringSpec(lock_turns=2.30, lock_ratio=12.3, curb_mass_lb
                                   wheelbase=2.66)  # CR-V 2017-19 (TLA-A040)
 CRV_2020_SPEC = HondaSteeringSpec(lock_turns=2.30, lock_ratio=12.3, curb_mass_lb=3514, front_weight_fraction=0.58,
                                   wheelbase=2.66)  # CR-V 2020+ (TLA-A220)
+# Odyssey 2018-20 (THR-A020): Honda's 2.97 turns and 14.35:1 (dual-pinion EPS), the EX-L's 4471 lb; Honda's 56/44 split
+# (from an Odyssey table that names no year: 55/45 moves the slip factor -12 %, 57/43 +12 %)
+ODYSSEY_2018_SPEC = HondaSteeringSpec(lock_turns=2.97, lock_ratio=14.35, curb_mass_lb=4471, front_weight_fraction=0.56,
+                                      wheelbase=3.0)
 
 
 def linear_angle(vgr_inverse, physical_deg: float) -> float:

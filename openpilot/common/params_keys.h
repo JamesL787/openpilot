@@ -70,6 +70,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"UseStarPilotLongitudinalPlanner", {PERSISTENT, BOOL, "1"}},
     {"BoschAStockBrakeFeel", {PERSISTENT, BOOL, "0"}},  // Bosch-A Honda stock ACC brake feel, either planner
     {"BoschAHumanFollowing", {PERSISTENT, BOOL, "0"}},  // Bosch-A HumanFollowing + HumanAcceleration, either planner
+    {"BoschACameraCapHold", {PERSISTENT, BOOL, "1"}},  // Bosch-A camera cap mode: 1 = D+E (default), 0 = VA (radard)
     {"UseVOACC", {PERSISTENT, BOOL, "0"}},
     {"CustomPersonalities", {PERSISTENT, BOOL, "0"}},
     {"SettingsRetirementState", {PERSISTENT | DONT_LOG, JSON}},
@@ -128,6 +129,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneCenterOffset", {PERSISTENT, FLOAT, "0.0"}},
     {"LaneCenteringE2EAuthority", {PERSISTENT, FLOAT, "0.5"}},
     {"LaneCenteringStrength", {PERSISTENT, FLOAT, "1.5"}},
+    {"Blendful", {PERSISTENT, BOOL, "0"}},
     {"StarPortEnabled", {PERSISTENT | DONT_LOG, BOOL, "0"}},
     {"AdvancedLateralTune", {PERSISTENT, BOOL}},
     {"LateralControllerSelection", {PERSISTENT | DONT_LOG, JSON}},

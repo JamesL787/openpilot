@@ -85,6 +85,8 @@ class CarControllerParams:
         eps_map = ([0, 4096], [0, 4096])
       elif CP.carFingerprint == CAR.HONDA_RIDGELINE:
         eps_map = ([0, 4096], [0, 4096])   # rev b5's target saturates by E4 3732: past 4096 it would only wind up
+      elif CP.carFingerprint == CAR.HONDA_ODYSSEY:
+        eps_map = ([0, 4096], [0, 4096])   # THR-A020 PTM: a = E4 / 4 clamps at 1024, as the RDX's
       elif CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH_DIESEL:
         eps_map = ([0, 4096], [0, 4096])   # its EPS image has not been read
       elif CP.carFingerprint == CAR.HONDA_CIVIC_2022:
@@ -149,6 +151,8 @@ class HondaFlags(IntFlag):
   VGR_RDX_TJB_A220 = 2097152
   # the Ridgeline's T6Z-A110 rack is constant-ratio and its image has no angle table (see steer_ratio.py)
   VGR_RIDGELINE_T6Z_A110 = 4194304
+  # the Odyssey's THR-A020 rack is constant-ratio by Honda's spec and its image has no angle table (see steer_ratio.py)
+  VGR_ODYSSEY_THR_A020 = 8388608
 
 
 # Car button codes
@@ -539,6 +543,8 @@ MODIFIED_EPS_FW = {
   # PTM rev b5 only: it reports the hybrid part number (dash, comma). The earlier builds, including the PTM2045 one,
   # report 39990,T6Z,A110 and are not calibrated, so they stay dashcam.
   CAR.HONDA_RIDGELINE: (b'39990-T6Z,A110\x00\x00',),
+  # PTM 2026-11-10 (the RDX car build ported to THR, its code parent): every variant record reports the comma
+  CAR.HONDA_ODYSSEY: (b'39990-THR,A020\x00\x00',),
 }
 
 MANUAL_TRANS_CARS = frozenset((CAR.HONDA_ACCORD, CAR.HONDA_CIVIC_2022))

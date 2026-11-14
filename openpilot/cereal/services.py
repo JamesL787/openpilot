@@ -32,6 +32,7 @@ _services: dict[str, tuple] = {
   "can": (True, 100., 2053, QueueSize.BIG),  # decimation gives ~3 msgs in a full segment
   "controlsState": (True, 100., 10, QueueSize.MEDIUM),
   "starpilotLateralState": (True, 100., 10),
+  "starpilotBlendfulState": (True, 20., 10),
   "selfdriveState": (True, 100., 10),
   "starpilotSelfdriveState": (True, 100., 10),
   "pandaStates": (True, 10., 1),

@@ -1,4 +1,5 @@
 import ast
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ def action_function():
   path = Path(__file__).resolve().parents[1] / "modeld.py"
   function = next(node for node in ast.parse(path.read_text()).body
                   if isinstance(node, ast.FunctionDef) and node.name == "get_action_from_model")
-  namespace = {"np": np, "log": log, "smooth_value": smooth_value,
+  namespace = {"np": np, "log": log, "Callable": Callable, "smooth_value": smooth_value,
                "LONG_SMOOTH_SECONDS": 0.3, "LAT_SMOOTH_SECONDS": LAT_SMOOTH_SECONDS,
                "MIN_LAT_CONTROL_SPEED": 0.3, "should_stop": lambda speed, accel: False}
   exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)

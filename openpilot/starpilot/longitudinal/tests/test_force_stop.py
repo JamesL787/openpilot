@@ -32,6 +32,41 @@ class ForceStopTests(unittest.TestCase):
       self.assertEqual(plan.jerk_scale, .32)
       self.assertFalse(plan.should_stop)
 
+  def test_late_light_starts_a_constant_decel_profile_instead_of_a_ceiling_step(self):
+    # 0e t=169: light first seen at 114 m while the car is at 19.9 m/s.
+    speed, horizon = 19.9, 114.
+    plan = self.owner.step(frame(0, speed_mps=speed, horizon_m=horizon), self.tune)
+    assert plan.speed_ceiling_mps is not None
+    self.assertLess(plan.speed_ceiling_mps, speed)
+    self.assertAlmostEqual(plan.speed_ceiling_mps, speed - .5)
+    self.assertGreater(plan.speed_ceiling_mps, math.sqrt(1.3 * (horizon - 6)) + 7)
+    decel = self.owner.approach_decel
+    assert decel is not None
+    self.assertAlmostEqual(decel, (speed - .5) ** 2 / (2 * (horizon - 6)))
+    # Following the profile, the ceiling keeps the same decel down to the handoff.
+    for tick in range(1, 400):
+      ceiling = plan.speed_ceiling_mps
+      speed = max(0., ceiling - decel * .05)
+      horizon -= (ceiling + speed) / 2 * .05
+      plan = self.owner.step(frame(tick, speed_mps=speed, horizon_m=horizon, model_should_stop=True), self.tune)
+      assert plan.speed_ceiling_mps is not None
+      assert self.owner.approach_decel is not None
+      self.assertAlmostEqual(self.owner.approach_decel, decel)
+      if horizon < 6.3:
+        break
+    self.assertTrue(plan.forcing)
+    self.assertLess(plan.speed_ceiling_mps, 1.2)
+
+  def test_profile_latch_clears_when_the_ceiling_goes_away(self):
+    self.owner.step(frame(0, speed_mps=20., horizon_m=110.), self.tune)
+    assert self.owner.approach_decel is not None
+    self.assertGreater(self.owner.approach_decel, .65)
+    plan = self.owner.step(frame(1, speed_mps=20., horizon_m=110., light=False), self.tune)
+    self.assertIsNone(plan.speed_ceiling_mps)
+    self.assertIsNone(self.owner.approach_decel)
+    self.owner.step(frame(2, speed_mps=8., horizon_m=110.), self.tune)
+    self.assertEqual(self.owner.approach_decel, .65)
+
   def test_activation_threshold_hysteresis_preserves_commit_timer(self):
     for tick in range(20):
       plan = self.owner.step(frame(tick, horizon_m=99. if tick % 2 == 0 else 103.), self.tune)

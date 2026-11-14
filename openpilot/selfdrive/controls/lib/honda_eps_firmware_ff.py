@@ -81,6 +81,8 @@ class ColumnLoadModel:
 # - Civic Bosch C020 (tsfdo): routes 290 / 293 / 289 -0.09 / -0.15 / -0.22 s, median -0.15. Checked with it on
 #   (routes 2b7 / 2c6 / 2d4): -0.14 / -0.11 / +0.03 s, -0.045 weighted, against -0.15 without it on 289 / 290 / 294.
 # - Insight: 0.15, inferred from a LatControlPID drive (see INSIGHT_TXM_A040).
+# - CR-V A040 (RiskyBiscuit-arc): with the default 0.12 s, routes 02/03/04/05/0a/0b/15 ran -0.02..-0.15 s (5-12 m/s,
+#   all turns), -0.07 s weighted, the Nov 7/12 drives -0.11..-0.15; it takes 0.18 s. Highway not measured: none.
 # Unmeasured cars take the default, the smaller of the two, until plan_timing.py measures them.
 # Above 15 m/s, where it used to fade out, the cars run early too (2026-10-18, per speed band): the TEG 0.13-0.17 s at
 # 12-40 m/s on the TEG routes 12e-13d, the C020 0.16 s at 20-40 m/s on route 380 (no command delay), and the Clarity

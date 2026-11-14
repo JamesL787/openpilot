@@ -239,6 +239,45 @@ class TestSafetyQualificationRunner(TestCase):
       with patch.dict(os.environ, {'SAFETY_COVERAGE': '1'}), self.assertRaisesRegex(RuntimeError, 'sources changed'):
         changing.build()
 
+  def test_coverage_runs_every_brand_as_a_drivable_car_and_restores_the_fork_scope(self):
+    from types import SimpleNamespace
+    from opendbc.car import supported_brands
+    from tools.ci import safety_pytest_coverage as coverage
+    def start(brand):
+      return supported_brands.limit_to_supported_brands(SimpleNamespace(brand=brand, dashcamOnly=False)).dashcamOnly
+    self.assertTrue(start('nissan'))  # the fork scope: an unsupported brand starts in dashcam
+    self.assertFalse(start('honda'))
+    with coverage.all_brands_supported():
+      self.assertFalse(start('nissan'))
+      self.assertFalse(start('rivian'))
+    self.assertTrue(start('nissan'))
+
+  def test_coverage_collects_and_runs_the_catalog_with_every_brand_drivable(self):
+    # Regression: with the fork scope in force the Nissan end-to-end cases ran in dashcam mode (aol_qualified False),
+    # failed, and left modes/nissan_aol.h uncovered, so the gate failed on both the pytest accounting and gcovr.
+    from types import SimpleNamespace
+    from opendbc.car import supported_brands
+    from tools.ci import safety_pytest_coverage as coverage
+    seen = []
+    def collect(targets):
+      seen.append(('collect', supported_brands.brand_supported('nissan')))
+      return ['case'], []
+    def run(nodeids):
+      seen.append(('run', supported_brands.brand_supported('nissan')))
+      return [], []
+    with tempfile.TemporaryDirectory() as td:
+      native, output = Path(td) / 'libsafety.so', Path(td) / 'out.json'
+      native.write_bytes(b'native fixture')
+      fake = SimpleNamespace(load=Mock(), _build_libsafety=Mock(), libpath=str(native))
+      modules = {'opendbc.safety.tests.libsafety': SimpleNamespace(libsafety_py=fake),
+                 'opendbc.safety.tests.libsafety.libsafety_py': fake}
+      with (patch.dict(sys.modules, modules),
+            patch.object(coverage.vehicle_pytest, 'collect', side_effect=collect),
+            patch.object(coverage.vehicle_pytest, 'run', side_effect=run)):
+        coverage.run(native, output, [coverage.targets_for_coverage()[0]])
+    self.assertEqual(seen, [('collect', True), ('run', True)])
+    self.assertFalse(supported_brands.brand_supported('nissan'))
+
   def test_actual_native_builder_instruments_debug_and_release_without_changing_variant(self):
     import ast
     from types import SimpleNamespace

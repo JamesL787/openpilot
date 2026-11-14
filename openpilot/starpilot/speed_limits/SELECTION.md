@@ -53,3 +53,15 @@ does not change the already applied cruise SET or authorize a new command.
 Lateral-only or stock ownership cannot turn a selected
 speed into a system longitudinal target. These are
 deterministic policy tests, not native producer, planner, CAN or vehicle evidence.
+
+## Online source: the Mapbox route limit (2026-10-26)
+
+The online source is the posted limit Mapbox Directions returns for the route
+(`annotations=maxspeed`, one entry per route segment). Navigation publishes the
+limit of the segment the car is matched to as `starpilotNavigation.speedLimit`
+(m/s, 0 = unknown), and only while guiding and on the route; off the route it is
+0. `navigation_observation.py` turns that into the online observation: absent when
+not guiding, stale past 3 s, unknown at 0. `online_fallback` is now on, so the
+route limit is used only when neither priority slot has an eligible limit, and
+the sign shows "NAV". Evidence: static tests only
+(`tests/test_navigation_limit.py`); not yet replayed on a navigated drive.

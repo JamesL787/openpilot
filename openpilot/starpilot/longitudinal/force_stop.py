@@ -12,6 +12,17 @@ SIGN_MODEL_AGREE_M = 50.0
 SIGN_SEED_M = 27.0
 SIGN_APPROACH_DECEL = 1.0
 MODEL_APPROACH_DECEL = .65
+# The stop profile decelerates at MODEL_APPROACH_DECEL (sign stops: SIGN_APPROACH_DECEL) to the handoff point.
+APPROACH_DECEL = MODEL_APPROACH_DECEL
+# A light seen late puts the car above that profile. Stepping the ceiling down
+# by 8 m/s braked -2.2 then eased to -0.3 (route 0e t=169,
+# replay, limited road evidence). Above this gap the profile is instead the
+# constant decel that reaches the handoff from the current speed.
+ENTRY_STEP_MPS = 1.0
+# Starts the latched profile just under the current speed so it brakes at once.
+ENTRY_DROP_MPS = .5
+# A stop that needs more than this is urgent: keep the original low ceiling.
+ENTRY_MAX_DECEL = 2.5
 
 
 @dataclass(frozen=True)
@@ -96,6 +107,19 @@ class ForceStop:
     self.previously_enabled = False
     self.distance = 0.0
     self.distance_cap = 0.0
+    self.approach_decel = None
+
+  def _ceiling(self, speed: float, room: float, base_decel: float = APPROACH_DECEL) -> float:
+    # base_decel is the profile for this frame (sign stops brake harder). A late entry latches a
+    # steeper constant decel; the profile never brakes softer than base_decel.
+    room = max(0.0, room)
+    if self.approach_decel is None:
+      self.approach_decel = base_decel
+      if room > 0 and speed - math.sqrt(2 * base_decel * room) > ENTRY_STEP_MPS:
+        decel = (speed - ENTRY_DROP_MPS) ** 2 / (2 * room)
+        if decel <= ENTRY_MAX_DECEL:
+          self.approach_decel = decel
+    return math.sqrt(2 * max(self.approach_decel, base_decel) * room)
 
   def _clear_standstill(self):
     self.standstill_since_ns = 0
@@ -232,7 +256,7 @@ class ForceStop:
             self.distance = horizon
         effective = self.distance + offset + tune.distance_bias_m
         decel = SIGN_APPROACH_DECEL if frame.sign else MODEL_APPROACH_DECEL
-        ceiling = math.sqrt(2 * decel * max(0, effective - tune.handoff_m))
+        ceiling = self._ceiling(speed, effective - tune.handoff_m, decel)
     else:
       self.forcing = False
       self.entry_speed = None
@@ -243,7 +267,9 @@ class ForceStop:
         approach = horizon
         effective = approach + offset + tune.distance_bias_m
         if effective > tune.handoff_m:
-          ceiling = math.sqrt(2 * MODEL_APPROACH_DECEL * (effective - tune.handoff_m))
+          ceiling = self._ceiling(speed, effective - tune.handoff_m, MODEL_APPROACH_DECEL)
+      if ceiling is None:
+        self.approach_decel = None
     self.previously_enabled = frame.enabled
     stop_length = self.distance if self.forcing and self.distance > tune.handoff_m else approach
     # The MPC obstacle includes its standing-distance term; adding it at the

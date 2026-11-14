@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request or branch replaces the run in progress, as tests.yaml already does.
+concurrency:
+  group: safety-qualification-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   host_gates:
     name: ${{ matrix.gate }}

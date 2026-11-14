@@ -15,7 +15,7 @@ from openpilot.starpilot.ui.unified_speed_presentation import displayed_adjusted
 
 INK = rl.Color(241, 246, 243, 255)
 MUTED = rl.Color(190, 208, 202, 255)
-SOURCE_LABELS = {'dashboard': 'DASH', 'map': 'OSM', 'vision': 'VISION', 'mapbox': 'NAV'}
+SOURCE_LABELS = {'dashboard': 'DASH', 'map': 'OSM', 'vision': 'VISION', 'online': 'NAV'}
 
 
 def draw_text(fonts, text, role, size, x, y, color=INK):

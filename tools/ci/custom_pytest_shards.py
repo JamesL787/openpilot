@@ -12,6 +12,7 @@ import sys
 from xml.etree import ElementTree
 
 from tools.ci.lifecycle_shards import build_identity, same_build_inputs
+from tools.ci.supported_vehicles import supported
 
 ROOT = Path(__file__).resolve().parents[2]
 HEAVY_MODULES = {
@@ -294,6 +295,11 @@ class ShardPlugin:
       self.errors.append({'id': report.nodeid, 'failure': str(report.longrepr)[:4096]})
 
   def pytest_collection_modifyitems(self, session, config, items):
+    # Other brands' cases inside brand-neutral files leave the catalog itself: tools/ci/supported_vehicles.py
+    other_brands = [item for item in items if not supported(item.nodeid)]
+    if other_brands:
+      items[:] = [item for item in items if supported(item.nodeid)]
+      config.hook.pytest_deselected(items=other_brands)
     self.catalog = [item.nodeid for item in items]
     assignment, loads = partition(self.catalog, self.count)
     if type(self.index) is not int or not 0 <= self.index < self.count:

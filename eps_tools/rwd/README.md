@@ -1,17 +1,24 @@
-# EPS firmware images (`.rwd`)
+# Local EPS firmware
 
-Night Star does not ship firmware images in this repo. The PTM builds change often (per-image revisions, A280-flat
-and corrected PTM builds) and a stale image is worse than none, so each car's current build and its stock recovery
-image live with the EPS firmware work, not here.
+This folder is intentionally retained. No `.rwd` firmware files are
+distributed by eps-tools. Supply your own image for the exact EPS ECU,
+retain a validated stock recovery image, and follow [the main README](../README.md).
+Firmware files are ignored by Git. Do not commit them.
 
-Copy the image you mean to flash, **and a verified stock recovery image for the same part number**, into this folder
-(or better, a persistent copy such as `/data/media/0/eps_tools/rwd/`; the comma updater wipes untracked files under
-`/data/openpilot`). Then:
+## Recommended flashing
 
-```bash
-python3 ../check_rwd.py YOUR_FIRMWARE.rwd    # file checksum + decrypted firmware checksums must all PASS
-python3 ../flash.py                          # guided flasher: auto-detects the bus, offers a dry run
+Add the tools to your openpilot fork root and commit them. Once the fork is
+installed on the comma, run the guided flasher from `/data/openpilot/eps_tools/`.
+A standalone device copy under `/data/media/0/eps_tools/` is an alternative,
+not the fork integration location. See the main README for both installations.
+From the installed tools folder:
+
+```sh
+python3 flash.py
 ```
 
-The calibration for an image (in the lateral controller) must match the image you flash; reflash and update the
-calibration in lockstep.
+It handles selection, validation, power prompts, bus detection, and a recommended
+dry run before explicit flash confirmation. Its optional EPS communication check
+is a sanity check, not an indication that the flash failed. `eps-diag.py --recovery`
+adds troubleshooting guidance when investigating an unsuccessful flash.
+`eps-update.py` remains the older manual alternative and the guided tool's backend.

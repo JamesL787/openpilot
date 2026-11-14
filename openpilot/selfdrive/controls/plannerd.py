@@ -448,7 +448,10 @@ def starpilot_main():
     optional_slc.append('starpilotCarState')
   subscribed_services.extend(optional_slc)
   subscribed_services.append('starpilotNavigation')
-  optional_conditional = ['starpilotNavigation'] + (['starpilotRadarState'] if conditional_host is not None else []) + optional_slc
+  # radarTracks: raw track lateral positions for the Bosch-A turn-off let-off confirm (bosch_a_turnoff.py). Optional:
+  # missing or stale tracks only keep the base let-off, so they never gate planning.
+  subscribed_services.append('radarTracks')
+  optional_conditional = ['starpilotNavigation', 'radarTracks'] + (['starpilotRadarState'] if conditional_host is not None else []) + optional_slc
   sm = messaging.SubMaster(subscribed_services, poll='modelV2',
                            ignore_alive=optional_conditional, ignore_valid=optional_conditional,
                            ignore_avg_freq=optional_conditional)

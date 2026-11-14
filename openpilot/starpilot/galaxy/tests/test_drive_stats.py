@@ -146,9 +146,10 @@ class DriveStatsTest(unittest.TestCase):
 
   def test_complete_aggregation_week_models_and_exclusion_persist(self):
     owner = self.owner()
-    owner._start()
+    # Before the scan starts: the worker can finish before a snapshot taken right after _start().
     initial = owner.snapshot()
     self.assertEqual(initial['totals']['drives'], 0)
+    owner._start()
     result = self.completed(owner)
     self.assertEqual(result['totals']['distanceMeters'], 1000)
     self.assertEqual(result['totals']['engagedSeconds'], 30)
@@ -544,7 +545,9 @@ class DriveStatsTest(unittest.TestCase):
     owner._failures['abc'] = {'signature': signature, 'analysisVersion': drive_stats.ANALYSIS_VERSION, 'attempts': 5,
                               'firstAt': boot_clock, 'retryAt': boot_clock + 3600,
                               'reason': 'Route has no logged or named wall time'}
-    owner._run()
+    # The runner's own systemd build date would otherwise set min_date(), possibly after the test clock.
+    with mock.patch.object(drive_stats, 'min_date', return_value=datetime(2025, 2, 21)):
+      owner._run()
     self.assertNotIn('abc', owner._failures)
     self.assertTrue(owner._records['abc']['complete'])
 

@@ -51,14 +51,27 @@ class HondaStockCardIntent(AolCardIntent):
       if self.main_pulse:
         events.append(structs.CarState.ButtonEvent(type=ButtonType.mainCruise, pressed=False))
         self.main_pulse = False
-      if not available:
+      # route 000000ac--138f4b8bb4 segment 0: main was already on before the first
+      # canValid frame (avail=True at 6.25s, canValid True only at 6.26s), so the
+      # off->on edge openpilot normally pulses on never happens and AOL stays
+      # unarmed until a full cruise engage. Treat the first healthy frame as
+      # neutral/not-available so the pulse can fire on the next healthy frame if
+      # main is still on, but not on this frame itself: intent.py needs one
+      # non-held frame first to set _gesture_neutral_seen, or the pulse is ignored.
+      # Never synthesize the pulse while standard cruise is enabled: intent.py reads a
+      # mainCruise press during engagement as the driver toggling lateral off (seen
+      # when openpilot starts, or restarts, with cruise already engaged). Full
+      # engagement arms AOL on its own in that case.
+      first = not self.main_seen
+      engaged = bool(kwargs.get('standard_enabled', False))
+      if not available or first:
         self.main_neutral = True
-      elif self.auto_main and self.main_seen and self.main_neutral and not self.main_available:
+      elif self.auto_main and self.main_neutral and not self.main_available and not engaged:
         events.append(structs.CarState.ButtonEvent(type=ButtonType.mainCruise, pressed=True))
         self.main_pulse = True
         self.main_neutral = False
       self.main_seen = True
-      self.main_available = available
+      self.main_available = available and not first
     else:
       self.cancel_held = False
       self.cancel_ticks = 0

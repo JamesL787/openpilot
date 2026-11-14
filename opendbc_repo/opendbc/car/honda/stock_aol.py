@@ -43,7 +43,7 @@ _DETECTED = int(HondaFlags.BOSCH_EXT_HUD | HondaFlags.BOSCH_ALT_BRAKE | HondaFla
 # HYBRID_ALT_BRAKEHOLD only says where a Nidec hybrid reports brake hold.
 _DETECTED |= int(HondaFlags.VGR_CLARITY_TRW_A020 | HondaFlags.VGR_CIVIC_TBA_C020 | HondaFlags.VGR_INSIGHT_TXM_A040 |
                  HondaFlags.VGR_CRV_TLA_A040 | HondaFlags.VGR_CIVIC_TBA_C120 | HondaFlags.VGR_RDX_TJB_A220 |
-                 HondaFlags.VGR_RIDGELINE_T6Z_A110 |
+                 HondaFlags.VGR_RIDGELINE_T6Z_A110 | HondaFlags.VGR_ODYSSEY_THR_A020 |
                  HondaFlags.HYBRID_ALT_BRAKEHOLD)
 _ALLOWED_FLAGS = {str(car): int(car.config.flags) | _DETECTED
                   for car in CLASSIC_BOSCH | NIDEC | RADARLESS | CANFD_STOCK | ALT_RADAR_STOCK | {CAR.HONDA_ACCORD_11G}}

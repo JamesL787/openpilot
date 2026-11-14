@@ -73,6 +73,7 @@ REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
 TESTING_CLOSET = "TESTING_CLOSET" in os.environ
 
+AOL_STALE_ALERT_NS = 100_000_000  # stale carState must last this long before commIssue sounds; commands go at 30 ms
 LONGITUDINAL_PERSONALITY_MAP = {v: k for k, v in log.LongitudinalPersonality.schema.enumerants.items()}
 
 ThermalStatus = log.DeviceState.ThermalStatus
@@ -1258,8 +1259,11 @@ class SelfdriveD:
     # A cold/unarmed fault classification is not a pause of expected steering.
     # Qualified availability retention already carries both fields even while
     # ordinary cruise is disabled; this only selects its presentation.
+    # Under AOL_STALE_ALERT_NS of stale carState it is not shown either; its chime
+    # window starts at the gap, so a gap that lasts still prompts.
     availability_warning = bool(getattr(self, 'aol_fault_reason', 'none') == 'availabilityPause' and
-      self.aol_axis_decision.desired_lateral and self.aol_axis_decision.native_acknowledged)
+      self.aol_axis_decision.desired_lateral and self.aol_axis_decision.native_acknowledged and
+      not getattr(self, 'aol_stale_alert_deferred', False))
     if availability_warning:
       warning = Alert("Steering Paused", "Communication Issue", log.SelfdriveState.AlertStatus.normal,
         log.SelfdriveState.AlertSize.small, AlertPriority.LOW, car.CarControl.HUDControl.VisualAlert.none,
@@ -1328,16 +1332,30 @@ class SelfdriveD:
       return False
     self.aol_ordinary_source_pause = True
     self.aol_publication_retained_intent = self.aol_ordinary_source_anchor[2]
-    self.events.add(EventName.commIssue)
+    alert_due = self.aol_stale_alert_due(self.aol_publication_retained_intent, now_ns)
+    if alert_due:
+      self.events.add(EventName.commIssue)
+    else:
+      self.aol_stale_alert_deferred = True
     self.aol_axis_decision = self.ordinary_source_withdrawal()
     self.aol_fault_reason = 'availabilityPause'
     self.aol_car_state_log_ns = 0
     self.conditional_car_state_valid = False
     # If publication crosses the cutoff after StateMachine ran, emit the fault
     # now; its existing next-cycle transition owns the timer and driver state.
-    if self.enabled and ET.SOFT_DISABLE not in self.state_machine.current_alert_types:
+    if alert_due and self.enabled and ET.SOFT_DISABLE not in self.state_machine.current_alert_types:
       self.state_machine.current_alert_types.append(ET.SOFT_DISABLE)
     return True
+
+  def aol_stale_alert_due(self, intent, now_ns):
+    """Commands are withdrawn at INTENT_MAX_AGE_NS; the red commIssue alert waits for
+    AOL_STALE_ALERT_NS so a single late pandad frame (28 ms, route 0000003c segment 9)
+    does not sound it. Long stalls still alert here and through the alive checks."""
+    return self.aol_stale_source_alert_due(getattr(intent, 'carStateLogMonoTime', 0), now_ns)
+
+  @staticmethod
+  def aol_stale_source_alert_due(source_ns, now_ns):
+    return not 0 < source_ns <= now_ns or now_ns - source_ns >= AOL_STALE_ALERT_NS
 
   def _expire_axis_source(self, CS, now_ns):
     if REPLAY or not self.aol_replay or not self.axis_transport_required:
@@ -1408,6 +1426,19 @@ class SelfdriveD:
         not self.aol_authority_lost and not self.events.contains(ET.IMMEDIATE_DISABLE) and
         (not self.events.contains(ET.SOFT_DISABLE) or availability_only(self.events.to_msg())) and
         not self.events.contains(ET.USER_DISABLE)):
+      if not self.aol_stale_source_alert_due(source_ns, now_ns):
+        # Grace-window choice: pause the commands, hold the engagement, no alert.
+        # Route 0000008e--55bbb6ccb6 segment 13 (13.9 min): one carState 29 ms
+        # after the last, gas pressed, so ordinary retention declined and this
+        # branch raised commIssue/softDisable (availabilityPause, source 0) and
+        # disengaged. Inside AOL_STALE_ALERT_NS the expired source still grants
+        # no output (decision cleared above); the state machine is left alone.
+        # The intent is retained so the next frame recovers on a fresh source
+        # or, once the source is 100 ms old, runs this branch unchanged.
+        self.aol_stale_alert_deferred = True
+        self.aol_fault_reason = 'availabilityPause'
+        self.aol_publication_retained_intent = intent
+        return
       self.events.add(EventName.commIssue)
       native = current_native(self.sm, self.CP, now_ns=now_ns, axis_session_id=self.aol_session_id)
       from openpilot.starpilot.aol.transport_pause import _healthy_transport_native
@@ -1549,6 +1580,19 @@ class SelfdriveD:
     # The expired command still withdraws; host loss need not revoke a healthy
     # driver's ordinary engagement before the existing soft-disable countdown.
     if self.retain_ordinary_source_state(CS, now_ns):
+      return True
+    if (not proof[1] < self.aol_car_state_log_ns and CS.canValid and not CS.canTimeout and
+        getattr(self, 'aol_last_intent', None) is not None and
+        getattr(self, 'aol_availability_pause', None) is not None and not self.aol_authority_lost and
+        getattr(self, 'aol_fault_reason', 'none') == 'none' and
+        not any(self.events.contains(kind) for kind in (ET.USER_DISABLE, ET.SOFT_DISABLE, ET.IMMEDIATE_DISABLE)) and
+        not self.aol_stale_source_alert_due(proof[1], now_ns)):
+      # Same grace as _expire_axis_source (route 0000008e--55bbb6ccb6 segment 13):
+      # the lease ran out only because carState has not advanced yet. Withdraw
+      # the output, keep the state, no alert; the republish re-runs source expiry.
+      self.aol_axis_decision = AxisDecision()
+      self.aol_stale_alert_deferred = True
+      self.aol_fault_reason = 'availabilityPause'
       return True
     # A retained source cannot renew an expired output lease.
     self.aol_axis_decision = AxisDecision()
@@ -2016,6 +2060,7 @@ class SelfdriveD:
     self.aol_event_input_wait_attempted = False
     previous_fault_reason = getattr(self, 'aol_fault_reason', 'none')
     self.aol_ordinary_source_pause = False
+    self.aol_stale_alert_deferred = False
     self.aol_step_input_proof = getattr(self, 'aol_published_input_proof', None)
     CS = self.data_sample()
     self.car_event_sample_count = 0
@@ -2090,8 +2135,11 @@ class SelfdriveD:
                             CS.canValid and not CS.canTimeout)
       driver_override = bool(CS.brakePressed or CS.regenBraking or CS.gasPressed or
                              self.events.contains(ET.USER_DISABLE))
-      lost_companion = bool((previous.lateral_active or previous.longitudinal_active) and
+      # A companion loss held by the stale grace last step still counts until carState is fresh.
+      lost_companion = bool((previous.lateral_active or previous.longitudinal_active or
+                             getattr(self, 'aol_stale_grace_lost_companion', False)) and
                             not source_current and not self.events.contains(ET.USER_DISABLE))
+      self.aol_stale_grace_lost_companion = False
       lost_honda_lateral_grant = self.honda_native_lateral_grant_lost(
         CS, native, previous, requested, source_current=source_current,
         previous_intent=previous_intent, intent=intent, now_ns=now_ns)
@@ -2134,6 +2182,12 @@ class SelfdriveD:
         0 < retained_intent.carStateLogMonoTime <= now_ns and
         now_ns - retained_intent.carStateLogMonoTime <= SAFETY_MAX_AGE_NS)
       availability_events = self.events.to_msg()
+      # The synthetic commIssue below still feeds the pause proof, so retention
+      # and transport-pause hand-off work as before. Inside AOL_STALE_ALERT_NS,
+      # with no real fault, it must not also long-inhibit (silently disengage)
+      # ordinary control: route 0000008e--55bbb6ccb6 segment 13, 29 ms, gas held.
+      stale_grace_hold = bool(publication_expiry and not self.aol_stale_alert_due(retained_intent, now_ns) and
+        not self.events.contains(ET.SOFT_DISABLE) and not self.events.contains(ET.IMMEDIATE_DISABLE))
       if publication_expiry and EventName.commIssue not in self.events.names:
         source_expiry_events = Events()
         source_expiry_events.add(EventName.commIssue)
@@ -2152,14 +2206,20 @@ class SelfdriveD:
       if ordinary_availability:
         self.aol_ordinary_source_pause = True
         self.aol_publication_retained_intent = self.aol_ordinary_source_anchor[2]
-        self.events.add(EventName.commIssue)
+        if self.aol_stale_alert_due(self.aol_publication_retained_intent, now_ns):
+          self.events.add(EventName.commIssue)
+        else:
+          self.aol_stale_alert_deferred = True
         lost_companion = False
         self.aol_transport_pause.active = pause = False
         # Preserve the normal state machine and SOFT_DISABLE countdown. The
         # independent armed-LAT retention must not disable ordinary engagement.
         availability = False
       if publication_expiry and (availability or not pause) and EventName.commIssue not in self.events.names:
-        self.events.add(EventName.commIssue)
+        if self.aol_stale_alert_due(retained_intent, now_ns):
+          self.events.add(EventName.commIssue)
+        else:
+          self.aol_stale_alert_deferred = True
       if availability:
         if publication_expiry:
           self.aol_publication_retained_intent = retained_intent
@@ -2168,13 +2228,27 @@ class SelfdriveD:
         if previous_fault_reason != 'availabilityPause':
           self.aol_availability_ordinary_warning = self.enabled
           self.aol_availability_chime_until_ns = time.monotonic_ns() + 400_000_000
-        self.aol_availability_long_inhibit = True
+        if not stale_grace_hold:
+          self.aol_availability_long_inhibit = True
       if pause and source_current and requested.lateral_active:
         # Ordinary controls were disabled at the first pause. Fresh normal AOL
         # gates and exact native acknowledgment recover only its lateral axis.
         self.aol_transport_pause.active = pause = False
       if pause:
         lost_companion = False
+      if (lost_companion and stale_grace_hold and intent is None and CS.canValid and not CS.canTimeout and
+          not (upgraded or lost_active_aol or lost_permission or self.aol_selected_pair_future)):
+        # Same AOL_STALE_ALERT_NS grace as _expire_axis_source, for long_only and
+        # combined_unarmed with the gas held: ordinary retention declines under gas
+        # and there is no armed-LAT availability to clear the loss, so one 35-65 ms
+        # late carState raised controlsMismatch/immediateDisable. Only the alert
+        # waits: the expired source grants no output (requested above has no intent)
+        # and the loss is carried to the next step, which recovers on a fresh source
+        # or, once the source is 100 ms old, raises it unchanged.
+        lost_companion = False
+        self.aol_stale_grace_lost_companion = True
+        self.aol_stale_alert_deferred = True
+        self.aol_publication_retained_intent = retained_intent
       if self.initialized and (upgraded or lost_active_aol or lost_companion or lost_permission):
         lost_active_aol = True
         self.aol_authority_lost = True
@@ -2195,10 +2269,11 @@ class SelfdriveD:
         for event in self.events.to_msg())
       cold_main_wait = self.cold_gm_main_readiness(CS, intent, now_ns)
       cold_park_wait = self.cold_gm_park_readiness(CS, intent, now_ns)
+      stale_alert_deferred = getattr(self, 'aol_stale_alert_deferred', False)
       self.aol_fault_reason = ('none' if cold_park_wait else
                                'availabilityPause' if ordinary_availability or cold_main_wait else
                                'critical' if self.aol_authority_lost or self.events.contains(ET.IMMEDIATE_DISABLE) else
-                               'availabilityPause' if availability or aol_hard_soft_fault else 'transportPause' if pause else 'none')
+                               'availabilityPause' if availability or aol_hard_soft_fault or stale_alert_deferred else 'transportPause' if pause else 'none')
       if self.aol_authority_lost or pause:
         self.events.add(EventName.controlsMismatch)
         lost_active_aol |= pause

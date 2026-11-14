@@ -2201,6 +2201,8 @@ public:
 
   inline  ::uint16_t getVersion() const;
 
+  inline float getSpeedLimit() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -2295,6 +2297,9 @@ public:
 
   inline  ::uint16_t getVersion();
   inline void setVersion( ::uint16_t value);
+
+  inline float getSpeedLimit();
+  inline void setSpeedLimit(float value);
 
 private:
   ::capnp::_::StructBuilder _builder;
@@ -15571,6 +15576,20 @@ inline  ::uint16_t StarPilotCarControl::Navigation::Builder::getVersion() {
 inline void StarPilotCarControl::Navigation::Builder::setVersion( ::uint16_t value) {
   _builder.setDataField< ::uint16_t>(
       ::capnp::bounded<9>() * ::capnp::ELEMENTS, value);
+}
+
+inline float StarPilotCarControl::Navigation::Reader::getSpeedLimit() const {
+  return _reader.getDataField<float>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+
+inline float StarPilotCarControl::Navigation::Builder::getSpeedLimit() {
+  return _builder.getDataField<float>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarControl::Navigation::Builder::setSpeedLimit(float value) {
+  _builder.setDataField<float>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS, value);
 }
 
 inline double StarPilotCarControl::Navigation::Coordinate::Reader::getLatitude() const {

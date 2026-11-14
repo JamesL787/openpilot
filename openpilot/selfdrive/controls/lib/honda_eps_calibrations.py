@@ -5,14 +5,14 @@ The law these feed is in honda_eps_firmware_ff; this file is data. Adding an ima
 """
 from opendbc.car.honda.steer_ratio import (
   HONDA_VGR_CIVIC_TBA_C020, HONDA_VGR_CIVIC_TBA_C120, HONDA_VGR_CLARITY_TRW_A020, HONDA_VGR_CRV_TLA_A040,
-  HONDA_VGR_INSIGHT_TXM_A040, HONDA_VGR_INVERSE_BY_PROFILE, HONDA_VGR_RDX_TJB_A220,
+  HONDA_VGR_INSIGHT_TXM_A040, HONDA_VGR_INVERSE_BY_PROFILE, HONDA_VGR_ODYSSEY_THR_A020, HONDA_VGR_RDX_TJB_A220,
 )
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import ColumnLoadModel, \
   EpsFirmwareCalibration, R6_GAIN_BP, computed_r6
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CIVIC_TGG_A120_RACK, \
   CLARITY_TRW_A020_RACK, CRV_TLA_A040_RACK, INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK, RIDGELINE_T6Z_A110_RACK
-from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, \
-  spec_rack_table
+from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, ODYSSEY_2018_SPEC, \
+  spec_load_terms, spec_rack_table
 
 # --- the images ------------------------------------------------------------------------------------------------
 # Every table below was read from the image the car's owners actually run (the latest builds on the dev machine;
@@ -303,6 +303,7 @@ CRV_TLA_A040 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_TLA_A040_R6_GAIN,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
+  cmd_delay_s=0.18,  # measured
   rack=CRV_TLA_A040_RACK,
 )
 # CR-V 5G 39990-TLA-A220 (2020+), the CORRECTED PTM build of 2026-10-16, revision b (payload sha256 a62337a9, RWD 2c992997;
@@ -414,6 +415,38 @@ ACURA_RDX_TJB_A220 = EpsFirmwareCalibration(
   lat_delay_schedule=RDX_TJB_A220_LAT_DELAY_SCHEDULE,
 )
 
+# Honda Odyssey 2018-20 39990-THR-A020, the PTM of 2026-11-10 (39990-THR,A020-20261110-PTM.rwd, RWD sha256 b89d20f0;
+# lab odyssey-thr/THR_A020_PTM_20261110). THR is the TJB-A220's code parent, and the build is the RDX car build ported
+# to it at mapped addresses (fade, curve, tracker-1, PD, mixer TJB - 0x9C; same calibration rows, caves and FF45 hook),
+# so the law and its units are ACURA_RDX_TJB_A220's. Read from the release rwd decoded, rows 0-2 (banks 1-3, the only
+# ones the stock variant records select, and identical):
+# - target map 0x57BAE/0x57BC0 and the clamps (P 7373, D 1774, output 8868), tracker-1 1641, D 46: the RDX's exactly.
+#   Speed envelope 0x57B3C flat at a 1024; speed_clamp_lo 0, as the RDX's.
+# - Kp 0x57C70/0x57C82: THR's own knots (a = 0, 55, 166, 319, 532, 776, 887, 942, 998) kept, with the RDX's rule
+#   round(ClarityP(a * 56756/32768) / 16) on them: 7, 8, 10, 13, 15, 16, 17, 17, 17 (the RDX's 7..17 on TJB's knots).
+#   Both lie within 0.62 counts of the Clarity's curve; they differ by up to 0.79 (5 %, at a = 448).
+# Everything vehicle-side is predicted or carried over; no Odyssey has driven this build:
+# - R6: the RDX's -120.1 per deg/s (32 x its 0x18F rate word x 0.4812). The scale is the build's, the word per deg/s is
+#   the RDX car's 7.8; flat in angle, as the spec rack is constant-ratio. Measure the word on the first drive.
+# - rack and load: spec (honda_eps_spec_plant, ODYSSEY_2018_SPEC through the identity A table). The spec slip factor
+#   (-0.000376) has read low against yaw where both exist (the TGG's fit 1.27x its spec, the CR-V A220's ~1.5x), so
+#   expect it to under-ask at highway speed until a drive measures it.
+# - trims: the RDX's (P x0.7 above 50 mph, the 15 deg/s knee at speed), set by its delay-limited loop on the same code.
+# - delays: the defaults.
+ODYSSEY_THR_A020_SPEC_RACK = spec_rack_table(ODYSSEY_2018_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_ODYSSEY_THR_A020])
+ODYSSEY_THR_A020_LOAD = ColumnLoadModel(**spec_load_terms(ODYSSEY_2018_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_ODYSSEY_THR_A020]))
+_, _, ODYSSEY_THR_A020_R6_GAIN = computed_r6(HONDA_VGR_ODYSSEY_THR_A020)
+ODYSSEY_THR_A020 = EpsFirmwareCalibration(
+  name="odyssey_thr_a020", e4_per_output=4096.0,
+  r5_key_bp=ACURA_RDX_TJB_A220.r5_key_bp, r5_v=ACURA_RDX_TJB_A220.r5_v, key_clamp=ACURA_RDX_TJB_A220.key_clamp,
+  envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
+  kp_key_bp=tuple(round(a * _RDX_A) for a in (0, 55, 166, 319, 532, 776, 887, 942, 998)),
+  kp_v=tuple(16 * k for k in (7, 8, 10, 13, 15, 16, 17, 17, 17)),
+  r6_per_deg_s=RDX_TJB_A220_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=ODYSSEY_THR_A020_R6_GAIN,
+  load=ODYSSEY_THR_A020_LOAD, p_scale=RDX_TJB_A220_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
+  rack=ODYSSEY_THR_A020_SPEC_RACK, friction_width_v=RDX_TJB_A220_FRICTION_WIDTH_V,
+)
+
 # Honda Ridgeline 39990-T6Z-A110, PTM rev b5 (39990-T6Z,A110-REVB5.rwd, RWD sha256 e7e2d909, decoded image sha256
 # 5c578995; static, built on the stock image, block sums 0). Not the Clarity's controller family: a V850 image of the
 # Pilot codebase. Every value below was read from the rwd decoded (all five calsets 0x1E5D2..0x21FDA identical) and run
@@ -476,6 +509,7 @@ EPS_FIRMWARE_CALIBRATIONS = {
   # the same rack; the vehicle side was measured on a 2019.
   "39990-TJB-A220": (("ACURA_RDX_3G", "ACURA_RDX_3G_MMR"), ACURA_RDX_TJB_A220),
   "39990-T6Z-A110": ("HONDA_RIDGELINE", RIDGELINE_T6Z_A110),
+  "39990-THR-A020": ("HONDA_ODYSSEY", ODYSSEY_THR_A020),
 }
 
 
@@ -567,7 +601,7 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table; the owner's telemetry fit (route 82bb) agrees at centre",
     "load": "measured: the owner's telemetry route 82bb",
     "trims": "measured: the owner drives it untrimmed",
-    "cmd_delay": "default (the owner's LatControlPID drive ran 0.08 s late: re-check on this controller)",
+    "cmd_delay": "measured: plan_timing 5-12 m/s on 7 routes (02/03/04/05/0a/0b/15) 0.07 s early with 0.12 s (Nov 7/12 0.11-0.15); highway unmeasured",
     "model_delay": "default: the Clarity's schedule",
     "rack": "measured: VSA yaw (GPS-checked scale), routes 00000003 / 04 / 05 on rev b; spec shape past 173 deg",
   },
@@ -599,6 +633,15 @@ CALIBRATION_PROVENANCE = {
     "cmd_delay": "default", "model_delay": "default: the Clarity's schedule",
     "rack": "inferred: the A040's VSA-yaw map (same steering and A table), checked on its own VSA yaw, routes 030a / 030d / 39 / 3d",
   },
+  "odyssey_thr_a020": {
+    "row": "firmware: rows 0-2 (banks 1-3, all the stock variant records select) carry the RDX's Route-A target, P rule and D",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "inferred: the RDX's (the build's x0.4812 on the same code; the 0x18F word per deg/s is the RDX car's 7.8)",
+    "load": "spec: front-axle mass / R0^2 through the identity A table",
+    "trims": "inferred: the RDX's (same firmware law and loop)",
+    "cmd_delay": "default", "model_delay": "default: the Clarity's schedule",
+    "rack": "spec: Honda's 2.97 turns and 14.35:1 through the identity A table (constant-ratio rack), R0 +-2.5%",
+  },
 }
 
 
@@ -616,6 +659,7 @@ REQUIRED_PTM_RWD = {
   "crv_tla_a220": "2c992997",
   "rdx_tjb_a220": "3dd8b91b",
   "ridgeline_t6z_a110": "e7e2d909",
+  "odyssey_thr_a020": "b89d20f0",
 }
 
 
