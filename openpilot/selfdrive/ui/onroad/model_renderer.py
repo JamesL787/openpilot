@@ -207,7 +207,8 @@ class ModelRenderer(ModelGeometry, Widget):
     # Draw elements
     self._draw_lane_lines()
     self._draw_path(sm)
-    self.blendful.draw(self._rect)
+    if blendful := getattr(self, 'blendful', None):
+      blendful.draw(self._rect)
 
     if render_lead_indicator and radar_state:
       self._draw_lead_indicator()
@@ -271,7 +272,8 @@ class ModelRenderer(ModelGeometry, Widget):
       self._path_edges = []
 
     self._update_experimental_gradient()
-    self.blendful.update(self, max_idx, max_distance)
+    if blendful := getattr(self, 'blendful', None):
+      blendful.update(self, max_idx, max_distance)
 
   def _update_experimental_gradient(self):
     """Pre-calculate experimental mode gradient colors"""
