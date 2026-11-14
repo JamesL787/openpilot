@@ -377,8 +377,9 @@ def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
 
 @pytest.mark.parametrize("v, delay", [(3.5, 0.15), (7.0, 0.08), (12.0, 0.05), (16.0, 0.075), (20.0, 0.10), (30.0, 0.30)])
 def test_clarity_tells_the_model_its_road_measured_schedule(v, delay):
-  CP = _params(CLARITY_MODIFIED_FW)
-  assert honda_eps.scheduled_lateral_delay(honda_eps.lateral_delay_schedule(CP), v) == pytest.approx(delay)
+  schedule = honda_eps.lateral_delay_schedule(_params(CLARITY_MODIFIED_FW))
+  assert schedule is not None
+  assert honda_eps.scheduled_lateral_delay(schedule, v) == pytest.approx(delay)
 
 
 def test_every_vehicle_tells_the_model_the_measured_schedule():

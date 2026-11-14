@@ -711,9 +711,9 @@ class RackMapFit:
 def rack_samples(t, v, a, rate, angle, yaw_left, roll):
   """fit_rack_map's frame selection: (row indices at 20 Hz, lagged angle, curvature)."""
   k = smooth(yaw_left, 10) / np.maximum(v, 0.1)
-  ang = np.interp(t - np.interp(v, *WHEEL_TO_YAW_LAG), t, angle)
-  m = np.isfinite(k) & (v > 2.5) & (np.abs(a) < 2) & (np.abs(rate) < 120) & (np.abs(ang) >= 3) & (np.sign(k) == np.sign(ang))
-  return np.flatnonzero(m)[::5], ang, k
+  lagged = np.interp(t - np.interp(v, *WHEEL_TO_YAW_LAG), t, angle)
+  m = np.isfinite(k) & (v > 2.5) & (np.abs(a) < 2) & (np.abs(rate) < 120) & (np.abs(lagged) >= 3) & (np.sign(k) == np.sign(lagged))
+  return np.flatnonzero(m)[::5], lagged, k
 
 
 class RackMapLearner(Part):
@@ -738,15 +738,15 @@ class RackMapLearner(Part):
     if not np.isfinite(c['yawc']).any() or len(t) < 200:
       return 'thin'
     counts = smooth(np.nan_to_num(c['yawc'], nan=0.0), 10)
-    idx, ang, _ = rack_samples(t, v, c['a'], c['rate'], c['ang'] - c['off'], np.where(np.isfinite(c['yawc']), -counts, np.nan), c['roll'])
+    idx, lagged, _ = rack_samples(t, v, c['a'], c['rate'], c['ang'] - c['off'], np.where(np.isfinite(c['yawc']), -counts, np.nan), c['roll'])
     idx = idx[(c['eps_ok'][idx] > 0.5) & (t[idx] - t[0] > 0.2)]
     if len(idx) == 0:
       return 'thin'
-    bi = np.searchsorted(RACK_EDGES, np.abs(ang[idx]), side='right') - 1
+    bi = np.searchsorted(RACK_EDGES, np.abs(lagged[idx]), side='right') - 1
     vi = np.searchsorted(RACK_VB, v[idx], side='right') - 1
     keep = (bi >= 0) & (bi < len(RACK_EDGES) - 1) & (vi >= 0) & (vi < len(RACK_VB) - 1)
-    cell = ((bi * (len(RACK_VB) - 1) + vi) * 2 + (ang[idx] < 0))[keep]
-    rows = np.c_[v[idx], ang[idx], counts[idx], c['roll'][idx], np.full(len(idx), half_of(index))][keep]
+    cell = ((bi * (len(RACK_VB) - 1) + vi) * 2 + (lagged[idx] < 0))[keep]
+    rows = np.c_[v[idx], lagged[idx], counts[idx], c['roll'][idx], np.full(len(idx), half_of(index))][keep]
     for ci, row in zip(cell, rows, strict=True):
       n = self.seen[ci]
       if n < RACK_CELL_CAP:
@@ -788,8 +788,8 @@ class RackMapLearner(Part):
       return False, progress, 'no slip factor'
     if abs(sfa - sfb) > RACK_SF_TOL:
       return False, 0.99, f'halves disagree on the slip factor ({sfa} / {sfb})'
-    upto = min(bpa[-1], bpb[-1], 150.0)
-    worst = max(abs(np.interp(x, bpa, va) / np.interp(x, bpb, vb) - 1) for x in bp if x <= upto)
+    up_to = min(bpa[-1], bpb[-1], 150.0)
+    worst = max(abs(np.interp(x, bpa, va) / np.interp(x, bpb, vb) - 1) for x in bp if x <= up_to)
     if worst > RACK_SPLIT_TOL:
       return False, 0.99, f'halves disagree by {worst:.3f}'
     if np.any(np.diff(val) > 1e-9) or not 8.0 < val[0] < 25.0:
@@ -827,26 +827,26 @@ class NearCentreGain(Part):
 
   def __init__(self, rack_map):
     self.rack_map = rack_map
-    self.S = np.zeros((len(CENTRE_ANGLES), len(CENTRE_BANDS), 4))  # n, and centred x*x, x*u1, x*u2
+    self.S = np.zeros((len(CENTRE_ANGLES), len(CENTRE_BANDS), 4))  # n, and centered x*x, x*u1, x*u2
 
   def add_chunk(self, c):
     t, v = c['t'], c['v']
     if not np.isfinite(c['yawc']).all() or len(t) < 200:
       return 'thin'
     counts = smooth(c['yawc'], 10)
-    ang = np.interp(t - np.interp(v, *WHEEL_TO_YAW_LAG), t, c['ang'] - np.median(c['off']))
+    lagged = np.interp(t - np.interp(v, *WHEEL_TO_YAW_LAG), t, c['ang'] - np.median(c['off']))
     ok = (np.abs(c['a']) < 2) & (np.abs(c['rate']) < CENTRE_MAX_RATE) & (t - t[0] > 0.2) & (t[-1] - t > 0.1)
     window = ((t - t[0]) // CENTRE_WINDOW_S).astype(int)
     lo, hi = RIGHT_LOSS_BP
     for ai, (a0, a1) in enumerate(CENTRE_ANGLES):
       for bi, (v0, v1) in enumerate(CENTRE_BANDS):
-        idx = np.flatnonzero(ok & (np.abs(ang) >= a0) & (np.abs(ang) < a1) & (v >= v0) & (v < v1))[::5]
+        idx = np.flatnonzero(ok & (np.abs(lagged) >= a0) & (np.abs(lagged) < a1) & (v >= v0) & (v < v1))[::5]
         if len(idx) < 20:
           continue
-        x = np.array([-self.rack_map.curvature_from_angle(float(a), float(s), float(r)) for a, s, r in zip(ang[idx], v[idx], c['roll'][idx], strict=True)])
+        x = np.array([-self.rack_map.curvature_from_angle(float(a), float(s), float(r)) for a, s, r in zip(lagged[idx], v[idx], c['roll'][idx], strict=True)])
         u1 = -np.radians(counts[idx]) / v[idx]
         u2 = -np.radians(np.clip((counts[idx] - lo) / (hi - lo), 0.0, 1.0)) / v[idx]
-        group = window[idx] if ai == 0 else 2 * window[idx] + (ang[idx] > 0)  # off centre, each side has its own offset
+        group = window[idx] if ai == 0 else 2 * window[idx] + (lagged[idx] > 0)  # off centre, each side has its own offset
         for w in np.unique(group):
           m = group == w
           if m.sum() >= 20:

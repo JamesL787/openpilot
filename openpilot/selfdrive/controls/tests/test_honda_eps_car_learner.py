@@ -33,8 +33,10 @@ TRUE_LOAD = eps_ff.ColumnLoadModel(k0=-11.0, k1=-0.12, c=-6.0, friction=-360.0, 
 N = int(L.CHUNK_S / L.DT)
 
 
-def chunk(t0=0.0, n=N, **fields):
-  c = {k: np.zeros(n) for k in L.CHUNK_FIELDS}
+def chunk(t0=0.0, n=N, angle=None, **fields):
+  c: dict[str, object] = {k: np.zeros(n) for k in L.CHUNK_FIELDS}
+  if angle is not None:
+    fields['ang'] = angle
   c.update(t=t0 + np.arange(n) * L.DT, v=np.full(n, 12.0), lat=np.ones(n), eps_ok=np.ones(n), cmd_delay=np.full(n, 0.12), model=None, gps=None)
   c.update(fields)
   return c
@@ -46,12 +48,12 @@ def driven_chunk(i, v, amplitude, load=TRUE_LOAD):
   t = np.arange(N) * L.DT
   target = amplitude * (np.sin(2 * np.pi * t / rng.uniform(5, 9)) + 0.4 * np.sin(2 * np.pi * t / rng.uniform(1.2, 2.5) + 1.0))
   plant = Plant(dataclasses.replace(CAL, load=load), L.OL_J, 0.0)
-  ang, e4 = np.zeros(N), np.zeros(N)
+  angle, e4 = np.zeros(N), np.zeros(N)
   th = 0.0
   for k in range(N):
     e4[k] = np.clip(np.round(-120.0 * (target[k] - th)), -3800, 3800)  # positive 0xE4 turns the wheel right
-    th = ang[k] = plant.frame(e4[k - L.OL_CMD_LAG] if k >= L.OL_CMD_LAG else 0.0, v, 0.0)
-  return chunk(i * 100.0, v=np.full(N, v), ang=ang, rate=np.gradient(ang, L.DT), e4=e4)
+    th = angle[k] = plant.frame(e4[k - L.OL_CMD_LAG] if k >= L.OL_CMD_LAG else 0.0, v, 0.0)
+  return chunk(i * 100.0, v=np.full(N, v), angle=angle, rate=np.gradient(angle, L.DT), e4=e4)
 
 
 @pytest.fixture(scope="module")
@@ -91,12 +93,12 @@ def synthetic_load(truth, chunks=24, tq_scale=500.0, tq_offset=90.0, noise=40.0)
   for i in range(chunks):
     t = np.arange(N) * L.DT
     v = np.full(N, (4.0, 7.0, 12.0, 20.0)[i % 4])
-    ang = (60.0 if i % 4 < 2 else 12.0) * np.sin(2 * np.pi * t / rng.uniform(4, 9)) + 3 * np.sin(2 * np.pi * t / 1.7)
-    rate = np.gradient(ang, L.DT)
+    angle = (60.0 if i % 4 < 2 else 12.0) * np.sin(2 * np.pi * t / rng.uniform(4, 9)) + 3 * np.sin(2 * np.pi * t / 1.7)
+    rate = np.gradient(angle, L.DT)
     tq = tq_offset + tq_scale * np.sin(2 * np.pi * t / rng.uniform(6, 15) + rng.uniform(0, 6))
     roll = np.full(N, rng.uniform(-0.03, 0.03))
-    c = chunk(i * 100.0, v=v, ang=ang, rate=rate, tq=tq, roll=roll)
-    X = L.load_regressors(ang, L.smooth(rate, 5), L.smooth(np.gradient(L.smooth(rate, 5), t), 5), v, roll, tq)
+    c = chunk(i * 100.0, v=v, angle=angle, rate=rate, tq=tq, roll=roll)
+    X = L.load_regressors(angle, L.smooth(rate, 5), L.smooth(np.gradient(L.smooth(rate, 5), t), 5), v, roll, tq)
     assert ld.add_chunk(c, X @ truth + rng.normal(0, noise, N), i) == 'accepted'
   return ld
 
@@ -121,11 +123,11 @@ def test_the_load_fit_takes_the_drivers_torque_out():
 def test_a_frame_in_the_override_fade_or_past_the_torque_cap_is_left_out():
   ld = L.ColumnLoadLearner(CAL, fade_up_s=0.5)
   t = np.arange(N) * L.DT
-  ang = 30 * np.sin(2 * np.pi * t / 6)
+  angle = 30 * np.sin(2 * np.pi * t / 6)
   pressed, tq = np.zeros(N), np.full(N, 100.0)
   pressed[1000:1100] = 1
   tq[3000:3200] = 1500.0
-  c = chunk(ang=ang, rate=np.gradient(ang, L.DT), pressed=pressed, tq=tq)
+  c = chunk(angle=angle, rate=np.gradient(angle, L.DT), pressed=pressed, tq=tq)
   assert ld.add_chunk(c, np.zeros(N), 0) == 'accepted'
   fade = int((0.5 + L.LOAD_FADE_MARGIN_S) / L.DT)
   assert ld.n[0, 0].sum() == pytest.approx(N - (100 + fade) - 200 - 6 - (L.LOAD_SHIFTS + 2), abs=2)
@@ -239,12 +241,12 @@ def rack_chunks(decode, centre_gain=1.0, chunks=24):
     t = np.arange(N) * L.DT
     v = np.full(N, (3.5, 6.0, 8.0, 10.5, 13.5, 17.0)[i % 6])
     amplitude = (140.0, 60.0, 25.0, 10.0, 2.5, 8.0)[(i // 6 + i) % 6]
-    ang = amplitude * np.sin(2 * np.pi * t / rng.uniform(12, 20)) + (8.0 if amplitude == 8.0 else 0.0) * np.sign(np.sin(2 * np.pi * t / 60))
-    lagged = np.interp(t - np.interp(v, *L.WHEEL_TO_YAW_LAG), t, ang)
+    angle = amplitude * np.sin(2 * np.pi * t / rng.uniform(12, 20)) + (8.0 if amplitude == 8.0 else 0.0) * np.sign(np.sin(2 * np.pi * t / 60))
+    lagged = np.interp(t - np.interp(v, *L.WHEEL_TO_YAW_LAG), t, angle)
     k = np.array([-rack_map.curvature_from_angle(float(a), float(s), 0.0) for a, s in zip(lagged, v, strict=True)])
     k3 = -rack_map.curvature_from_angle(3.0, float(v[0]), 0.0)
     k = np.where(np.abs(lagged) < 3.0, centre_gain * k, k - np.sign(lagged) * (1.0 - centre_gain) * k3)  # a centre dead zone
-    out.append(chunk(i * 100.0, v=v, ang=ang, rate=np.gradient(ang, L.DT), yawc=L.yaw_counts(k * v, *decode)))
+    out.append(chunk(i * 100.0, v=v, angle=angle, rate=np.gradient(angle, L.DT), yawc=L.yaw_counts(k * v, *decode)))
   return out
 
 
@@ -332,11 +334,11 @@ def test_the_torque_sensor_model_finds_what_the_eps_puts_on_the_bar():
   rng = np.random.default_rng(0)
   for _ in range(3):
     t = np.arange(N) * L.DT
-    ang = 20 * np.sin(2 * np.pi * t / 5) + 4 * np.sin(2 * np.pi * t / 1.3)
-    rate = np.gradient(ang, L.DT)
+    angle = 20 * np.sin(2 * np.pi * t / 5) + 4 * np.sin(2 * np.pi * t / 1.3)
+    rate = np.gradient(angle, L.DT)
     y = 600 * np.sin(2 * np.pi * t / 5 + 0.4) + rng.normal(0, 30, N)
     acc = L.smooth(np.gradient(L.smooth(rate, 5), t), 5)
-    model.add_chunk(chunk(ang=ang, rate=rate, tq=90 + 0.12 * y - 0.6 * acc + rng.normal(0, 20, N)), y)
+    model.add_chunk(chunk(angle=angle, rate=rate, tq=90 + 0.12 * y - 0.6 * acc + rng.normal(0, 20, N)), y)
   out = model.result()
   assert out['offset'] == pytest.approx(90, abs=3) and out['firmware_output'] == pytest.approx(0.12, abs=0.01)
   assert out['thdd'] == pytest.approx(-0.6, abs=0.05) and out['rms_after'] < 0.5 * out['rms_counts']
