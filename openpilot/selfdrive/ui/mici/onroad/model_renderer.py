@@ -197,7 +197,8 @@ class ModelRenderer(ModelGeometry, Widget):
     if self._visual_status() != UIStatus.DISENGAGED:
       self._draw_lane_lines()
       self._draw_path(sm)
-      self.blendful.draw(self._rect)
+      if blendful := getattr(self, 'blendful', None):
+        blendful.draw(self._rect)
 
     if lead_ready and getattr(self, '_paint', True):
       self._draw_lead_indicator()
@@ -331,7 +332,8 @@ class ModelRenderer(ModelGeometry, Widget):
     )
 
     self._update_experimental_gradient()
-    self.blendful.update(self, max_idx)
+    if blendful := getattr(self, 'blendful', None):
+      blendful.update(self, max_idx)
 
   def _update_experimental_gradient(self):
     """Pre-calculate experimental mode gradient colors"""

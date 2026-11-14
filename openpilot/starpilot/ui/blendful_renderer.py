@@ -27,7 +27,6 @@ class BlendfulRenderer:
     self._rect_relative = rect_relative
     self._center_points = np.empty((0, 2), dtype=np.float32)
     self._trust = 0.0
-    self._font = gui_app.font(FontWeight.BOLD)
     self._pull_display = FirstOrderFilter(0.0, 0.5, DT_MDL)
     self._trust_display = FirstOrderFilter(0.0, 0.5, DT_MDL)
     self._alpha = FirstOrderFilter(0.0, 0.3, DT_MDL)
@@ -72,14 +71,15 @@ class BlendfulRenderer:
 
   def _draw_readout(self, rect: rl.Rectangle) -> None:
     pull, trust = self._pull_display.x, self._trust_display.x
+    font = gui_app.font(FontWeight.BOLD)
     w, h = 190, 76
     x, y = rect.x + (rect.width - w) / 2, rect.y + 10
     cx, cy = x + w / 2, y + 30
     rl.draw_rectangle_rounded(rl.Rectangle(x, y, w, h), 0.5, 12, self._color((0, 0, 0), 170))
 
     text = f"{abs(pull) * 100:.0f}"
-    text_w = measure_text_cached(self._font, text, 44, 0).x
-    rl.draw_text_ex(self._font, text, rl.Vector2(cx - text_w / 2, cy - 24), 44, 0, self._color((255, 255, 255), 255))
+    text_w = measure_text_cached(font, text, 44, 0).x
+    rl.draw_text_ex(font, text, rl.Vector2(cx - text_w / 2, cy - 24), 44, 0, self._color((255, 255, 255), 255))
 
     active = self._color(BLENDFUL_COLOR, np.clip(abs(pull) / 0.1, 0.0, 1.0) * 255)
     idle = self._color((255, 255, 255), 40)
