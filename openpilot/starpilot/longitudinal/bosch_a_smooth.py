@@ -14,6 +14,13 @@ a different planner. Here the evidence is static and unit tests only.
 from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.longitudinal.bosch_a_toggles import vehicle_supported
 from openpilot.starpilot.longitudinal.bosch_a_turnoff import FastLetoff
+from openpilot.starpilot.longitudinal.bosch_a_ghost import GhostLetoff
+
+# Ghost let-off (bosch_a_ghost.py, G4 with the 1.5 s no-gas hold, bob-unify-car 528e3ec761): replaces FastLetoff here and
+# the release coast (bosch_a_release_coast.py, bypassed in the planner). Radar on or off. Replay evidence, open loop, on
+# this bridge base (2026-11-14, main 1141 / second 99 / event / pb pools): score.py harder 0, real_softer 0,
+# phantom_harder 0; 0 rows brake harder than base; cc 15:25 brake gone ~0.5 s sooner; 84 s7 / a2 s42 unchanged. Not driven.
+GHOST_ARM = True
 
 BRAKE_RELEASE_JERK = 2.5  # m/s^3
 BRAKE_RELEASE_DWELL_TICKS = 2  # 0.1 s at DT_MDL
@@ -50,18 +57,34 @@ class BoschASmooth:
     self.dt = dt
     self.rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
     self.fast_letoff = FastLetoff(dt)  # turn-off let-off (route cc 15:25); radar on only; bosch_a_turnoff.py
+    self.ghost = GhostLetoff(dt)  # ghost let-off; radar on or off (camera-only leads too); bosch_a_ghost.py
 
   def action_t(self, actuator_delay: float) -> float:
     return planner_action_t(actuator_delay, self.enabled)
 
-  def step(self, prev: float, target: float, reset: bool, lead_one=None, raw_y: dict[int, float] | None = None) -> float:
+  def step(self, prev: float, target: float, reset: bool, lead_one=None, raw_y: dict[int, float] | None = None,
+           v_ego: float = 0.0, model_lead0=None, skip: bool = False) -> float:
     """Last shaper before the final clip. `prev` is last cycle's published target. `reset` covers disengaged and standstill.
-    `lead_one` and `raw_y` feed the turn-off let-off; a caller that passes no lead_one keeps the base let-off."""
+    `lead_one`, `raw_y`, `v_ego`, `model_lead0` and `skip` (lane change, blinker or gas pressed) feed the let-off;
+    a caller that passes no lead_one keeps the base let-off."""
     if not self.enabled or reset:
       self.rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
       self.fast_letoff.reset()
+      self.ghost.reset()
       return float(target)
-    if self.radar and lead_one is not None:
+    if GHOST_ARM and lead_one is not None:
+      jerk, floor = self.ghost.update(lead_one, float(prev), float(v_ego), raw_y or {}, model_lead0, skip=skip)
+      if self.ghost.no_gas:
+        target = min(float(target), 0.0)
+      base = brake_release_limited_target(prev, target, self.dt)
+      base, self.rise_ticks = brake_release_dwell_target(prev, base, self.rise_ticks)
+      if jerk is None or prev >= 0.0:
+        return base
+      fast = min(float(target), max(prev + BRAKE_RELEASE_JERK * self.dt, min(prev + jerk * self.dt, floor)))
+      if fast > base:
+        self.rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
+      return float(max(base, fast))
+    if not GHOST_ARM and self.radar and lead_one is not None:
       fast_jerk = self.fast_letoff.update(lead_one, float(prev), raw_y or {})
       if self.fast_letoff.no_gas:
         target = min(float(target), 0.0)
