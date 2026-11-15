@@ -32,7 +32,7 @@ from opendbc.car.hyundai.ioniq6_media import Ioniq6MediaButtons
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
-from openpilot.selfdrive.car.cruise import VCruiseHelper, SlcPendingConfirmation, engage_initial_speed, engage_keeps_speed
+from openpilot.selfdrive.car.cruise import VCruiseHelper, SlcPendingConfirmation, engage_initial_speed, engage_keeps_speed, read_engage_66
 from openpilot.starpilot.longitudinal.planner_selection import read_selection as read_planner_selection
 from openpilot.starpilot.speed_limits import physical_actions as slc_physical
 from openpilot.starpilot.aol.intent import AolProcessFaultContext, independent_axis_requested, read_settings
@@ -468,6 +468,7 @@ class Car:
 
     self.experimental_mode = self.params.get_bool("ExperimentalMode")
     self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
+    self.engage_66 = read_engage_66(self.params)
     # Latched for the drive, the same way plannerd reads it.
     self.stock_planner = not read_planner_selection(self.params).starpilot
 
@@ -877,7 +878,8 @@ class Car:
       # Initialization owns this edge; evaluate commands against its final speed.
       adopted = self.v_cruise_helper.initialize_v_cruise(
         self.CS_prev, self.experimental_mode, resume=self.vehicle_startup.consume_cruise_resume(),
-        initial_speed=engage_initial_speed(self.initial_cruise_speed, self.experimental_mode, getattr(self, 'stock_planner', False)),
+        initial_speed=engage_initial_speed(self.initial_cruise_speed, self.experimental_mode, getattr(self, 'stock_planner', False),
+                                           getattr(self, 'engage_66', True)),
         keep_speed=engage_keeps_speed(self.experimental_mode, getattr(self, 'stock_planner', False)),
         slc_target_mps=float(initial.presentationAdjustedLimit) if initial is not None else None, is_metric=self.is_metric)
       if adopted:
@@ -1901,6 +1903,7 @@ class Car:
       self.is_metric = self.params.get_bool("IsMetric")
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
+      self.engage_66 = read_engage_66(self.params)
       if self.aol_card_intent is not None:
         self.aol_card_intent.settings = read_settings(self.params)
       now = time.monotonic()
