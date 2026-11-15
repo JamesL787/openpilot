@@ -134,3 +134,15 @@ class TestScalarDriveClip(unittest.TestCase):
 
 if __name__ == '__main__':
   unittest.main()
+
+
+def test_crv_eps_trial_cap_selection_and_clipping():
+  assert drive.lateral_accel_limit('HONDA_CRV_5G', True, False) == 3.0
+  assert drive.lateral_accel_limit('HONDA_CRV_5G', False, True) == 3.0
+  assert drive.lateral_accel_limit('HONDA_ACCORD', True, True) == 3.0
+  cap = drive.lateral_accel_limit('HONDA_CRV_5G', True, True)
+  for sign in (-1, 1):
+    requested = sign * 5.0 / 20.0**2
+    command, limited = drive.clip_curvature(20.0, requested, requested, 0.0, max_lateral_accel=cap)
+    assert limited
+    assert math.isclose(command * 20.0**2, sign * 4.25)
