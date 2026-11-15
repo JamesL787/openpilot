@@ -344,8 +344,12 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
   rack=CRV_TLA_A040_RACK,
 )
 
-# Acura RDX 3G 39990-TJB-A220, the Route-A PTM, Trk1641 build with the runtime ROM CRC fix (RDX-PTM-101526-RomCRC.rwd,
-# RWD sha256 3dd8b91b = KB TJB_A220_PTM_ROUTE_A_20261014/BUILD_Trk1641). Not the Clarity's controller family: TJB runs
+# Acura RDX 3G 39990-TJB-A220, the Route-A PTM: the owner's car build with the A030 variant keys added
+# (RDX-PTM-102026-RomCRC-FadeMatch-VariantKeys.rwd, RWD sha256 68a6fdb4; KB TJB_VARIANT_KEY_CHECK_20261110/BUILD). Against
+# the Trk1641 runtime-ROM-CRC build this law was read from (RDX-PTM-101526-RomCRC.rwd, RWD 3dd8b91b, KB
+# TJB_A220_PTM_ROUTE_A_20261014/BUILD_Trk1641) it changes only the override and helper fade tables (rows 0-3, primary
+# and shadow), the runtime ROM CRC and two identity records (keys TJBA1 / TJBA2, so an A030-coded EPS finds its
+# record); no table below moves. Not the Clarity's controller family: TJB runs
 # THR (Odyssey) code shifted +0x9C, with its own units, and the build ports the Clarity's tables into them (Route A).
 # In the Clarity's units the law is the one honda_eps_firmware_ff inverts:
 # - key: TJB takes a = E4/4 (|a| <= 1024, E4 4096); the Clarity's key is q = trunc(E4 * 56756/32768 / 4) = 1.732 a, so
@@ -650,7 +654,7 @@ REQUIRED_PTM_RWD = {
   "insight_txm_a040": "7ba37432",
   "crv_tla_a040": "2e6a8802",
   "crv_tla_a220": "2c992997",
-  "rdx_tjb_a220": "3dd8b91b",
+  "rdx_tjb_a220": "68a6fdb4",
   "ridgeline_t6z_a110": "e7e2d909",
   "odyssey_thr_a020": "b89d20f0",
 }
