@@ -147,6 +147,29 @@ def source_snapshot(root=ROOT):
             'pytest_progress.py', 'worker_diagnostics.py', 'lifecycle_shards.py', 'lifecycle_build_outputs.json')}}
 
 
+# Tracked files that `scons` rewrites from tracked sources (cereal/SConscript). Every shard builds before it
+# tests, so a shard records the CI host's codegen here; the aggregate checkout has not built and keeps the
+# committed copies. The shards must still agree with each other on these, and their generators are inputs.
+BUILD_REGENERATED_PREFIXES = ('openpilot/cereal/gen/',)
+BUILD_REGENERATED_FILES = frozenset({'openpilot/cereal/services.h'})
+
+
+def build_regenerated(name):
+  return name in BUILD_REGENERATED_FILES or name.startswith(BUILD_REGENERATED_PREFIXES)
+
+
+def same_committed_source(built, checkout):
+  """A built shard and the unbuilt aggregate checkout pin the same commit, tree, recipes and source files."""
+  def committed(inputs):
+    inputs = dict(inputs)
+    if 'tracked_inputs' in inputs:
+      inputs['tracked_inputs'] = {name: None if build_regenerated(name) else record for name, record in inputs['tracked_inputs'].items()}
+    if 'changes' in inputs:
+      inputs['changes'] = {name: record for name, record in inputs['changes'].items() if not build_regenerated(name)}
+    return inputs
+  return committed(built['inputs']) == committed(checkout['inputs'])
+
+
 REAL_XAPK = 'openpilot/.cache/starport/android-auto-17-6-663454-release.xapk'
 
 
@@ -370,6 +393,7 @@ def aggregate(directory, count, root=ROOT):
   if len(paths) != count:
     raise ValueError('Missing or duplicate custom pytest shard jobs')
   expected_source = source_snapshot(root)
+  first_build = None
   full = None
   seen = []
   audited_skips = []
@@ -385,7 +409,8 @@ def aggregate(directory, count, root=ROOT):
     before, after = doc['source_before'], doc['source_after']
     if before != after or before['runners'] != expected_source['runners']:
       raise ValueError('Source or runner changed during execution')
-    if not same_build_inputs(before['build'], expected_source['build']):
+    first_build = first_build or before['build']
+    if not same_build_inputs(before['build'], first_build) or not same_committed_source(before['build'], expected_source['build']):
       raise ValueError('Custom pytest source HEAD, input closure or build recipe mismatch')
     outcome_path = path.with_name('outcomes.json')
     junit = path.parent / 'diagnostics/pytest.xml'
