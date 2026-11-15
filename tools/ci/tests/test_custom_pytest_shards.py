@@ -152,27 +152,38 @@ def test_changed_source_in_all_jobs_denied_against_checkout(jobs):
 
 
 @pytest.mark.parametrize('mutation', [None, 'revision', 'tree', 'source', 'source_mode', 'recipe',
-                                     'extra_input', 'missing_output', 'native_bytes', 'native_mode'])
+                                     'extra_input', 'missing_output', 'native_bytes', 'native_mode',
+                                     'cereal_codegen', 'cereal_codegen_one_shard', 'services_h', 'source_change'])
 def test_real_build_comparison_keeps_checkout_and_native_guards(jobs, monkeypatch, mutation):
   from tools.ci.lifecycle_shards import same_build_inputs
   directory, paths, catalog = jobs
   name = 'openpilot/selfdrive/pandad/tests/test_panda_faults'
   recipe = 'openpilot/selfdrive/pandad/SConscript'
+  codegen = 'openpilot/cereal/gen/cpp/log.capnp.h'
+  services = 'openpilot/cereal/services.h'
   inventory_path = Path(shards.__file__).with_name('lifecycle_build_outputs.json')
   inventory = json.loads(inventory_path.read_text())
   record = {'sha256': 'a' * 64, 'mode': 0o644}
   expected = source()
   expected['build'] = {
-    'inputs': {'revision': 'commit', 'tree': 'tree', 'tracked_inputs': {name + '.cc': copy.deepcopy(record), recipe: copy.deepcopy(record)},
+    'inputs': {'revision': 'commit', 'tree': 'tree', 'tracked_inputs': {name + '.cc': copy.deepcopy(record), recipe: copy.deepcopy(record),
+                                                                    codegen: copy.deepcopy(record), services: copy.deepcopy(record)},
                'changes': {}, 'untracked': {}, 'recipes': {recipe: copy.deepcopy(record)},
                'output_inventory_sha256': shards.checksum(inventory_path.read_bytes())},
     'declared_outputs': {path: copy.deepcopy(record) if row['required_tracked'] else None for path, row in inventory.items()},
   }
   monkeypatch.setattr(shards, 'source_snapshot', lambda root=shards.ROOT: copy.deepcopy(expected))
   monkeypatch.setattr(shards, 'same_build_inputs', same_build_inputs)
-  for path in paths:
+  for index, path in enumerate(paths):
     built = copy.deepcopy(expected)
     built['build']['declared_outputs'][name] = {'sha256': 'b' * 64, 'mode': 0o755}
+    regenerated = {'cereal_codegen': codegen, 'services_h': services, 'source_change': name + '.cc'}.get(mutation)
+    if mutation == 'cereal_codegen_one_shard' and index == 0:
+      regenerated = codegen
+    if regenerated:
+      # scons rewrote a tracked file after checkout: the shard sees it changed, the aggregate checkout does not
+      built['build']['inputs']['tracked_inputs'][regenerated] = {'sha256': 'd' * 64, 'mode': 0o644}
+      built['build']['inputs']['changes'][regenerated] = {'sha256': 'd' * 64, 'mode': 0o644}
     if mutation in ('revision', 'tree'):
       built['build']['inputs'][mutation] = 'different'
     elif mutation == 'source':
@@ -191,7 +202,7 @@ def test_real_build_comparison_keeps_checkout_and_native_guards(jobs, monkeypatc
     elif mutation == 'native_mode':
       after['build']['declared_outputs'][name]['mode'] = 0o644
     rewrite(path, 'receipt.json', lambda d, before=built, after=after: d.update(source_before=before, source_after=after))
-  if mutation is None:
+  if mutation in (None, 'cereal_codegen', 'services_h'):
     assert shards.aggregate(directory, 2)['cases_passed'] == len(catalog)
   else:
     with pytest.raises(ValueError):
