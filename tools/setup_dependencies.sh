@@ -71,7 +71,8 @@ function install_linux_deps() {
     exit 1
   fi
 
-  if [[ -d "/etc/udev/rules.d/" ]]; then
+  # USB permissions are for developer machines, not build runners.
+  if [[ "${CI:-}" != "1" && "${CI:-}" != "true" && -d "/etc/udev/rules.d/" ]]; then
     local udev_rules
     udev_rules=$(cat <<-EOF
 	# Panda Jungle devices

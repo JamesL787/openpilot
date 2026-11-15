@@ -178,16 +178,18 @@ function op_before_cmd() {
 }
 
 function op_setup() {
-  echo "Installing op system-wide..."
-  OP_SH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )/op.sh"
-  CMD=$(cat <<EOF
+  if [[ "${CI:-}" != "1" && "${CI:-}" != "true" ]]; then
+    echo "Installing op system-wide..."
+    OP_SH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )/op.sh"
+    CMD=$(cat <<EOF
 alias op='$OP_SH "\$@"'
 _op_completions() { [ "\$COMP_CWORD" -eq 1 ] && COMPREPLY=(\$(compgen -W "\$(awk '/shift 1; op_/{print \$1}' $OP_SH)" -- "\${COMP_WORDS[1]}")); }
 [ -n "\$BASH_VERSION" ] && complete -F _op_completions -o default op
 EOF
 )
-  grep -q "alias op=" "$RC_FILE" 2>/dev/null || printf '\n%s\n' "$CMD" >> "$RC_FILE"
-  echo -e " ↳ [${GREEN}✔${NC}] op installed successfully. Open a new shell to use it."
+    grep -q "alias op=" "$RC_FILE" 2>/dev/null || printf '\n%s\n' "$CMD" >> "$RC_FILE"
+    echo -e " ↳ [${GREEN}✔${NC}] op installed successfully. Open a new shell to use it."
+  fi
 
   op_get_openpilot_dir
   cd "$OPENPILOT_ROOT"
