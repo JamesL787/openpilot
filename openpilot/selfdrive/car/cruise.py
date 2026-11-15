@@ -51,11 +51,22 @@ def validated_initial_cruise_speed(value: object) -> int:
 
 # Peter's call (2026-10-22): with the stock planner in Experimental Mode, a fresh engage sets 66 mph,
 # or the current speed if faster. Chill and the StarPilot planner keep the saved initial speed.
+# ENGAGE_66_KEY (on by default) turns it off, and Experimental then uses the saved initial speed too.
 E2E_ENGAGE_SPEED_KPH = int(round(66 * CV.MPH_TO_KPH))
+ENGAGE_66_KEY = "ExperimentalEngage66Mph"
 
 
-def engage_initial_speed(saved: object, experimental_mode: bool, stock_planner: bool) -> object:
-  return E2E_ENGAGE_SPEED_KPH if experimental_mode and stock_planner else saved
+def read_engage_66(params) -> bool:
+  """The setting, on when unset, unreadable or unknown to a params library built before the key existed."""
+  try:
+    value = params.get(ENGAGE_66_KEY, return_default=True)
+  except Exception:
+    return True
+  return value is not False
+
+
+def engage_initial_speed(saved: object, experimental_mode: bool, stock_planner: bool, engage_66: bool = True) -> object:
+  return E2E_ENGAGE_SPEED_KPH if engage_66 and experimental_mode and stock_planner else saved
 
 
 # Peter's call (2026-10-22): with the stock planner in Chill, a fresh engage keeps the current speed even

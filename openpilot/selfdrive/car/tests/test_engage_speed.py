@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
 from openpilot.common.constants import CV
-from openpilot.selfdrive.car.cruise import E2E_ENGAGE_SPEED_KPH, VCruiseHelper, engage_initial_speed, engage_keeps_speed
+from openpilot.common.params import Params, UnknownKeyName
+from openpilot.selfdrive.car.cruise import (E2E_ENGAGE_SPEED_KPH, ENGAGE_66_KEY, VCruiseHelper, engage_initial_speed,
+                                            engage_keeps_speed, read_engage_66)
 from opendbc.car.structs import car
 
 
@@ -37,3 +39,25 @@ def test_chill_engage_below_25_mph_keeps_current_speed():
   assert round(_engage(13, 40)) == 25  # without it, the 40 kph floor applies
   assert round(_engage(2, 40, keep_speed=True)) == 25  # near standstill falls back to the saved speed
 
+
+
+def test_engage_66_setting_off_uses_the_saved_speed():
+  assert engage_initial_speed(40, True, True, engage_66=False) == 40
+  assert engage_initial_speed(40, True, True, engage_66=True) == E2E_ENGAGE_SPEED_KPH
+  assert round(_engage(30, engage_initial_speed(40, True, True, engage_66=False))) == 30
+
+
+def test_read_engage_66_default_on_and_saved_off(tmp_path):
+  params = Params(str(tmp_path))
+  assert read_engage_66(params)  # unset: on, matching the params_keys.h default
+  params.put_bool(ENGAGE_66_KEY, False, block=True)
+  assert not read_engage_66(params)
+  params.put_bool(ENGAGE_66_KEY, True, block=True)
+  assert read_engage_66(params)
+
+
+def test_read_engage_66_stays_on_with_a_params_library_that_lacks_the_key():
+  class OldParams:
+    def get(self, key, return_default=False):
+      raise UnknownKeyName(key)
+  assert read_engage_66(OldParams())
