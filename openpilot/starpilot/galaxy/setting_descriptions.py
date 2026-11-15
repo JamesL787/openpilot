@@ -60,6 +60,8 @@ DESCRIPTIONS = {
   'ForceStops': 'Commits to stops detected by the driving model. Press the accelerator to continue.',
   'ForceStopDistanceOffset': 'Moves the planned stopping point. Positive values stop farther forward; negative values stop earlier.',
   'LeadApproachBuffer': 'Gradually adds following distance when approaching a slower or braking lead vehicle.',
+  'ExperimentalEngage66Mph': ('With the upstream planner in Experimental mode, engaging sets 66 mph or the current speed if faster. ' +
+                              'Off uses the saved initial cruise speed.'),
   'ExperimentalSpeedNudge': ('Gently recovers toward set speed when Experimental mode hesitates on a clear road. ' +
                             'Leads, stops, curve limits and driver overrides retain priority.'),
   'FasterLeadTakeoff': ('Improves launches from a stop and responds sooner when a lead starts moving. ' +
