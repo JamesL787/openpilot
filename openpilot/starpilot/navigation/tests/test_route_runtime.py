@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from openpilot.starpilot.navigation.owner import NavigationOwner
+from openpilot.starpilot.navigation.road_limit import RoadLimit
 from openpilot.starpilot.navigation.route_engine import NavigationRoute, project, distance
 from openpilot.starpilot.navigation.runtime import RouteRuntime, location, publish_status
 
@@ -96,6 +97,23 @@ class Executor:
     future = Future()
     self.jobs.append(future)
     return future
+
+
+def test_road_limit_waits_for_gps_speed_before_matching():
+  executor = Executor()
+  road_limit = RoadLimit(Mock(), lambda _settings: True, executor=executor)
+  settings = {'token': 'test'}
+  drive_id = 1_000_000_000
+
+  for sample in range(3):
+    stamp = drive_id + sample * 1_000_000_000
+    status = road_limit.update(stamp, settings, (stamp, (sample * .001, 0.), None, None), drive_id)
+    assert status == {'locationMonoTime': stamp, 'speedLimit': 0., 'controlValid': False}
+  assert not executor.jobs
+
+  stamp += 1_000_000_000
+  road_limit.update(stamp, settings, (stamp, (.003, 0.), 5., None), drive_id)
+  assert len(executor.jobs) == 1
 
 
 def configured(tmp_path):
