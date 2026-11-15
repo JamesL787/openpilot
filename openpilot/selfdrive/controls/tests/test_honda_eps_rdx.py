@@ -11,11 +11,15 @@ from openpilot.selfdrive.controls.tests.test_honda_eps_firmware_ff import _param
 
 RDX_PTM_FW = b'39990-TJB,A220\x00\x00'
 CAL = eps_cal.ACURA_RDX_TJB_A220
-# Read from the build the owner runs (KB TJB_A220_PTM_ROUTE_A_20261014/BUILD_Trk1641, rows 0 and 3 identical)
+# Read from KB TJB_A220_PTM_ROUTE_A_20261014/BUILD_Trk1641 (rows 0 and 3 identical); the VariantKeys build carries them unchanged
 TJB_TARGET_A = (0, 128, 256, 384, 512, 640, 768, 896, 1024)
 TJB_TARGET_S = (0, 3968, 7936, 11904, 15872, 19840, 23808, 27776, 30000)
 TJB_KP_A = (0, 58, 109, 243, 320, 448, 640, 896, 1024)
 TJB_KP = (7, 8, 9, 11, 13, 15, 16, 17, 17)  # >> 6
+
+
+def test_it_names_the_build_it_requires():
+  assert eps_cal.REQUIRED_PTM_RWD["rdx_tjb_a220"] == "68a6fdb4"
 
 
 def test_the_ptm_rdx_gets_its_road_measured_vgr_and_its_calibration():
