@@ -10,7 +10,9 @@ from opendbc.car.honda import yaw_rate
 from opendbc.car.honda.carcontroller import CarController
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.interface import CarInterface
-from opendbc.car.honda.modified_eps import (DEFAULT_SETTINGS, ModifiedEpsSteering, get_eps_modified_steering_pressed,
+from opendbc.car import DT_CTRL
+from opendbc.car.honda.modified_eps import (DEFAULT_SETTINGS, RELEASE_FRACTION, RELEASE_HOLD_S, ModifiedEpsSteering,
+                                            SteeringPressedHysteresis, get_eps_modified_steering_pressed,
                                             lane_change_nudge_torque, modified_eps, steering_pressed_threshold)
 from opendbc.car.honda.values import CAR, DBC, HondaFlags
 from opendbc.car.honda.yaw_rate import YawRateCalibration, get_yaw_rate_calibration
@@ -22,13 +24,44 @@ def _modified_cp(car=CAR.HONDA_CLARITY):
   return CP
 
 
-def test_eps_modified_steering_pressed_filter_matches_the_thresholds():
-  filter_s, pressed = get_eps_modified_steering_pressed(True, 1500.0, 0.8, 0.27, False)
-  assert pressed and filter_s == pytest.approx(0.28)
-  filter_s, pressed = get_eps_modified_steering_pressed(True, -1500.0, 0.8, 0.0, False)
-  assert pressed and filter_s == pytest.approx(1.0)
-  filter_s, pressed = get_eps_modified_steering_pressed(False, 1500.0, 0.8, 1.0, True)
-  assert not pressed and filter_s == pytest.approx(0.0)
+def test_the_controllers_follow_carstates_press_in_either_direction():
+  assert get_eps_modified_steering_pressed(True, 1500.0, 0.8, 0.0, False)[1]   # along the command: no 0.28 s hold
+  assert get_eps_modified_steering_pressed(True, -1500.0, 0.8, 0.0, False)[1]
+  assert not get_eps_modified_steering_pressed(False, 1500.0, 0.8, 1.0, True)[1]
+
+
+def _press(torques, threshold=2000.0):
+  h = SteeringPressedHysteresis()
+  return [h.update(t, threshold) for t in torques]
+
+
+def test_a_press_starts_over_the_threshold_in_either_direction():
+  assert _press([1990.0, 2010.0]) == [False, True]
+  assert _press([-2010.0]) == [True]
+
+
+def test_a_press_holds_through_a_dip_under_the_threshold():
+  # the cut takes away the torque the driver leans on: their reading drops, but not under the release level
+  assert all(_press([2100.0] + [1300.0] * 200))
+
+
+def test_a_press_ends_after_the_hold_under_the_release_level():
+  pressed = _press([2100.0] + [1100.0] * 40)
+  hold = round(RELEASE_HOLD_S / DT_CTRL)
+  assert 1100.0 < RELEASE_FRACTION * 2000.0
+  assert all(pressed[:hold]) and not any(pressed[hold + 1:])
+
+
+def test_the_hold_restarts_when_the_torque_comes_back():
+  hold = round(RELEASE_HOLD_S / DT_CTRL)
+  torques = [2100.0] + [1000.0] * (hold - 5) + [1500.0] + [1000.0] * (hold - 5)
+  assert all(_press(torques))
+
+
+def test_carstate_uses_the_hysteresis_only_on_a_modified_eps():
+  from opendbc.car.honda.carstate import CarState
+  assert isinstance(CarState(_modified_cp()).steering_pressed_hysteresis, SteeringPressedHysteresis)
+  assert not CarState(CarInterface.get_non_essential_params(CAR.HONDA_CLARITY)).modified_eps
 
 
 def test_only_a_modified_eps_gets_the_steering_stage_and_threshold():
@@ -53,6 +86,7 @@ class TestHondaSteeringCommandFidelity:
   """
 
   SETTINGS = replace(DEFAULT_SETTINGS, fade_down_s=0.0)
+  SOFT = replace(DEFAULT_SETTINGS, fade_down_s=0.15)
 
   @staticmethod
   def _cc(torque, lat_active=True):
@@ -87,10 +121,39 @@ class TestHondaSteeringCommandFidelity:
     assert self._drive(ModifiedEpsSteering(), [0.5], v_ego=0.0) == [0.0]
 
   def test_override_cut_is_reported_as_limited(self):
-    # Sustained same-direction driver torque trips the shared 0.28 s override policy
-    delivered = self._drive(self._ready(), [0.5] * 28, steering_pressed=True)
-    assert delivered[:-1] == pytest.approx([0.5] * 27)
-    assert abs(0.5 - delivered[-1]) > 1e-2
+    # a press cuts on its first frame, whichever way the driver pushes
+    assert abs(0.5 - self._drive(self._ready(), [0.5], steering_pressed=True)[0]) > 1e-2
+
+  def test_a_hard_cut_drops_the_request_at_once(self):
+    assert DEFAULT_SETTINGS.fade_down_s == 0.0   # the soft cut is opt-in (HondaOverrideFadeDownSecs)
+    torque, lkas, _ = self._ready().update(self._cc(0.5), self._cs(steering_pressed=True), DEFAULT_SETTINGS)
+    assert torque == 0.0 and not lkas
+
+  def test_a_soft_cut_eases_the_torque_out_with_the_request_on(self):
+    steering, settings = self._ready(), self.SOFT
+    self._drive(steering, [0.5] * 10, settings)
+    out = [steering.update(self._cc(0.5), self._cs(steering_pressed=True), settings) for _ in range(40)]
+    torques = [t for t, _, _ in out]
+    fade = round(settings.fade_down_s / DT_CTRL)
+    assert torques[0] == pytest.approx(0.5 * (1.0 - DT_CTRL / settings.fade_down_s))
+    assert all(a > b for a, b in zip(torques[:fade], torques[1:fade], strict=False))
+    assert all(t == 0.0 for t in torques[fade:])
+    assert all(lkas for _, lkas, _ in out[:fade - 1]) and not any(lkas for _, lkas, _ in out[fade:])
+
+  def test_a_soft_cut_spreads_a_step_in_the_command(self):
+    # the lateral controller drops its feedforward on a press: that step must not reach the wheel at once
+    steering, settings = self._ready(), self.SOFT
+    self._drive(steering, [0.6] * 10, settings)
+    torques = [steering.update(self._cc(-0.2), self._cs(steering_pressed=True), settings)[0] for _ in range(30)]
+    steps = [abs(b - a) for a, b in zip([0.6] + torques, torques, strict=False)]
+    assert max(steps) <= DT_CTRL / settings.fade_down_s + 1e-9
+    assert torques[-1] == 0.0
+
+  def test_assist_during_override_keeps_the_request_through_the_press(self):
+    steering, settings = self._ready(), replace(self.SOFT, assist_during_override=True, torque_scale=0.3)
+    out = [steering.update(self._cc(0.5), self._cs(steering_pressed=True), settings) for _ in range(60)]
+    assert all(lkas for _, lkas, _ in out)
+    assert out[-1][0] == pytest.approx(0.15)
 
   def test_steer_delta_limiter_is_reported_as_limited(self):
     delivered = self._drive(self._ready(), [1.0], settings=replace(self.SETTINGS, delta_limiter=True))

@@ -21,7 +21,7 @@ STOCK_STEER_THRESHOLD = 1200
 class ModifiedEpsSettings:
   override_threshold: int = 2000         # HondaDriverOverrideThreshold, driver torque for steeringPressed (stock 1200)
   min_steer_speed_mph: int = 1           # HondaMinSteerSpeed, no torque below this
-  fade_down_s: float = 0.0               # HondaOverrideFadeDownSecs, torque fade on a press (0 = cut at once)
+  fade_down_s: float = 0.0               # HondaOverrideFadeDownSecs, soft cut on a press, request held while it eases out (0 = cut at once)
   fade_up_s: float = 0.5                 # HondaOverrideFadeUpSecs, torque fade back in after a press
   torque_scale: float = 0.0              # HondaOverrideTorqueScale / 100, torque kept while pressed
   assist_during_override: bool = False   # HondaDriverAssistDuringOverride, keep LKAS active while pressed
@@ -56,21 +56,34 @@ def lane_change_nudge_torque(CP) -> float | None:
   return STEER_THRESHOLD.get(CP.carFingerprint, STOCK_STEER_THRESHOLD) if modified_eps(CP) else None
 
 
+# A press starts over the threshold and ends once the torque has stayed under RELEASE_FRACTION of it for RELEASE_HOLD_S.
+# With one level the press flickered: the cut takes away the torque the driver leans on, their reading drops under the
+# line, the fade brings it back and they cross again (2026-11 logs, 7 cars: 58-79% of presses within 1.5 s of the last).
+RELEASE_FRACTION = 0.6
+RELEASE_HOLD_S = 0.3
+
+
+class SteeringPressedHysteresis:
+  def __init__(self):
+    self.pressed = False
+    self.below_s = 0.0
+
+  def update(self, steering_torque: float, threshold: float) -> bool:
+    if not self.pressed:
+      self.pressed = abs(steering_torque) > threshold
+      self.below_s = 0.0
+    else:
+      self.below_s = self.below_s + DT_CTRL if abs(steering_torque) < RELEASE_FRACTION * threshold else 0.0
+      self.pressed = self.below_s < RELEASE_HOLD_S - 1e-6
+    return self.pressed
+
+
 def get_eps_modified_steering_pressed(
   raw_pressed: bool, steering_torque: float, torque_cmd: float, filter_s: float, previous_pressed: bool
 ) -> tuple[float, bool]:
-  # The EPS's own column torque trips steeringPressed. A press that pushes against the command, or one with almost
-  # no command, is the driver at once; one that agrees with the command must hold for 0.28 s first.
-  if not raw_pressed:
-    return 0.0, False
-
-  torque_product = float(steering_torque) * float(torque_cmd)
-  torque_cmd_abs = abs(float(torque_cmd))
-  if previous_pressed or torque_cmd_abs < 0.10 or torque_product < 0.0:
-    return 1.0, True
-
-  filter_s = min(1.0, filter_s + DT_CTRL)
-  return filter_s, filter_s >= 0.28
+  # carstate's steeringPressed (SteeringPressedHysteresis) is the press. The 0.28 s hold this used to add on a press
+  # along the command guarded the wrong side: the EPS's own column torque reads against its command 60-85% of the time.
+  return 0.0, bool(raw_pressed)
 
 
 class ModifiedEpsSteering:
@@ -85,6 +98,7 @@ class ModifiedEpsSteering:
     """Returns (torque to send, LKAS active, filtered steering pressed)."""
     torque_cmd = float(CC.actuators.torque) if CC.latActive else 0.0
     steering_pressed = False
+    releasing = False
     below_min_steer_speed = CS.out.vEgo < settings.min_steer_speed_mph * CV.MPH_TO_MS
     if below_min_steer_speed:
       torque_cmd = 0.0
@@ -99,14 +113,23 @@ class ModifiedEpsSteering:
 
       if not self.lat_active_prev:
         self.override_ramp = 0.0
-      if steering_pressed:
-        if settings.fade_down_s <= 0.0:
-          self.override_ramp = settings.torque_scale
-        else:
-          self.override_ramp = max(settings.torque_scale, self.override_ramp - DT_CTRL / settings.fade_down_s)
+      if steering_pressed and settings.fade_down_s > 0.0:
+        # Soft cut: ease the torque out with the LKAS request still on, then drop it. A step to 0 jerked the wheel
+        # (2.6-49 deg in 0.3 s after a press), and the EPS already fades our torque itself as the driver's rises. The
+        # request is not held for the whole press: with it on the firmware damps wheel rate (Clarity A030 Kp*(R5 - R6)),
+        # which the driver would feel as drag. The limit also spreads the lateral controller's own steps, such as its
+        # feedforward dropping out on the press.
+        step = DT_CTRL / settings.fade_down_s
+        self.override_ramp = max(settings.torque_scale, self.override_ramp - step)
+        target = torque_cmd * self.override_ramp
+        torque_cmd = rate_limit(target, self.last_torque, -step, step)
+        releasing = self.override_ramp > settings.torque_scale or abs(torque_cmd - target) > 1e-4
+      elif steering_pressed:
+        self.override_ramp = settings.torque_scale
+        torque_cmd *= self.override_ramp
       else:
         self.override_ramp = 1.0 if settings.fade_up_s <= 0.0 else min(1.0, self.override_ramp + DT_CTRL / settings.fade_up_s)
-      torque_cmd *= self.override_ramp
+        torque_cmd *= self.override_ramp
     else:
       self.override_ramp = 0.0
       self.steering_pressed_filter_s = 0.0
@@ -119,5 +142,5 @@ class ModifiedEpsSteering:
 
     self.last_torque = torque_cmd
     self.lat_active_prev = CC.latActive
-    lkas_active = CC.latActive and (settings.assist_during_override or not steering_pressed) and not below_min_steer_speed
+    lkas_active = CC.latActive and (settings.assist_during_override or releasing or not steering_pressed) and not below_min_steer_speed
     return torque_cmd, lkas_active, steering_pressed
