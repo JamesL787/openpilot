@@ -17,7 +17,7 @@ from openpilot.common.swaglog import cloudlog
 
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.vehicle_model import VehicleModel
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
+from openpilot.selfdrive.controls.lib.drive_helpers import MAX_LATERAL_ACCEL_NO_ROLL, clip_curvature, lateral_accel_limit
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.lateral_controller_factory import create_lateral_controller
@@ -65,6 +65,7 @@ class Controls:
   # their own state) runs the stock path
   rack_map = None
   lat_delay_schedule = None
+  max_lateral_accel = MAX_LATERAL_ACCEL_NO_ROLL
 
   def __init__(self, *, predict_lane_clearance: bool = False) -> None:
     if type(predict_lane_clearance) is not bool:
@@ -164,6 +165,8 @@ class Controls:
     # a car on LatControlHondaEps measures curvature through the rack map it steers through, and tells the model
     # its calibration's measured delay schedule instead of lagd's learned delay
     honda_eps = isinstance(self.LaC, LatControlHondaEps)
+    self.max_lateral_accel = lateral_accel_limit(self.CP.carFingerprint, honda_eps,
+                                                os.getenv("CRV_EPS_LATERAL_ACCEL_TRIAL") == "1")
     self.rack_map = get_rack_map(self.CP, self.LaC.calibration) if honda_eps else None
     self.lat_delay_schedule = lateral_delay_schedule(self.CP) if honda_eps else None
     # and keeps vfn's model-curvature smoothing: the 0.1 s low-pass's delay here, and the action ramped across each frame
@@ -489,9 +492,11 @@ class Controls:
       duration=self.lane_change_policy.duration_s, previous=previous_curvature, desired=new_desired_curvature,
       turn_assist=assist)
     new_desired_curvature = limit_rate(CS.vEgo, previous_curvature, new_desired_curvature, factor)
-    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, previous_curvature, new_desired_curvature, lp.roll)
+    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, previous_curvature, new_desired_curvature, lp.roll,
+                                                              max_lateral_accel=self.max_lateral_accel)
     if self.last_lane_centering_result is not None and self.last_lane_centering_result.correction != 0.0:
-      baseline_curvature, _ = clip_curvature(CS.vEgo, previous_curvature, limit_rate(CS.vEgo, previous_curvature, lane_base_curvature, factor), lp.roll)
+      baseline_curvature, _ = clip_curvature(CS.vEgo, previous_curvature, limit_rate(CS.vEgo, previous_curvature, lane_base_curvature, factor), lp.roll,
+                                             max_lateral_accel=self.max_lateral_accel)
       guarded = self.lane_centering_controller.guard_applied(
         model_v2, baseline_curvature, self.desired_curvature, self.curvature, CS.vEgo,
         lane_delay)
