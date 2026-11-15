@@ -109,7 +109,8 @@ class RoadLimit:
     stamp, coordinates, speed, bearing = position
     if not self.trace or distance(self.trace[-1][0], coordinates) >= TRACE_SPACING:
       self.trace = (self.trace + [(coordinates, bearing)])[-TRACE_POINTS:]
-    if self.future is None and now_ns >= self.next_request and speed >= MIN_SPEED and len(self.trace) >= 3:
+    if (self.future is None and now_ns >= self.next_request and
+        speed is not None and speed >= MIN_SPEED and len(self.trace) >= 3):
       self.next_request = now_ns + INTERVAL_NS
       self.pending = (coordinates, bearing, now_ns)
       self.future = self.executor.submit(self.matcher.fetch, settings['token'], [row[0] for row in self.trace])
