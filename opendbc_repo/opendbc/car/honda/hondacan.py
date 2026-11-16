@@ -122,11 +122,14 @@ def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_count
   return commands
 
 
-def create_steering_control(packer, CAN, apply_torque, lkas_active, tja_control):
+def create_steering_control(packer, CAN, apply_torque, lkas_active, tja_control, eps_mode=0):
   values = {
     "STEER_TORQUE": apply_torque if lkas_active else 0,
     "STEER_TORQUE_REQUEST": lkas_active,
   }
+  if eps_mode:
+    # byte 3 (stock EPS firmware never reads it); the Clarity mode-switch EPS build latches bit 1 as "PTM calibration"
+    values["SET_ME_X00_2"] = eps_mode
 
   if tja_control:
     values["STEER_DOWN_TO_ZERO"] = lkas_active

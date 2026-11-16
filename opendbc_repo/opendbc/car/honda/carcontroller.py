@@ -131,6 +131,10 @@ class CarController(CarControllerBase):
     # speed, opt-in rate limit). It replaces 7.0's Civic Bosch-only ModifiedCivicSteering, whose torque low-pass here
     # read as safety limiting in controlsd and froze the lateral integrator. openpilot attaches modified_eps_settings.
     self.modified_eps_steering = ModifiedEpsSteering() if modified_eps(CP) else None
+    # Clarity mode-switch EPS build (rwd-xray lab/clarity/CLARITY_MODESW_P1_20261116): 0xE4 byte 3 bit 1 selects the PTM
+    # calibration, clear = stock. Sent on every frame (the EPS takes it only from valid frames while LKAS is idle), and
+    # only when this fork runs the PTM controller (modified EPS fw, ',' marker). CleanPTM and stock firmware ignore byte 3.
+    self.eps_mode = 0x02 if (modified_eps(CP) and CP.carFingerprint == CAR.HONDA_CLARITY) else 0
     self.modified_eps_settings = None
     # Clarity with an interceptor: the PCM stays in ACC while openpilot is engaged (honda/pcm_acc.py)
     self.keep_pcm_acc = pcm_acc.qualified(CP)
@@ -221,7 +225,8 @@ class CarController(CarControllerBase):
         can_sends.append(make_tester_present_msg(0x18DAB0F1, 1, suppress_response=True))
 
     # Send steering command.
-    can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, lkas_active, self.tja_control))
+    can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, lkas_active, self.tja_control,
+                                                      eps_mode=self.eps_mode))
     if _projection is not None:
       _projection.emit('honda.STEERING_CONTROL', apply_torque, lkas_active, can_sends[-1])
 
