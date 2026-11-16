@@ -59,8 +59,10 @@ def lane_change_nudge_torque(CP) -> float | None:
 # A press starts over the threshold and ends once the torque has stayed under RELEASE_FRACTION of it for RELEASE_HOLD_S.
 # With one level the press flickered: the cut takes away the torque the driver leans on, their reading drops under the
 # line, the fade brings it back and they cross again (2026-11 logs, 7 cars: 58-79% of presses within 1.5 s of the last).
+# The hold is 0.1 s: 0.3 s kept openpilot off ~0.3 s after the driver let go (Clarity 11-15: 0.29 s, then the 0.5 s
+# fade), and on the CR-V A220's recorded torque 0.1 s cut the re-presses within 1.5 s as far as 0.15 s did.
 RELEASE_FRACTION = 0.6
-RELEASE_HOLD_S = 0.3
+RELEASE_HOLD_S = 0.1
 
 
 class SteeringPressedHysteresis:
