@@ -22,3 +22,15 @@ BO_ 769 VEHICLE_STATE2: 8 ADAS
  SG_ SET_ME_X5F : 39|8@0+ (1,0) [0|255] "" XXX
  SG_ COUNTER : 61|2@0+ (1,0) [0|3] "" XXX
  SG_ CHECKSUM : 59|4@0+ (1,0) [0|15] "" XXX
+
+BO_ 1700 EPS_CAL_STATUS: 8 EPS
+ SG_ REQUESTED_MODE : 7|4@0+ (1,0) [0|15] "" EON
+ SG_ ACTIVE_MODE : 3|4@0+ (1,0) [0|15] "" EON
+ SG_ BUILD_ID : 15|8@0+ (1,0) [0|255] "" EON
+ SG_ COUNTER : 61|2@0+ (1,0) [0|3] "" EON
+ SG_ CHECKSUM : 59|4@0+ (1,0) [0|15] "" EON
+
+CM_ BO_ 1700 "Clarity mode-switch EPS builds (rwd-xray lab/clarity/CLARITY_MODESW_MM_P2): calibration status, 50 Hz, layout v2 (bytes 2-6 reserved, 0). Absent on stock, CleanPTM and P1.";
+CM_ SG_ 1700 BUILD_ID "EPS build; implies the frame layout and the modes built in";
+CM_ SG_ 1700 ACTIVE_MODE "calibration mode in the EPS RAM now (0 = stock); changes only at LKAS idle";
+CM_ SG_ 1700 REQUESTED_MODE "(last valid 0xE4 byte 3 >> 1) & 7, 0 if no valid latch";

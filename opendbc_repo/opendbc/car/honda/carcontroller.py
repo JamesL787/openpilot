@@ -4,6 +4,7 @@ from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import hondacan
+from opendbc.car.honda.eps_cal_status import requested_eps_mode
 from opendbc.car.honda.accord_mvl_stock import AccordMvlStock, qualified as mvl_stock_qualified
 from opendbc.car.honda.modified_eps import ModifiedEpsSteering, current_settings, get_eps_modified_steering_pressed, modified_eps  # noqa: F401
 from opendbc.car.honda.nidec_interceptor import NidecInterceptor, create_command, qualified as interceptor_qualified
@@ -134,7 +135,7 @@ class CarController(CarControllerBase):
     # Clarity mode-switch EPS build (rwd-xray lab/clarity/CLARITY_MODESW_P1_20261116): 0xE4 byte 3 bit 1 selects the PTM
     # calibration, clear = stock. Sent on every frame (the EPS takes it only from valid frames while LKAS is idle), and
     # only when this fork runs the PTM controller (modified EPS fw, ',' marker). CleanPTM and stock firmware ignore byte 3.
-    self.eps_mode = 0x02 if (modified_eps(CP) and CP.carFingerprint == CAR.HONDA_CLARITY) else 0
+    self.eps_mode = requested_eps_mode(CP) << 1   # 0x02 on the Clarity with the PTM controller, else 0
     self.modified_eps_settings = None
     # Clarity with an interceptor: the PCM stays in ACC while openpilot is engaged (honda/pcm_acc.py)
     self.keep_pcm_acc = pcm_acc.qualified(CP)

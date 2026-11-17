@@ -6,6 +6,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import pcm_acc
+from opendbc.car.honda.eps_cal_status import MSG as EPS_CAL_STATUS_MSG, EpsCalStatus
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.modified_eps import SteeringPressedHysteresis, current_settings, modified_eps, steering_pressed_threshold
 from opendbc.car.honda.yaw_rate import get_yaw_rate_calibration
@@ -27,6 +28,7 @@ class CarState(CarStateBase):
   def __init__(self, CP):
     super().__init__(CP)
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
+    self.eps_cal_status = EpsCalStatus(CP)
 
     if CP.transmissionType != TransmissionType.manual:
       self.gearbox_msg = "GEARBOX_AUTO"
@@ -135,6 +137,10 @@ class CarState(CarStateBase):
     if (self.CP.carFingerprint == CAR.ACURA_MDX_4G) and (steer_status == "TJA_LOW_SPEED_LOCKOUT"):
       ret.steerFaultPermanent = False
       ret.steerFaultTemporary = False
+
+    # Clarity mode-switch EPS: don't steer unless the EPS reports the calibration the controller is built for (0x6A4)
+    if self.eps_cal_status.update(cp):
+      ret.steerFaultTemporary = True
 
     # All Honda EPS cut off slightly above standstill, some much higher
     # Don't alert in the near-standstill range, but alert for per-vehicle configured minimums above that
@@ -286,6 +292,8 @@ class CarState(CarStateBase):
     pt_messages = [("CAMERA_MESSAGES", math.nan)] if has_tsr and on_pt else []
     if CP.flags & HondaFlags.GAS_INTERCEPTOR:
       pt_messages.append(("GAS_SENSOR", 50))
+    if EpsCalStatus(CP).enabled:
+      pt_messages.append((EPS_CAL_STATUS_MSG, math.nan))   # optional: only switch-capable EPS builds send it
     parsers = {
       Bus.pt: CANParser(dbc_name, pt_messages, CanBus(CP).pt),
       Bus.cam: CANParser(dbc_name, [("CAMERA_MESSAGES", math.nan)] if has_tsr and not on_pt else [], CanBus(CP).camera),
