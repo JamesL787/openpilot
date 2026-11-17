@@ -50,6 +50,8 @@
   "HondaDriverOverrideThreshold",
   "HondaEpsAngleRateLimit",
   "HondaMinSteerSpeed",
+  "HondaOverrideFadeDownSecs",
+  "HondaOverrideFadeUpSecs",
   "HondaOverrideTorqueScale",
   "IgnoreIgnitionLine",
   "IsMetric",

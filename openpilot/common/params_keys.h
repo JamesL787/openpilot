@@ -404,9 +404,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     // Honda modified-EPS controller (selfdrive/controls/lib/latcontrol_honda_eps.py)
     {"HondaEpsAngleRateLimit", {PERSISTENT, INT, "300"}},  // deg/s ceiling on desired wheel-angle slew; 0 disables
-    {"HondaEpsFirmwareVgr", {PERSISTENT, BOOL, "0"}},
-    {"HondaClarityAngleMode", {PERSISTENT, BOOL, "1"}},  // Clarity on the angle-mode EPS build (0x04): steer by angle; read at car start  // cars without a yaw-fitted rack map: use the EPS firmware A (position) VGR table
-    {"HondaOverrideFadeUpSecs", {PERSISTENT, FLOAT, "0.5"}},  // fixed by design; no settings UI
+    {"HondaEpsFirmwareVgr", {PERSISTENT, BOOL, "0"}},  // cars without a yaw-fitted rack map: use the EPS firmware A (position) VGR table
+    {"HondaClarityAngleMode", {PERSISTENT, BOOL, "1"}},  // Clarity on the angle-mode EPS build (0x04): steer by angle; read at car start
+    {"HondaOverrideFadeUpSecs", {PERSISTENT, FLOAT, "0.5"}},  // s; Night Star page
     // Shadow car learner (selfdrive/controls/honda_eps_learnerd.py): it measures and publishes, nothing reads it back
     {"HondaEpsLearner", {PERSISTENT, BOOL, "1"}},
     {"HondaEpsLearnerReset", {PERSISTENT, BOOL, "0"}},  // set to start the learner over; the daemon clears it
@@ -419,7 +419,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Honda modified-EPS steering in the car controller and car state (opendbc/car/honda/modified_eps.py)
     {"HondaDriverOverrideThreshold", {PERSISTENT, INT, "2000"}},  // driver torque for steeringPressed on a modified EPS (stock 1200)
     {"HondaMinSteerSpeed", {PERSISTENT, INT, "1"}},  // mph; no steering torque below this
-    {"HondaOverrideFadeDownSecs", {PERSISTENT, FLOAT, "0.0"}},  // fixed by design; no settings UI
+    {"HondaOverrideFadeDownSecs", {PERSISTENT, FLOAT, "0.0"}},  // s; 0 cuts at once; Night Star page
     {"HondaOverrideTorqueScale", {PERSISTENT, INT, "0"}},  // percent of torque kept while the driver overrides
     {"HondaDriverAssistDuringOverride", {PERSISTENT, BOOL, "0"}},
     {"HondaSteerDeltaLimiter", {PERSISTENT, BOOL, "0"}},  // the stock steer rate limit, opt-in on a modified EPS

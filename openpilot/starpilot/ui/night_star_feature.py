@@ -1,9 +1,9 @@
 """The Night Star settings page: the fork's own settings, edited live (onroad too).
 
 Every row here is read again while driving (the EPS rows once a second, the controller rows each refresh), except Angle
-Mode (Clarity only), which picks the steering type and so applies at the next car start. Every
-calibrated EPS image steers with LatControlHondaEps, so the controller has no row. The override fades and the output
-low-pass bands are fixed by design and have no row.
+Mode (Clarity only), which picks the steering type and so applies at the next car start. Every calibrated EPS image
+steers with LatControlHondaEps, so the controller has no row. The output low-pass bands are fixed by design and have no
+row.
 """
 import math
 
@@ -34,8 +34,16 @@ NUMBER_ROWS = {
   "HondaMinSteerSpeed": ("Minimum Steer Speed", "No steering torque below this speed.", 0.0, 25.0, 1.0, "mph", True),
   "HondaOverrideTorqueScale": ("Torque During Override", "Share of the steering command kept while you override.",
                                0.0, 100.0, 5.0, "%", True),
+  # the car controller clamps both fades to 0-10 s (starpilot/car/honda/modified_eps.py)
+  "HondaOverrideFadeDownSecs": ("Override Fade Down",
+                                "Time to ease the steering command out when you override. 0 cuts it at once.",
+                                0.0, 10.0, 0.1, "s", False),
+  "HondaOverrideFadeUpSecs": ("Override Fade Up", "Time to bring the steering command back after you let go of the wheel.",
+                              0.0, 10.0, 0.1, "s", False),
 }
-EPS_KEYS = ("HondaDriverOverrideThreshold", "HondaMinSteerSpeed", "HondaOverrideTorqueScale", "HondaDriverAssistDuringOverride")
+# in the order a press runs: what counts as one, the fade out, what is kept during it, the fade back in
+EPS_KEYS = ("HondaDriverOverrideThreshold", "HondaOverrideFadeDownSecs", "HondaOverrideTorqueScale", "HondaOverrideFadeUpSecs",
+            "HondaDriverAssistDuringOverride", "HondaMinSteerSpeed")
 KEYS = frozenset((*BOOL_ROWS, *NUMBER_ROWS))
 
 

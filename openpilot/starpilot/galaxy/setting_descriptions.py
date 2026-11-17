@@ -105,6 +105,8 @@ DESCRIPTIONS = {
   'HondaDriverOverrideThreshold': 'Sets the driver torque that counts as a steering override on a modified EPS.',
   'HondaMinSteerSpeed': 'Sends no steering torque below this speed.',
   'HondaOverrideTorqueScale': 'Keeps this share of the steering command while you override the wheel.',
+  'HondaOverrideFadeDownSecs': 'Eases the steering command out over this time when you override the wheel. 0 cuts it at once.',
+  'HondaOverrideFadeUpSecs': 'Brings the steering command back over this time after you let go of the wheel.',
   'HondaDriverAssistDuringOverride': 'Keeps steering assist active while you override the wheel.',
   'HondaClarityAngleMode': ('Clarity only: steers by wheel angle through the angle-mode EPS firmware (build 0x04). ' +
                             'On any other EPS firmware steering stays unavailable, so turn it off. Applies at the next start.'),
