@@ -18,9 +18,14 @@ Units: bytes 0-1 = the EPS's own 0x14A STEER_ANGLE raw value (0.1 deg/bit, raw =
 Limits (all inside the EPS's own, so its jump-reject fault and its clamps never act in normal driving):
   - per-frame step <= 0.6 x the EPS jump threshold (4 deg/10 ms below 5 m/s, 1 deg/10 ms from 15 m/s; the EPS
     allows 0.8 x at the worst frame spacing) and <= 0.9 x the EPS reference slew (5 m/s^3 lateral jerk, 170 deg/s cap)
-  - for ENGAGE_S after the request rises, the step is also <= ENGAGE_RATE * DT: the measured angle steps 2-3.5 deg at
-    engage (emulator, 11-18), and starting from the measured angle and ramping keeps that from reaching the motor
-  - |desired| <= 0.95 x the EPS's 4 m/s^2 lateral-acceleration clamp (angle_ref.AMAX), applied before the step limit
+  - the target moves as a rate- and acceleration-limited trajectory (v2, 11-18 first drive): rate <= TARGET_RATE(v),
+    acceleration <= TARGET_ACCEL(v) (~1.5 x the wheel acceleration openpilot produced hands-off in torque mode, p99),
+    braking ahead of the target (sqrt(2*A*error)) so it never overshoots. The angle loop follows its target closely and
+    is silent, so without this every model wobble and every re-engage reached the wheel at up to 160 deg/s in 10 ms
+    (v1: 0.5 s at 10 deg/s, then the full step limit -> the "snap" after an override, route 000000e7).
+  - engage (request rises, e.g. after a driver override): the trajectory starts at the measured angle AND the measured
+    wheel rate, and its rate/acceleration limits ramp from ENGAGE_FLOOR to full over ENGAGE_S, so control fades in
+  - |desired| <= 0.95 x the EPS's 4 m/s^2 lateral-acceleration clamp (angle_ref.AMAX), applied before the limits
   - not active: the target is the measured angle (the Tesla pattern), so the first target the EPS sees equals its own
     angle. lat_active is CarController's modified-EPS lkas_active, which drops while the driver overrides (same press
     detector and yield as torque mode), so a press ends the request and the next engage restarts from the wheel.
@@ -45,7 +50,11 @@ ANGLE_STEP_DEG = [min(0.6 * j, 0.9 * s * DT_CTRL) for j, s in zip(EPS_JUMP_DEG, 
 AMAX_V = [5., 8., 10., 12., 16., 20., 25., 30.]
 EPS_AMAX_DEG = [379., 160., 109., 80.3, 50.0, 35.3, 25.7, 20.4]
 ANGLE_MAX_FRAC = 0.95
-ENGAGE_S, ENGAGE_RATE = 0.5, 10.0     # s, deg/s
+# target trajectory (v2): rate and acceleration limits by speed, engage fade
+_VT = [0., 5., 10., 15., 20., 30.]
+TARGET_RATE_DEG_S = [150., 150., 100., 60., 40., 25.]
+TARGET_ACCEL_DEG_S2 = [450., 600., 450., 300., 225., 180.]    # 1.5 x torque-mode hands-off p99 (11-15 route)
+ENGAGE_S, ENGAGE_FLOOR = 1.5, 0.15    # limits ramp 15% -> 100% over 1.5 s after the request rises
 RAW_MAX = 32767
 
 
@@ -73,23 +82,36 @@ class AngleModeSender:
   """Turns actuators.steeringAngleDeg into the 0xE4 angle payload. update() returns (raw, request, payload_bit)."""
   def __init__(self):
     self.apply_angle = 0.0
+    self.apply_rate = 0.0
     self.active_frames = 0
     self.sent_active = False
 
   def update(self, lat_active: bool, desired_deg: float, measured_deg: float, v_ego: float,
-             angle_ready: bool) -> tuple[int, bool, int]:
+             angle_ready: bool, measured_rate_deg_s: float = 0.0) -> tuple[int, bool, int]:
     active = bool(lat_active and angle_ready)
     if not active:
-      self.apply_angle, self.active_frames, self.sent_active = float(measured_deg), 0, False
+      self.apply_angle, self.apply_rate = float(measured_deg), float(measured_rate_deg_s)
+      self.active_frames, self.sent_active = 0, False
       return 0, False, 0
     lim = angle_limit(v_ego)
-    # clamp the target, not the output, so the output still moves at most one step per frame (from a measured angle
+    # clamp the target, not the output, so the output still moves along the limited trajectory (from a measured angle
     # above the clamp it walks down to it instead of jumping, which the EPS would reject)
     target = float(np.clip(float(desired_deg), -lim, lim))
-    step = float(np.interp(v_ego, _V, ANGLE_STEP_DEG))
-    if self.active_frames * DT_CTRL < ENGAGE_S:
-      step = min(step, ENGAGE_RATE * DT_CTRL)
-    self.apply_angle = float(np.clip(target, self.apply_angle - step, self.apply_angle + step))
+    fade = min(1.0, ENGAGE_FLOOR + (1.0 - ENGAGE_FLOOR) * self.active_frames * DT_CTRL / ENGAGE_S)
+    rate_max = fade * min(float(np.interp(v_ego, _VT, TARGET_RATE_DEG_S)), float(np.interp(v_ego, _V, ANGLE_STEP_DEG)) / DT_CTRL)
+    accel_max = fade * float(np.interp(v_ego, _VT, TARGET_ACCEL_DEG_S2))
+    err = target - self.apply_angle
+    # exact discrete braking curve: the fastest rate from which the trajectory can still stop at the target with
+    # accel_max per frame (the continuous sqrt(2*A*e) overshoots by a frame)
+    ad = accel_max * DT_CTRL
+    brake = ad * (((0.25 + 2.0 * abs(err) / (ad * DT_CTRL)) ** 0.5) - 0.5) if ad > 0 else 0.0
+    rate_des = float(np.sign(err)) * min(rate_max, brake, abs(err) / DT_CTRL)
+    self.apply_rate += float(np.clip(rate_des - self.apply_rate, -accel_max * DT_CTRL, accel_max * DT_CTRL))
+    # rate_max shapes rate_des only, so a wheel already turning faster at engage eases down at accel_max instead of being
+    # stopped in one frame; the EPS's own per-frame jump limit stays a hard bound
+    step_rate = float(np.interp(v_ego, _V, ANGLE_STEP_DEG)) / DT_CTRL
+    self.apply_rate = float(np.clip(self.apply_rate, -step_rate, step_rate))
+    self.apply_angle += self.apply_rate * DT_CTRL
     self.active_frames += 1
     self.sent_active = True
     return angle_to_raw(self.apply_angle), True, ANGLE_PAYLOAD

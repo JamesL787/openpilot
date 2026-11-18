@@ -190,19 +190,60 @@ def test_idle_frames_carry_only_the_mode_request(angle_file):
     assert f[0:3] == bytes(3) and f[3] == 0x07
 
 
-def test_engage_starts_at_the_measured_angle_and_ramps(angle_file):
+def test_engage_starts_at_the_measured_angle_and_fades_in(angle_file):
   ci = clarity(); ready(ci)
   e4(ci, False, 0.0, 12.3)
   raws = []
-  for _ in range(80):
+  for _ in range(300):
     _, f = e4(ci, True, 20.0, 12.3, v=10.0)
     assert f[2] == 0xA0 and f[3] == 0x07                                 # request + angle payload, mode 3 + angle
     raws.append(struct.unpack(">h", f[0:2])[0])
   ang = [r / cam.RAW_PER_DEG for r in raws]
-  assert ang[0] == pytest.approx(12.3 + cam.ENGAGE_RATE * 0.01, abs=0.051)   # first target = measured + one engage step
-  steps = np.diff(ang)
-  assert steps[:45].max() <= cam.ENGAGE_RATE * 0.01 + 0.051             # engage ramp (0.5 s)
+  assert ang[0] == pytest.approx(12.3, abs=0.051)                        # first target = the measured angle
+  assert max(np.diff(ang[:10])) <= 0.11                                  # no jump: starts at rest, accelerates (0.1 deg raw)
   assert ang[-1] == pytest.approx(20.0, abs=0.051)
+
+
+def trajectory(v, des, n, meas=0.0, rate0=0.0):
+  s = cam.AngleModeSender(); s.update(False, 0.0, meas, v, True, rate0)
+  return np.array([s.update(True, des(k), meas, v, True)[0] / cam.RAW_PER_DEG for k in range(n)]), s
+
+
+@pytest.mark.parametrize("v", [2.0, 8.0, 15.0, 30.0])
+def test_target_rate_and_acceleration_limits(v):
+  a, s = trajectory(v, lambda k: 60.0 * np.sign(np.sin(k / 40.0)), 600)   # repeated big reversals (a twitchy model)
+  w = []; acc = []
+  ex = cam.AngleModeSender(); ex.update(False, 0.0, 0.0, v, True)
+  prev_a = prev_w = 0.0
+  for k in range(600):                                                   # exact (unrounded) trajectory
+    ex.update(True, 60.0 * np.sign(np.sin(k / 40.0)), 0.0, v, True)
+    w.append((ex.apply_angle - prev_a) / 0.01); acc.append((w[-1] - prev_w) / 0.01); prev_a, prev_w = ex.apply_angle, w[-1]
+  assert max(map(abs, w)) <= float(np.interp(v, cam._VT, cam.TARGET_RATE_DEG_S)) + 1e-6
+  assert max(map(abs, acc)) <= float(np.interp(v, cam._VT, cam.TARGET_ACCEL_DEG_S2)) + 1e-6
+
+
+def test_engage_fade_limits_rate_and_acceleration_at_first():
+  ex = cam.AngleModeSender(); ex.update(False, 0.0, 0.0, 5.0, True)
+  w = []; prev = 0.0
+  for k in range(int(cam.ENGAGE_S / 0.01)):
+    ex.update(True, 100.0, 0.0, 5.0, True); w.append((ex.apply_angle - prev) / 0.01); prev = ex.apply_angle
+  fade = lambda k: cam.ENGAGE_FLOOR + (1 - cam.ENGAGE_FLOOR) * k * 0.01 / cam.ENGAGE_S
+  for k, x in enumerate(w):
+    assert abs(x) <= fade(k) * float(np.interp(5.0, cam._VT, cam.TARGET_RATE_DEG_S)) + 1e-6
+  assert w[0] <= cam.ENGAGE_FLOOR * float(np.interp(5.0, cam._VT, cam.TARGET_ACCEL_DEG_S2)) * 0.01 + 1e-6
+
+
+def test_engage_carries_the_wheel_rate():
+  for w0 in (15.0, 80.0):                                                # driver lets go with the wheel moving
+    ex = cam.AngleModeSender(); ex.update(False, 0.0, 10.0, 8.0, True, w0)
+    ex.update(True, 100.0, 10.0, 8.0, True)
+    a_floor = cam.ENGAGE_FLOOR * float(np.interp(8.0, cam._VT, cam.TARGET_ACCEL_DEG_S2))
+    assert abs(ex.apply_rate - w0) <= a_floor * 0.01 + 1e-6               # continues from the wheel's rate, no jolt
+
+
+def test_no_overshoot_on_a_step():
+  a, _ = trajectory(10.0, lambda k: 30.0, 600)
+  assert a.max() <= 30.0 + 0.051 and a[-1] == pytest.approx(30.0, abs=0.051)
 
 
 @pytest.mark.parametrize("v", [2.0, 5.0, 10.0, 15.0, 25.0, 35.0])
@@ -237,7 +278,7 @@ def test_measured_angle_above_the_clamp_walks_down(angle_file):
   for _ in range(400):
     _, f = e4(ci, True, 40.0, 40.0, v=30.0)
     a = struct.unpack(">h", f[0:2])[0] / cam.RAW_PER_DEG
-    assert abs(a - prev) <= cam.ENGAGE_RATE * 0.01 + 0.06 or abs(a - prev) <= 0.6 + 0.06
+    assert abs(a - prev) <= float(np.interp(30.0, cam._VT, cam.TARGET_RATE_DEG_S)) * 0.01 + 0.06
     prev = a
   assert prev == pytest.approx(cam.angle_limit(30.0), abs=0.06)
 
@@ -252,10 +293,13 @@ def test_driver_press_drops_the_request_and_reengage_starts_at_the_wheel(angle_f
   for _ in range(50):
     _, f = e4(ci, True, 10.0, -5.0, pressed=True)
     assert f[0:3] == bytes(3) and f[3] == 0x07
-  outs = [e4(ci, True, 10.0, -5.0)[1] for _ in range(60)]                # released: re-engage from the wheel, ramped
+  outs = [e4(ci, True, 10.0, -5.0)[1] for _ in range(300)]               # released: re-engage from the wheel, faded in
   a = [struct.unpack(">h", f[0:2])[0] / cam.RAW_PER_DEG for f in outs]
-  assert outs[0][2] == 0xA0 and a[0] == pytest.approx(-5.0 + cam.ENGAGE_RATE * 0.01, abs=0.051)
-  assert max(abs(y - x) for x, y in zip(a[:50], a[1:50])) <= cam.ENGAGE_RATE * 0.01 + 0.051   # 0.5 s engage ramp
+  assert outs[0][2] == 0xA0 and a[0] == pytest.approx(-5.0, abs=0.051)
+  steps = np.abs(np.diff(a))
+  assert steps[:10].max() <= 0.11                                        # no snap: the target starts at rest (0.1 deg raw)
+  assert steps.max() <= float(np.interp(10.0, cam._VT, cam.TARGET_RATE_DEG_S)) * 0.01 + 0.051
+  assert a[-1] == pytest.approx(10.0, abs=0.051)
 
 
 def test_fault_mid_drive_stops_the_payload_at_once(angle_file):

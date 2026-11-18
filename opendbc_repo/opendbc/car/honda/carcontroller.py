@@ -237,10 +237,11 @@ class CarController(CarControllerBase):
       # angle mode replaces the torque: bytes 0-1 carry the target only while the EPS reports mode 3 on an angle build.
       # The request follows ModifiedEpsSteering's lkas_active exactly as in torque mode: it drops while the driver
       # overrides (and below the min steer speed), so the stiff angle loop never fights the driver; the next request
-      # restarts from the measured angle with the engage ramp. Keeping the request up through a press made the loop
+      # restarts from the measured angle and rate with the engage fade. Keeping the request up through a press made the loop
       # push ~3000 counts against the driver until the stock EPS locked out (emulator be_16/36/37, 11-18).
       self.apply_angle_raw, lkas_active, angle_payload = self.angle_sender.update(
-        lkas_active, actuators.steeringAngleDeg, CS.out.steeringAngleDeg, CS.out.vEgo, CS.eps_cal_status.angle_ready)
+        lkas_active, actuators.steeringAngleDeg, CS.out.steeringAngleDeg, CS.out.vEgo, CS.eps_cal_status.angle_ready,
+        CS.out.steeringRateDeg)
       apply_torque = self.apply_angle_raw
     can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, lkas_active, self.tja_control,
                                                       eps_mode=self.eps_mode, angle_payload=angle_payload))
