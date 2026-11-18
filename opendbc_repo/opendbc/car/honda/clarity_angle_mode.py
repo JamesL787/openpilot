@@ -24,7 +24,9 @@ Limits (all inside the EPS's own, so its jump-reject fault and its clamps never 
     is silent, so without this every model wobble and every re-engage reached the wheel at up to 160 deg/s in 10 ms
     (v1: 0.5 s at 10 deg/s, then the full step limit -> the "snap" after an override, route 000000e7).
   - engage (request rises, e.g. after a driver override): the trajectory starts at the measured angle AND the measured
-    wheel rate, and its rate/acceleration limits ramp from ENGAGE_FLOOR to full over ENGAGE_S, so control fades in
+    wheel rate, and its rate/acceleration limits ramp from ENGAGE_FLOOR to full over the engage time, so control fades
+    in. The engage time is the Override Fade Up setting (HondaOverrideFadeUpSecs, Night Star; CarController passes it),
+    ENGAGE_S without settings; 0 = full limits at once (still starting from the wheel, still acceleration-limited)
   - |desired| <= 0.95 x the EPS's 4 m/s^2 lateral-acceleration clamp (angle_ref.AMAX), applied before the limits
   - not active: the target is the measured angle (the Tesla pattern), so the first target the EPS sees equals its own
     angle. lat_active is CarController's modified-EPS lkas_active, which drops while the driver overrides (same press
@@ -54,7 +56,7 @@ ANGLE_MAX_FRAC = 0.95
 _VT = [0., 5., 10., 15., 20., 30.]
 TARGET_RATE_DEG_S = [150., 150., 100., 60., 40., 25.]
 TARGET_ACCEL_DEG_S2 = [450., 600., 450., 300., 225., 180.]    # 1.5 x torque-mode hands-off p99 (11-15 route)
-ENGAGE_S, ENGAGE_FLOOR = 1.5, 0.15    # limits ramp 15% -> 100% over 1.5 s after the request rises
+ENGAGE_S, ENGAGE_FLOOR = 1.5, 0.15    # limits ramp 15% -> 100% after the request rises; ENGAGE_S = default engage time
 RAW_MAX = 32767
 
 
@@ -87,7 +89,7 @@ class AngleModeSender:
     self.sent_active = False
 
   def update(self, lat_active: bool, desired_deg: float, measured_deg: float, v_ego: float,
-             angle_ready: bool, measured_rate_deg_s: float = 0.0) -> tuple[int, bool, int]:
+             angle_ready: bool, measured_rate_deg_s: float = 0.0, engage_s: float = ENGAGE_S) -> tuple[int, bool, int]:
     active = bool(lat_active and angle_ready)
     if not active:
       self.apply_angle, self.apply_rate = float(measured_deg), float(measured_rate_deg_s)
@@ -97,7 +99,7 @@ class AngleModeSender:
     # clamp the target, not the output, so the output still moves along the limited trajectory (from a measured angle
     # above the clamp it walks down to it instead of jumping, which the EPS would reject)
     target = float(np.clip(float(desired_deg), -lim, lim))
-    fade = min(1.0, ENGAGE_FLOOR + (1.0 - ENGAGE_FLOOR) * self.active_frames * DT_CTRL / ENGAGE_S)
+    fade = 1.0 if engage_s <= 0.0 else min(1.0, ENGAGE_FLOOR + (1.0 - ENGAGE_FLOOR) * self.active_frames * DT_CTRL / engage_s)
     rate_max = fade * min(float(np.interp(v_ego, _VT, TARGET_RATE_DEG_S)), float(np.interp(v_ego, _V, ANGLE_STEP_DEG)) / DT_CTRL)
     accel_max = fade * float(np.interp(v_ego, _VT, TARGET_ACCEL_DEG_S2))
     err = target - self.apply_angle

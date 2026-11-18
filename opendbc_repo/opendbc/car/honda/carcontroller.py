@@ -246,7 +246,7 @@ class CarController(CarControllerBase):
       # push ~3000 counts against the driver until the stock EPS locked out (emulator be_16/36/37, 11-18).
       self.apply_angle_raw, lkas_active, angle_payload = self.angle_sender.update(
         lkas_active, actuators.steeringAngleDeg, CS.out.steeringAngleDeg, CS.out.vEgo, CS.eps_cal_status.angle_ready,
-        CS.out.steeringRateDeg)
+        CS.out.steeringRateDeg, current_settings(self.modified_eps_settings).fade_up_s)   # Override Fade Up = engage fade
       apply_torque = self.apply_angle_raw
     can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, lkas_active, self.tja_control,
                                                       eps_mode=self.eps_mode, angle_payload=angle_payload))

@@ -368,3 +368,21 @@ def test_press_drops_the_angle_request_whatever_the_override_settings(angle_file
   for _ in range(50):
     _, f = e4(ci, True, 10.0, -5.0, pressed=True)
     assert f[0:3] == bytes(3) and f[3] == 0x07                           # no angle, no request while pressed
+
+
+@pytest.mark.parametrize("fade_up", [0.0, 0.5, 3.0])
+def test_engage_fade_follows_override_fade_up(angle_file, fade_up):
+  import dataclasses
+  from opendbc.car.honda.modified_eps import DEFAULT_SETTINGS
+  ci = clarity(); ready(ci)
+  ci.CC.modified_eps_settings = type("S", (), {"current": lambda self: dataclasses.replace(DEFAULT_SETTINGS, fade_up_s=fade_up)})()
+  e4(ci, False, 0.0, 0.0, v=5.0)
+  ex = ci.CC.angle_sender; w = []; prev = 0.0
+  for _ in range(600):
+    e4(ci, True, 350.0, 0.0, v=5.0); w.append(abs(ex.apply_angle - prev) / 0.01); prev = ex.apply_angle
+  full = min(float(np.interp(5.0, cam._VT, cam.TARGET_RATE_DEG_S)), float(np.interp(5.0, cam._V, cam.ANGLE_STEP_DEG)) / 0.01)
+  t_full = next(k for k, x in enumerate(w) if x >= 0.99 * full) * 0.01      # first time the full rate is reached
+  if fade_up == 0.0:
+    assert t_full < 0.5                                                  # only the acceleration limit
+  else:
+    assert t_full >= 0.6 * fade_up                                       # the limits fade over the setting
