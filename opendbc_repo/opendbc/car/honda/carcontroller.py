@@ -4,6 +4,7 @@ from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import hondacan
+from opendbc.car.honda.clarity_angle_mode import BYTE3_ANGLE, AngleModeSender, angle_mode
 from opendbc.car.honda.eps_cal_status import requested_eps_mode
 from opendbc.car.honda.accord_mvl_stock import AccordMvlStock, qualified as mvl_stock_qualified
 from opendbc.car.honda.modified_eps import ModifiedEpsSteering, current_settings, get_eps_modified_steering_pressed, modified_eps  # noqa: F401
@@ -136,6 +137,11 @@ class CarController(CarControllerBase):
     # calibration, clear = stock. Sent on every frame (the EPS takes it only from valid frames while LKAS is idle), and
     # only when this fork runs the PTM controller (modified EPS fw, ',' marker). CleanPTM and stock firmware ignore byte 3.
     self.eps_mode = requested_eps_mode(CP) << 1   # 0x02 on the Clarity with the PTM controller, else 0
+    # Clarity angle mode: byte 3 = 0x07 (mode 3 + control type angle) and the angle target in bytes 0-1, gated on 0x6A4
+    self.angle_sender = AngleModeSender() if angle_mode(CP) else None
+    if self.angle_sender is not None:
+      self.eps_mode = BYTE3_ANGLE
+    self.apply_angle_raw = 0
     self.modified_eps_settings = None
     # Clarity with an interceptor: the PCM stays in ACC while openpilot is engaged (honda/pcm_acc.py)
     self.keep_pcm_acc = pcm_acc.qualified(CP)
@@ -226,8 +232,18 @@ class CarController(CarControllerBase):
         can_sends.append(make_tester_present_msg(0x18DAB0F1, 1, suppress_response=True))
 
     # Send steering command.
+    angle_payload = 0
+    if self.angle_sender is not None:
+      # angle mode replaces the torque: bytes 0-1 carry the target only while the EPS reports mode 3 on an angle build.
+      # The request follows ModifiedEpsSteering's lkas_active exactly as in torque mode: it drops while the driver
+      # overrides (and below the min steer speed), so the stiff angle loop never fights the driver; the next request
+      # restarts from the measured angle with the engage ramp. Keeping the request up through a press made the loop
+      # push ~3000 counts against the driver until the stock EPS locked out (emulator be_16/36/37, 11-18).
+      self.apply_angle_raw, lkas_active, angle_payload = self.angle_sender.update(
+        lkas_active, actuators.steeringAngleDeg, CS.out.steeringAngleDeg, CS.out.vEgo, CS.eps_cal_status.angle_ready)
+      apply_torque = self.apply_angle_raw
     can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, lkas_active, self.tja_control,
-                                                      eps_mode=self.eps_mode))
+                                                      eps_mode=self.eps_mode, angle_payload=angle_payload))
     if _projection is not None:
       _projection.emit('honda.STEERING_CONTROL', apply_torque, lkas_active, can_sends[-1])
 
@@ -360,6 +376,10 @@ class CarController(CarControllerBase):
     new_actuators.brake = self.brake
     new_actuators.torque = self.last_torque
     new_actuators.torqueOutputCan = apply_torque
+    if self.angle_sender is not None:
+      new_actuators.torque = 0.
+      new_actuators.torqueOutputCan = 0.
+      new_actuators.steeringAngleDeg = self.angle_sender.apply_angle
 
     self.frame += 1
     if _projection is not None:

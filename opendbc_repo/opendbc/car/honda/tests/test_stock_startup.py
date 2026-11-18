@@ -62,6 +62,8 @@ def exercise_startup(identity, alpha, release, aol, base_word, monkeypatch, firm
       saved.put_bool(key, value, block=True)
 
     initial = CarInterface.get_params(identity, fingerprint, list(firmware), card_module.alpha_long_requested(saved, is_release=release), release, False)
+    from openpilot.starpilot.car.honda.clarity_angle_mode import prepare as prepare_clarity_angle_mode
+    initial = prepare_clarity_angle_mode(initial, saved)   # card's startup hook (default on)
     initial.carVin = "0" * 17
     initial.carFw = list(firmware)
     assert initial.safetyConfigs[0].safetyParam == base_word

@@ -153,6 +153,9 @@ class HondaFlags(IntFlag):
   VGR_RIDGELINE_T6Z_A110 = 4194304
   # the Odyssey's THR-A020 rack is constant-ratio by Honda's spec and its image has no angle table (see steer_ratio.py)
   VGR_ODYSSEY_THR_A020 = 8388608
+  # Clarity angle-mode EPS build (rwd-xray lab/clarity/CLARITY_ANGLE_MODE_20261117): openpilot sends an angle target in
+  # 0xE4 instead of a torque, only once 0x6A4 reports mode 3 on an angle build (clarity_angle_mode.py). Chosen at startup.
+  CLARITY_ANGLE_MODE = 16777216
 
 
 # Car button codes

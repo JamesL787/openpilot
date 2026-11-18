@@ -1,8 +1,10 @@
 """The production lateral-controller selection, shared with independent replay."""
 
 from opendbc.car import structs
+from opendbc.car.honda.clarity_angle_mode import angle_mode as clarity_angle_mode
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
+from openpilot.selfdrive.controls.lib.latcontrol_honda_angle import LatControlHondaAngle
 from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, eps_firmware_calibration
 from openpilot.selfdrive.controls.lib.latcontrol_honda_modified_pid import LatControlHondaModifiedPID, use_honda_modified_pid
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
@@ -11,6 +13,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 
 def create_lateral_controller(cp, ci, dt, *, mode, turn_assist=False):
   if cp.steerControlType == structs.CarParams.SteerControlType.angle:
+    if cp.brand == "honda" and clarity_angle_mode(cp):
+      return LatControlHondaAngle(cp, ci, dt)
     return LatControlAngle(cp, ci, dt)
   if cp.steerControlType == structs.CarParams.SteerControlType.curvature:
     return LatControlCurvature(cp, ci, dt)

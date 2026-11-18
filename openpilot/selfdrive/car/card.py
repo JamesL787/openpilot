@@ -301,6 +301,8 @@ class Car:
             cp, long_cp, enabled=eligible, is_release=is_release)
           self.ioniq6_long_selected = self.ioniq6_long_pending
         cp = startup_preferences.prepare(cp, fingerprints=fingerprints)
+        from openpilot.starpilot.car.honda.clarity_angle_mode import prepare as prepare_clarity_angle_mode
+        cp = prepare_clarity_angle_mode(cp, self.params)   # before the interface exists (steerControlType)
         from openpilot.starpilot.car.ford.longitudinal_preferences import prepare_release_long as prepare_ford_release_long
         cp = prepare_ford_release_long(cp, self.params, is_release=is_release, enabled=openpilot_enabled_toggle)
         return self.vehicle_startup.prepare(cp, interfaces[candidate], self.can_callbacks,

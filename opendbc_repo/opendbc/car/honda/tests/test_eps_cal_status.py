@@ -56,7 +56,7 @@ def test_dbc_decodes_every_emulator_frame():
       dat = bytes.fromhex(hexdat)
       assert ADDR in cp.update([(t, [(ADDR, dat, 0)])]), (name, hexdat)   # checksum and counter valid
       vl = cp.vl["EPS_CAL_STATUS"]
-      assert vl["ACTIVE_MODE"] == dat[0] & 0xF and vl["REQUESTED_MODE"] == dat[0] >> 4
+      assert vl["ACTIVE_MODE"] == dat[0] & 0x7 and vl["REQUESTED_MODE"] == dat[0] >> 4
       assert vl["BUILD_ID"] == 0x02 and dat[2:7] == bytes(5)          # reserved bytes are 0
   assert KNOWN_BUILDS[0x02] == 0b111
 

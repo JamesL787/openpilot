@@ -1,6 +1,7 @@
 """The Night Star settings page: the fork's own settings, edited live (onroad too).
 
-Every row here is read again while driving (the EPS rows once a second, the controller rows each refresh). Every
+Every row here is read again while driving (the EPS rows once a second, the controller rows each refresh), except Angle
+Mode (Clarity only), which picks the steering type and so applies at the next car start. Every
 calibrated EPS image steers with LatControlHondaEps, so the controller has no row. The override fades and the output
 low-pass bands are fixed by design and have no row.
 """
@@ -11,11 +12,16 @@ from openpilot.starpilot.saved_source import read_saved
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow
 
 SEATBELT_KEY = "DisableSeatbeltCheck"
+ANGLE_MODE_KEY = "HondaClarityAngleMode"
+CLARITY = "HONDA_CLARITY"
 
 # key -> (label, reason)
 BOOL_ROWS = {
   "HondaDriverAssistDuringOverride": ("Assist During Override",
                                       "Keep steering assist active while you override the wheel."),
+  ANGLE_MODE_KEY: ("Angle Mode",
+                   "Steer by wheel angle through the EPS's own angle loop. Needs the angle-mode EPS firmware (build 0x04); "
+                   "on any other EPS firmware steering stays unavailable, so turn this off. Takes effect at the next start."),
   SEATBELT_KEY: ("Disable Seatbelt Check", "Allow engaging and staying engaged with the driver's seatbelt unlatched."),
 }
 # key -> (label, reason, minimum, maximum, step, unit, integer)
@@ -66,6 +72,9 @@ class NightStarFeature:
       if calibrated:  # read by LatControlHondaEps only
         keys.append("HondaEpsAngleRateLimit")
       keys.extend(EPS_KEYS)
+      fingerprint, _, _ = capability
+      if fingerprint == CLARITY:   # read once at car start (starpilot/car/honda/clarity_angle_mode.py)
+        keys.append(ANGLE_MODE_KEY)
     keys.append(SEATBELT_KEY)
     return tuple(keys)
 
@@ -73,7 +82,11 @@ class NightStarFeature:
     raw, readable = read_saved(self.params, key, 8)
     if not readable or raw not in (None, b"0", b"1"):
       return None
-    return (raw == b"1") if raw is not None else self.params.get_default_value(key) == "1"
+    return (raw == b"1") if raw is not None else self._default_on(key)
+
+  def _default_on(self, key) -> bool:
+    # get_default_value is typed: True for a BOOL key whose default is "1" (no BOOL row defaulted on before Angle Mode)
+    return self.params.get_default_value(key) in (True, "1", b"1")
 
   def _default(self, key) -> str:
     value = self.params.get_default_value(key)
@@ -88,7 +101,7 @@ class NightStarFeature:
       value = self._saved_bool(key) if readable else None
       valid = value is not None
       return FeatureRow(key, label, ("On" if value else "Off") if valid else "Invalid saved choice", source=raw,
-                        choices=("Off", "On") if valid else (), default_value="On" if self._default(key) == "1" else "Off",
+                        choices=("Off", "On") if valid else (), default_value="On" if self._default_on(key) else "Off",
                         available=allowed and valid, reason=reason if valid else "Invalid saved choice", **binding)
     label, reason, low, high, step, unit, integer = NUMBER_ROWS[key]
     try:

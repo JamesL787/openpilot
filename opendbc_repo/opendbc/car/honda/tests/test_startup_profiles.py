@@ -58,6 +58,8 @@ def exercise_final_cp_publication_and_disabled_startup(identity, monkeypatch, fi
   assert selected_gear is not None
   fingerprint[pt_bus][selected_gear.address] = selected_gear.size
   initial = CarInterface.get_params(identity, fingerprint, list(firmware), False, False, False)
+  from opendbc.car.honda.clarity_angle_mode import apply_angle_mode
+  initial = apply_angle_mode(initial, True)   # card's startup hook: HondaClarityAngleMode is unset, default on
   initial.carVin = "0" * 17
   initial.carFw = list(firmware)
   if automatic_firmware:

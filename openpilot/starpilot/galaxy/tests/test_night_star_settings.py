@@ -66,6 +66,16 @@ class TestNightStarSettings(unittest.TestCase):
     self.assertTrue(self.set('Steering Angle Rate Limit', direction=1))   # the Clarity saved 219, off the 10 grid
     self.assertEqual(self.params.get('HondaEpsAngleRateLimit'), 229)
 
+  def test_clarity_has_angle_mode_on_by_default(self):
+    row = next(row for row in self.page()['rows'] if row['label'] == 'Angle Mode')
+    self.assertEqual((row['value'], row.get('default_value', 'On')), ('On', 'On'))
+    self.assertTrue(self.set('Angle Mode', 'Off'))
+    self.assertFalse(self.params.get_bool('HondaClarityAngleMode'))
+
+  def test_angle_mode_is_clarity_only(self):
+    self.use(vehicle(CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00'), parked=True)
+    self.assertNotIn('Angle Mode', self.labels())
+
   def test_the_steer_rate_limiter_has_no_rows(self):
     labels = self.labels()
     self.assertFalse([label for label in labels if 'Rate Limiter' in label or label.startswith('Rate Limit ')])

@@ -212,7 +212,7 @@ class CarInterface(CarInterfaceBase):
 
     elif candidate == CAR.HONDA_CLARITY:
       if eps_modified:
-        _modified_eps_tune(ret)
+        _modified_eps_tune(ret)   # angle mode, if chosen, is applied after this by card's startup hook (clarity_angle_mode.py)
       else:
         ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]
       ret.stopAccel = 0.0

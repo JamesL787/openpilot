@@ -106,6 +106,8 @@ DESCRIPTIONS = {
   'HondaMinSteerSpeed': 'Sends no steering torque below this speed.',
   'HondaOverrideTorqueScale': 'Keeps this share of the steering command while you override the wheel.',
   'HondaDriverAssistDuringOverride': 'Keeps steering assist active while you override the wheel.',
+  'HondaClarityAngleMode': ('Clarity only: steers by wheel angle through the angle-mode EPS firmware (build 0x04). ' +
+                            'On any other EPS firmware steering stays unavailable, so turn it off. Applies at the next start.'),
   'DisableSeatbeltCheck': "Allows engaging and staying engaged with the driver's seatbelt unlatched.",
   'RemoteStartBootsComma': 'Wakes comma during GM remote start.',
   'HKGRemoteStartBootsComma': 'Wakes comma during Hyundai, Kia or Genesis remote climate operation.',
