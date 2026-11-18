@@ -195,7 +195,12 @@ class CarController(CarControllerBase):
       _projection.capture_honda(None, CS)
     torque_cmd = actuators.torque
     if self.modified_eps_steering is not None:
-      limited_torque, lkas_active, _ = self.modified_eps_steering.update(CC, CS, current_settings(self.modified_eps_settings))
+      limited_torque, lkas_active, meps_pressed = self.modified_eps_steering.update(CC, CS, current_settings(self.modified_eps_settings))
+      if self.angle_sender is not None and meps_pressed:
+        # Angle mode: no request during a press, whatever Override Fade Down or Assist During Override say. Both keep the
+        # request up through a press, which in torque mode eases torque out; in angle mode it would hold the stiff angle
+        # loop against the driver (the emulator's no-yield runs: ~3000 counts against the hands, then EPS lockout).
+        lkas_active = False
     else:
       limited_torque = rate_limit(torque_cmd, self.last_torque, -self.params.STEER_DELTA_DOWN * DT_CTRL,
                                   self.params.STEER_DELTA_UP * DT_CTRL)

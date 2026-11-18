@@ -352,3 +352,19 @@ def test_no_angle_request_unless_the_build_reports_angle_support(angle_file, sta
     _, d = e4(ci, True, 20.0 + k, 0.0)
     assert d[0:2] == b"\0\0" and not d[2] & 0x80 and not d[2] & 0x20, (state, d.hex())   # no angle, no request, no bit 5
     assert d[3] == 0x07                                # only the mode request, which a non-angle build ignores or maps
+
+
+@pytest.mark.parametrize("setting", [dict(fade_down_s=1.0), dict(assist_during_override=True)])
+def test_press_drops_the_angle_request_whatever_the_override_settings(angle_file, setting):
+  # Override Fade Down / Assist During Override keep the request up through a press in torque mode; never in angle mode
+  import dataclasses
+  from opendbc.car.honda.modified_eps import DEFAULT_SETTINGS
+  ci = clarity(); ready(ci)
+  ci.CC.modified_eps_settings = type("S", (), {"current": lambda self: dataclasses.replace(DEFAULT_SETTINGS, **setting)})()
+  e4(ci, False, 0.0, 0.0)
+  for _ in range(100):
+    _, f = e4(ci, True, 10.0, 0.0)
+  assert f[2] == 0xA0
+  for _ in range(50):
+    _, f = e4(ci, True, 10.0, -5.0, pressed=True)
+    assert f[0:3] == bytes(3) and f[3] == 0x07                           # no angle, no request while pressed
