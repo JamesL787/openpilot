@@ -22,14 +22,14 @@ BOOL_ROWS = {
   "HondaDriverAssistDuringOverride": ("Assist During Override",
                                       "Keep steering assist active while you override the wheel."),
   ANGLE_MODE_KEY: ("Angle Mode",
-                   "Steer by wheel angle through the EPS's own angle loop. Needs the angle-mode EPS firmware (build 0x04); "
-                   "on any other EPS firmware steering stays unavailable, so turn this off. Takes effect at the next start."),
+                   ("Steer by wheel angle through the EPS's own angle loop. Needs the angle-mode EPS firmware (build 0x04); " +
+                    "on any other EPS firmware steering stays unavailable, so turn this off. Takes effect at the next start.")),
   ANGLE_CAP3_KEY: ("Angle Lateral Cap 3.0 m/s\u00b2",
-                   "Angle mode only: steer with the EPS's 3.0 m/s\u00b2 lateral-acceleration clamp (mode 4) instead of 4.0. Needs "
-                   "EPS build 0x05, 0x06, 0x08 or 0x09; on other builds it has no effect. Switches when lateral is off."),
+                   ("Angle mode only: steer with the EPS's 3.0 m/s\u00b2 lateral-acceleration clamp (mode 4) instead of 4.0. Needs " +
+                    "EPS build 0x05, 0x06, 0x08 or 0x09; on other builds it has no effect. Switches when lateral is off.")),
   ANGLE_HOLD_KEY: ("Angle Hold Through Override",
-                   "Angle mode only: keep steering engaged while you override the wheel. Assist fades to zero while you steer and "
-                   "ramps back after you let go, instead of dropping out and re-engaging. Needs EPS build 0x06, 0x08 or 0x09."),
+                   ("Angle mode only: keep steering engaged while you override the wheel. Assist drops to zero while you steer " +
+                    "and comes back after you let go, instead of dropping out and re-engaging. Needs EPS build 0x06, 0x08 or 0x09.")),
   SEATBELT_KEY: ("Disable Seatbelt Check", "Allow engaging and staying engaged with the driver's seatbelt unlatched."),
 }
 # key -> (label, reason, minimum, maximum, step, unit, integer)
