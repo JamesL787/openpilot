@@ -67,16 +67,16 @@ RAW_MAX = 32767
 # authority ramp (build 0x06, sunnypilot HKG CAN-FD angle torque_reduction_gain): while the driver overrides, the request
 # and the plan target stay up and the loop's authority falls to AUTH_MIN over AUTH_DOWN_FRAMES (adaptive, at least
 # AUTH_DOWN_MIN_STEP per frame); after the release it climbs back over Override Fade Up (AUTH_UP_DEFAULT per frame if 0)
-AUTH_MIN, AUTH_DOWN_FRAMES, AUTH_DOWN_MIN_STEP, AUTH_UP_DEFAULT = 0.1, 17.0, 0.004, 0.008
-# Off by default (emulator 11-19, hands-on model): holding the request through an override keeps the stock EPS's own
-# rate damping on, which drags the driver's wheel even at near-zero loop authority (seg 36: wheel 15-18 deg behind,
-# hands-off tracking 1.75 -> 3.39 deg). With it off, build 0x06 still ramps the loop in over ~1 s after every engage
-# and override in firmware (re-engage wheel acceleration 724 -> 435 median), with no drag. True = the HKG experiment.
-# 11-19 (build 0x07 investigation): holding is blocked by the STOCK EPS, not by damping. FUN_28D5A flags a driver override
-# when |T_comp| >= 1536 (cal 0x1375C) for 50 ticks; FUN_2A994 then latches LKAS off (0xFFF879C9 3 -> 1) if the LKAS command
-# stays > 44 for 100 more ticks, and only clears after <= 44 for 1000 ticks (2 s). The stock override fade (FUN_29CAE) also
-# zeroes LKAS above 1536 anyway. So a held request gives no assist during the press and risks a 2 s lockout. Keep it off.
-HOLD_THROUGH_OVERRIDE = False
+AUTH_MIN, AUTH_DOWN_FRAMES, AUTH_DOWN_MIN_STEP, AUTH_UP_DEFAULT = 0.0, 17.0, 0.004, 0.008
+# The hold is the setting HondaClarityAngleHoldOverride (ModifiedEpsSettings.angle_hold_override, default on).
+# AUTH_MIN is 0 because of the STOCK EPS override lockout (11-19, build 0x07 investigation): FUN_28D5A flags a driver
+# override when |T_comp| >= 1536 (cal 0x1375C) for 50 ticks; FUN_2A994 then latches LKAS off (0xFFF879C9 3 -> 1) if the
+# LKAS command stays > 44 for 100 more ticks, and only clears after <= 44 for 1000 ticks (2 s). With a 0.1 floor the
+# loop's output stayed above 44 and the hold locked out (emulator seg 36, hands-off tracking 1.75 -> 3.39 deg). With the
+# floor at 0 (CUT 15 while yielding) the command fades under 44: no lockout in the emulator (hand KD 30, 8 segments,
+# tracking 1.75 deg) and re-engage wheel acceleration 435 -> 321 median vs dropping the request; the wheel gets back to
+# the path more slowly (error 1 s after release 0.5 -> 1.8 deg). The stock override fade (FUN_29CAE) zeroes LKAS above
+# 1536 anyway, so there is no assist during a hard press either way.
 
 
 def apply_angle_mode(CP, requested: bool):

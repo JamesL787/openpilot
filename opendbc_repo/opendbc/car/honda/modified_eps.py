@@ -29,6 +29,7 @@ class ModifiedEpsSettings:
   delta_up: float = 3.0                  # HondaSteerDeltaUp, per second of the normalized command
   delta_down: float = 3.0                # HondaSteerDeltaDown
   angle_cap3: bool = False               # HondaClarityAngleCap3, Clarity angle mode: prefer mode 4 (3.0 m/s^2) on build 0x05
+  angle_hold_override: bool = True       # HondaClarityAngleHoldOverride, Clarity angle mode on build 0x06/0x08: hold the request through an override (authority -> 0)
   angle_rate_limit_deg_s: float = 300.0  # HondaEpsAngleRateLimit, Clarity angle mode: cap on the target's rate in CarController (0 = off)
 
 

@@ -30,7 +30,7 @@ HONDA_EPS_PRESERVED_KEYS = frozenset({
   "LatFScaleLowSpeed", "LatFScaleStandard", "LatFScaleHighway",
   "HondaDriverOverrideThreshold", "HondaMinSteerSpeed", "HondaOverrideFadeDownSecs", "HondaOverrideTorqueScale",
   "HondaDriverAssistDuringOverride", "HondaSteerDeltaLimiter", "HondaSteerDeltaUp", "HondaSteerDeltaDown",
-  "HondaClarityAngleMode", "HondaClarityAngleCap3",
+  "HondaClarityAngleMode", "HondaClarityAngleCap3", "HondaClarityAngleHoldOverride",
   "DisableSeatbeltCheck",
 })
 

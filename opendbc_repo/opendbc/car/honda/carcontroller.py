@@ -4,7 +4,6 @@ from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import hondacan
-from opendbc.car.honda import clarity_angle_mode as cam
 from opendbc.car.honda.clarity_angle_mode import AMAX_CAP3_SCALE, BYTE3_ANGLE, AngleModeSender, AuthorityRamp, angle_mode
 from opendbc.car.honda.eps_cal_status import requested_eps_mode
 from opendbc.car.honda.accord_mvl_stock import AccordMvlStock, qualified as mvl_stock_qualified
@@ -199,16 +198,19 @@ class CarController(CarControllerBase):
     torque_cmd = actuators.torque
     if self.modified_eps_steering is not None:
       limited_torque, lkas_active, meps_pressed = self.modified_eps_steering.update(CC, CS, current_settings(self.modified_eps_settings))
-      angle_hold = self.angle_sender is not None and CS.eps_cal_status.authority_ready and cam.HOLD_THROUGH_OVERRIDE
+      angle_hold = (self.angle_sender is not None and CS.eps_cal_status.authority_ready and
+                    current_settings(self.modified_eps_settings).angle_hold_override)
       if angle_hold:
-        # Build 0x06 (HKG style, sunnypilot hkg-angle-steering): the request and the plan target stay up through an
-        # override and the EPS loop's authority ramps instead: down to AUTH_MIN while the driver yields (the press
-        # detector OR the torque-mode yield, which also catches steering without the press flag), back up over Override
-        # Fade Up after. Emulator 11-19: re-engage wheel acceleration about halved vs dropping the request.
+        # Build 0x06/0x08 with Angle Hold Through Override (default on; HKG style, sunnypilot hkg-angle-steering): the
+        # request and the plan target stay up through an override and the EPS loop's authority ramps instead: down to 0
+        # while the driver yields (the press detector OR the torque-mode yield, which also catches steering without the
+        # press flag), so the command stays under the stock lockout's threshold, back up over Override Fade Up after.
+        # Emulator 11-19: re-engage wheel acceleration 435 -> 321 median vs dropping the request, no lockout.
         mset = current_settings(self.modified_eps_settings)
         yielding = bool(meps_pressed or CS.out.steeringPressed)
         lkas_active = bool(CC.latActive and CS.out.vEgo >= mset.min_steer_speed_mph * CV.MPH_TO_MS)
-        self.angle_cut = self.authority.update(lkas_active and CS.eps_cal_status.angle_ready, yielding, mset.fade_up_s)
+        cut = self.authority.update(lkas_active and CS.eps_cal_status.angle_ready, yielding, mset.fade_up_s)
+        self.angle_cut = cut if lkas_active else 0   # no request: byte 3 stays 0x07/0x09 (the loop resets G on activation)
       else:
         self.authority.update(False, False, 0.0); self.angle_cut = 0
       if self.angle_sender is not None and meps_pressed and not angle_hold:

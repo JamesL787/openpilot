@@ -36,6 +36,7 @@ def read_settings(params) -> ModifiedEpsSettings:
     delta_up=_number(params, "HondaSteerDeltaUp", d.delta_up, 0.0, 100.0),
     delta_down=_number(params, "HondaSteerDeltaDown", d.delta_down, 0.0, 100.0),
     angle_cap3=_flag(params, "HondaClarityAngleCap3", d.angle_cap3),
+    angle_hold_override=_flag(params, "HondaClarityAngleHoldOverride", d.angle_hold_override),
     angle_rate_limit_deg_s=_number(params, "HondaEpsAngleRateLimit", d.angle_rate_limit_deg_s, 0.0, 2000.0),
   )
 

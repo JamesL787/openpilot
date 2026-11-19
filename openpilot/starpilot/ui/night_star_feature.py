@@ -14,6 +14,7 @@ from openpilot.starpilot.ui.feature_settings_state import FeatureRow
 SEATBELT_KEY = "DisableSeatbeltCheck"
 ANGLE_MODE_KEY = "HondaClarityAngleMode"
 ANGLE_CAP3_KEY = "HondaClarityAngleCap3"
+ANGLE_HOLD_KEY = "HondaClarityAngleHoldOverride"
 CLARITY = "HONDA_CLARITY"
 
 # key -> (label, reason)
@@ -26,6 +27,9 @@ BOOL_ROWS = {
   ANGLE_CAP3_KEY: ("Angle Lateral Cap 3.0 m/s\u00b2",
                    "Angle mode only: steer with the EPS's 3.0 m/s\u00b2 lateral-acceleration clamp (mode 4) instead of 4.0. Needs "
                    "EPS build 0x05, 0x06 or 0x08; on other builds it has no effect. Switches when lateral is off."),
+  ANGLE_HOLD_KEY: ("Angle Hold Through Override",
+                   "Angle mode only: keep steering engaged while you override the wheel. Assist fades to zero while you steer and "
+                   "ramps back after you let go, instead of dropping out and re-engaging. Needs EPS build 0x06 or 0x08."),
   SEATBELT_KEY: ("Disable Seatbelt Check", "Allow engaging and staying engaged with the driver's seatbelt unlatched."),
 }
 # key -> (label, reason, minimum, maximum, step, unit, integer)
@@ -88,6 +92,7 @@ class NightStarFeature:
       if fingerprint == CLARITY:   # read once at car start (starpilot/car/honda/clarity_angle_mode.py)
         keys.append(ANGLE_MODE_KEY)
         keys.append(ANGLE_CAP3_KEY)   # live, read with the EPS rows; used only on EPS builds 0x05, 0x06, 0x08
+        keys.append(ANGLE_HOLD_KEY)   # live; used only on EPS builds 0x06, 0x08
     keys.append(SEATBELT_KEY)
     return tuple(keys)
 

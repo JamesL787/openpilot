@@ -406,7 +406,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HondaEpsAngleRateLimit", {PERSISTENT, INT, "300"}},  // deg/s ceiling on desired wheel-angle slew; 0 disables
     {"HondaEpsFirmwareVgr", {PERSISTENT, BOOL, "0"}},  // cars without a yaw-fitted rack map: use the EPS firmware A (position) VGR table
     {"HondaClarityAngleMode", {PERSISTENT, BOOL, "1"}},  // Clarity on the angle-mode EPS build (0x04): steer by angle; read at car start
-    {"HondaClarityAngleCap3", {PERSISTENT, BOOL, "0"}},  // Clarity angle mode: use mode 4 (3.0 m/s^2 clamp) when the EPS is build 0x05; live
+    {"HondaClarityAngleCap3", {PERSISTENT, BOOL, "0"}},
+    {"HondaClarityAngleHoldOverride", {PERSISTENT, BOOL, "1"}},  // Clarity angle mode on EPS build 0x06/0x08: hold the request through an override at zero loop authority; live  // Clarity angle mode: use mode 4 (3.0 m/s^2 clamp) when the EPS is build 0x05; live
     {"HondaOverrideFadeUpSecs", {PERSISTENT, FLOAT, "0.5"}},  // s; Night Star page
     // Shadow car learner (selfdrive/controls/honda_eps_learnerd.py): it measures and publishes, nothing reads it back
     {"HondaEpsLearner", {PERSISTENT, BOOL, "1"}},
