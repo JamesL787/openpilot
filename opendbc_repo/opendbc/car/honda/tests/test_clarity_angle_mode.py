@@ -602,3 +602,43 @@ def test_older_builds_send_no_cut_and_drop_the_request_on_press(angle_file, buil
   assert all(e4(ci, True, 10.0, 0.0)[1][3] == 0x07 for _ in range(50))
   _, d = e4(ci, True, 10.0, -5.0, pressed=True)
   assert d[0:3] == bytes(3) and d[3] == 0x07
+
+
+# --- angle mode: the press threshold follows the wheel angle (lower toward center, the full setting from 45 deg) ---
+
+def test_angle_mode_threshold_curve():
+  from opendbc.car.honda.modified_eps import angle_mode_threshold
+  assert [round(angle_mode_threshold(1660, a)) for a in (0, 5, -15, 30, 45, 200)] == [1295, 1295, 1394, 1527, 1660, 1660]
+
+
+def _press_at(ci, angle, torque, n=6):
+  from opendbc.can import CANPacker
+  pk = CANPacker("honda_clarity_hybrid_2018_can_generated")
+  cs = None
+  for _ in range(n):
+    _press_at.t += 10_000_000
+    msgs = [pk.make_can_msg("STEERING_SENSORS", 0, {"STEER_ANGLE": angle, "COUNTER": _press_at.c}),
+            pk.make_can_msg("STEER_STATUS", 0, {"STEER_TORQUE_SENSOR": torque, "COUNTER": _press_at.c})]
+    _press_at.c = (_press_at.c + 1) % 4
+    cs = ci.update([(_press_at.t, [(a, d, b) for a, d, b in msgs])])
+  return cs.steeringPressed
+_press_at.t, _press_at.c = 3_000_000_000, 0
+
+
+def test_angle_mode_press_threshold_follows_the_angle(angle_file):
+  import dataclasses
+  from opendbc.car.honda.modified_eps import DEFAULT_SETTINGS
+  ci = clarity()
+  ci.CS.modified_eps_settings = type("S", (), {"current": lambda self: dataclasses.replace(DEFAULT_SETTINGS, override_threshold=1660)})()
+  assert _press_at(ci, 2.0, 1400)              # near center 1400 > 1295: a press
+  assert not _press_at(ci, 60.0, 0, n=150)     # release (hold time), then a large angle
+  assert not _press_at(ci, 60.0, 1400)         # 60 deg: 1400 < 1660, not a press
+  assert _press_at(ci, 60.0, 1700)
+
+
+def test_torque_mode_press_threshold_ignores_the_angle():
+  import dataclasses
+  from opendbc.car.honda.modified_eps import DEFAULT_SETTINGS
+  ci = clarity()                                # Angle Mode off: torque mode
+  ci.CS.modified_eps_settings = type("S", (), {"current": lambda self: dataclasses.replace(DEFAULT_SETTINGS, override_threshold=1660)})()
+  assert not _press_at(ci, 2.0, 1400)

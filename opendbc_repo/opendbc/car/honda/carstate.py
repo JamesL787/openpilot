@@ -8,7 +8,8 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import pcm_acc
 from opendbc.car.honda.eps_cal_status import MSG as EPS_CAL_STATUS_MSG, EpsCalStatus
 from opendbc.car.honda.hondacan import CanBus
-from opendbc.car.honda.modified_eps import SteeringPressedHysteresis, current_settings, modified_eps, steering_pressed_threshold
+from opendbc.car.honda.modified_eps import SteeringPressedHysteresis, angle_mode_threshold, current_settings, modified_eps, \
+  steering_pressed_threshold
 from opendbc.car.honda.yaw_rate import get_yaw_rate_calibration
 from opendbc.car.honda.values import CAR, DBC, STEER_THRESHOLD, HondaFlags, CruiseButtons, CruiseSettings, \
                                                  GearShifter, CarControllerParams
@@ -200,6 +201,8 @@ class CarState(CarStateBase):
     ret.steeringTorque = cp.vl["STEER_STATUS"]["STEER_TORQUE_SENSOR"]
     if self.modified_eps:
       steer_threshold = steering_pressed_threshold(self.CP, current_settings(self.modified_eps_settings).override_threshold)
+      if self.CP.flags & HondaFlags.CLARITY_ANGLE_MODE:   # lower toward center, the full setting from 45 deg
+        steer_threshold = angle_mode_threshold(steer_threshold, ret.steeringAngleDeg)
       ret.steeringPressed = self.steering_pressed_hysteresis.update(ret.steeringTorque, steer_threshold)
     else:
       steer_threshold = STEER_THRESHOLD.get(self.CP.carFingerprint, 1200)
