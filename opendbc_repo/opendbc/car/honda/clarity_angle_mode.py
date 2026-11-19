@@ -44,8 +44,8 @@ ANGLE_MODE_PARAM = "HondaClarityAngleMode"   # BOOL, default "1" (params_keys.h)
 EPS_MODE_ANGLE = 3            # byte 3 bits 3:1
 BYTE3_ANGLE = (EPS_MODE_ANGLE << 1) | 1
 EPS_MODE_ANGLE_CAP3 = 4       # build 0x05: mode 4 = the same angle loop with a 3.0 m/s^2 clamp (byte 3 = 0x09)
-CAP3_BUILDS = {0x05, 0x06, 0x08}    # builds that have mode 4
-AUTH_BUILDS = {0x06, 0x08}    # build 0x06 (and 0x08 = 0x06 + 100 ms stale window): angle-loop authority gain, byte 3 bits 7:4 = CUT (0 = full .. 15 = none)
+CAP3_BUILDS = {0x05, 0x06, 0x08, 0x09}    # builds that have mode 4
+AUTH_BUILDS = {0x06, 0x08, 0x09}    # build 0x06 (0x08 = + 100 ms stale window, 0x09 = + fast ramp-in / instant drop): angle-loop authority gain, byte 3 bits 7:4 = CUT (0 = full .. 15 = none)
 AMAX_CAP3_SCALE = 3.0 / 4.0   # angle_ref AMAX4_SCALE: mode 4's clamp table = mode 3's x 0.75 (clamp angle is linear in a_lat)
 ANGLE_PAYLOAD = 0x20          # byte 2 bit 5 (DBC SET_ME_X00 holds byte 2 bits 6:0)
 RAW_PER_DEG = -10.0           # 0x14A STEER_ANGLE factor is -0.1
@@ -64,10 +64,10 @@ TARGET_RATE_DEG_S = [150., 150., 100., 60., 40., 25.]
 TARGET_ACCEL_DEG_S2 = [450., 600., 450., 300., 225., 180.]    # 1.5 x torque-mode hands-off p99 (11-15 route)
 ENGAGE_S, ENGAGE_FLOOR = 1.5, 0.15    # limits ramp 15% -> 100% after the request rises; ENGAGE_S = default engage time
 RAW_MAX = 32767
-# authority ramp (build 0x06, sunnypilot HKG CAN-FD angle torque_reduction_gain): while the driver overrides, the request
-# and the plan target stay up and the loop's authority falls to AUTH_MIN over AUTH_DOWN_FRAMES (adaptive, at least
-# AUTH_DOWN_MIN_STEP per frame); after the release it climbs back over Override Fade Up (AUTH_UP_DEFAULT per frame if 0)
-AUTH_MIN, AUTH_DOWN_FRAMES, AUTH_DOWN_MIN_STEP, AUTH_UP_DEFAULT = 0.0, 17.0, 0.004, 0.008
+# authority ramp (builds 0x06/0x08/0x09): while the driver overrides, the request stays up and the loop's authority drops
+# to AUTH_MIN at once (route 000000ed: HKG's 17-frame fade pulled the wheel toward center under the driver's hands); after
+# the release it climbs back over Override Fade Up (AUTH_UP_DEFAULT per frame if 0)
+AUTH_MIN, AUTH_UP_DEFAULT = 0.0, 0.008
 # The hold is the setting HondaClarityAngleHoldOverride (ModifiedEpsSettings.angle_hold_override, default on).
 # AUTH_MIN is 0 because of the STOCK EPS override lockout (11-19, build 0x07 investigation): FUN_28D5A flags a driver
 # override when |T_comp| >= 1536 (cal 0x1375C) for 50 ticks; FUN_2A994 then latches LKAS off (0xFFF879C9 3 -> 1) if the
@@ -110,8 +110,19 @@ class AngleModeSender:
 
   def update(self, lat_active: bool, desired_deg: float, measured_deg: float, v_ego: float,
              angle_ready: bool, measured_rate_deg_s: float = 0.0, engage_s: float = ENGAGE_S,
-             amax_scale: float = 1.0, rate_limit_deg_s: float = 0.0, effort_fade: bool = True) -> tuple[int, bool, int]:
+             amax_scale: float = 1.0, rate_limit_deg_s: float = 0.0, effort_fade: bool = True,
+             follow: bool = False) -> tuple[int, bool, int]:
     active = bool(lat_active and angle_ready)
+    if active and follow:
+      # Angle Hold Through Override, driver yielding (route 000000ed): the sent target follows the wheel (at most the EPS
+      # per-frame jump limit) instead of the plan, so the loop never pulls toward a target the driver is leaving and the
+      # release starts from where the driver put the wheel. The trajectory restarts there with the wheel's rate and the
+      # engage fade (active_frames = 0), like a fresh engage.
+      self.apply_angle, self.apply_rate, self.active_frames = float(measured_deg), float(measured_rate_deg_s), 0
+      step = float(np.interp(v_ego, _V, ANGLE_STEP_DEG))
+      self.out_angle += float(np.clip(float(measured_deg) - self.out_angle, -step, step))
+      self.sent_active = True
+      return angle_to_raw(self.out_angle), True, ANGLE_PAYLOAD
     if not active:
       self.apply_angle, self.apply_rate = float(measured_deg), float(measured_rate_deg_s)
       self.out_angle = float(measured_deg)
@@ -166,8 +177,7 @@ class AuthorityRamp:
     if not active:
       self.g = 0.0
     elif yielding:
-      if self.g > AUTH_MIN:
-        self.g = max(self.g - max((self.g - AUTH_MIN) / AUTH_DOWN_FRAMES, AUTH_DOWN_MIN_STEP), AUTH_MIN)
+      self.g = AUTH_MIN               # instant (route 000000ed: the 17-frame HKG fade pulled the wheel under the driver's hands)
     else:
       self.g = min(1.0, self.g + (DT_CTRL / fade_up_s if fade_up_s > 0.0 else AUTH_UP_DEFAULT))
     return int(round(15.0 * (1.0 - self.g)))

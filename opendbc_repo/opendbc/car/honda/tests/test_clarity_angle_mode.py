@@ -403,7 +403,7 @@ def test_cap3_on_build_04_keeps_mode_3(angle_file):
   assert d[3] == 0x07 and ci.CS.eps_cal_status.requested == 3 and ci.CS.eps_cal_status.angle_ready
 
 
-@pytest.mark.parametrize("build", [0x05, 0x06, 0x08])
+@pytest.mark.parametrize("build", [0x05, 0x06, 0x08, 0x09])
 def test_cap3_on_build_05_requests_mode_4_and_uses_the_3g_clamp(angle_file, build):
   ci = clarity(); cap3(ci, True); f = Feed(ci)
   f.run([v3(build=build, active=3, requested=3, counter=k % 4) for k in range(4)])
@@ -551,7 +551,7 @@ def test_hold_through_override_is_on_by_default():
   assert DEFAULT_SETTINGS.angle_hold_override and cam.AUTH_MIN == 0.0
 
 
-@pytest.mark.parametrize("build", [0x06, 0x08])
+@pytest.mark.parametrize("build", [0x06, 0x08, 0x09])
 def test_build_06_hold_off_drops_the_request_on_press_and_sends_no_cut(angle_file, build):
   ci = clarity(); hold(ci, False); f = Feed(ci)
   f.run([v3(build=build, counter=k % 4) for k in range(8)])
@@ -562,7 +562,7 @@ def test_build_06_hold_off_drops_the_request_on_press_and_sends_no_cut(angle_fil
   assert d[0:3] == bytes(3) and d[3] == 0x07
 
 
-@pytest.mark.parametrize("build", [0x06, 0x08])
+@pytest.mark.parametrize("build", [0x06, 0x08, 0x09])
 def test_build_06_hold_holds_the_request_through_a_press_and_ramps_authority(angle_file, build):
   ci = clarity(); fade_up(ci, 1.0); f = Feed(ci)                         # default settings: hold on
   f.run([v3(build=build, counter=k % 4) for k in range(8)])
@@ -573,11 +573,14 @@ def test_build_06_hold_holds_the_request_through_a_press_and_ramps_authority(ang
   press = [e4(ci, True, 10.0, -5.0, pressed=True)[1] for _ in range(60)]
   assert all(d[2] == 0xA0 for d in press)                                              # request held
   a = [struct.unpack(">h", d[0:2])[0] / cam.RAW_PER_DEG for d in press]
-  assert a[-1] == pytest.approx(10.0, abs=0.051)                                       # target stays on the plan
+  assert a[-1] == pytest.approx(-5.0, abs=0.051)                                       # target follows the wheel (route ed)
   cuts = [d[3] >> 4 for d in press]
   assert cuts[-1] == 15 and all(b >= a for a, b in zip(cuts, cuts[1:]))              # zero authority: under the lockout
-  rel = [e4(ci, True, 10.0, -5.0)[1][3] >> 4 for _ in range(150)]
+  relf = [e4(ci, True, 10.0, -5.0)[1] for _ in range(150)]
+  rel = [d[3] >> 4 for d in relf]
   assert rel[-1] == 0 and all(b <= a for a, b in zip(rel, rel[1:]))
+  ra = [struct.unpack(">h", d[0:2])[0] / cam.RAW_PER_DEG for d in relf]
+  assert abs(ra[0] - -5.0) < 0.2 and all(b >= a - 1e-9 for a, b in zip(ra, ra[1:]))     # release: from the wheel toward the plan
   e4(ci, False, 0.0, 0.0)
   assert e4(ci, True, 10.0, 0.0)[1][3] == 0xF7                                         # every engage starts at zero authority
 
