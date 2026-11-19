@@ -457,3 +457,23 @@ def test_steering_angle_rate_limit_caps_the_target_in_carcontroller(angle_file, 
     assert max(w) <= limit + 1e-6 and max(w) > 0.99 * limit
   else:
     assert max(w) > 0.99 * cap                                           # 0 = off: only the sender's own cap
+
+
+# --- '?' software ID (PTM 2.0 / angle PTM marker, EPS build 0x05 on): same application as ',' ---
+PTM2 = b'39990-TRW?A020\x00\x00'
+
+
+def test_ptm2_id_is_the_same_modified_clarity():
+  from opendbc.car.honda.steer_ratio import get_honda_vgr_profile, normalize_honda_eps_fw
+  from opendbc.car.honda.fingerprints import FW_VERSIONS
+  from opendbc.car.structs import CarParams
+  assert normalize_honda_eps_fw(PTM2) == normalize_honda_eps_fw(MODIFIED) == "39990-TRW-A020"
+  assert PTM2 in FW_VERSIONS[CAR.HONDA_CLARITY][(CarParams.Ecu.eps, 0x18da30f1, None)]
+  a, b = params(CAR.HONDA_CLARITY, [eps(PTM2)]), params(CAR.HONDA_CLARITY, [eps(MODIFIED)])
+  assert a.flags & HondaFlags.EPS_MODIFIED and a.flags == b.flags                       # modified, same VGR flags
+  assert get_honda_vgr_profile([eps(PTM2)]) == get_honda_vgr_profile([eps(MODIFIED)]) is not None
+
+
+def test_ptm2_id_gets_angle_mode(angle_file):
+  ci = clarity(PTM2)
+  assert ci.CP.flags & HondaFlags.CLARITY_ANGLE_MODE and ci.CC.eps_mode == 0x07
