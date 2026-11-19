@@ -77,7 +77,7 @@ class NightStarFeature:
     keys = []
     if capability is not None:
       _, _, calibrated = capability
-      if calibrated:  # read by LatControlHondaEps only
+      if calibrated:  # read by LatControlHondaEps (torque) and LatControlHondaAngle (Clarity angle mode)
         keys.append("HondaEpsAngleRateLimit")
       keys.extend(EPS_KEYS)
       fingerprint, _, _ = capability
