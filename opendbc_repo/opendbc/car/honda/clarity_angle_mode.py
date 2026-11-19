@@ -44,8 +44,8 @@ ANGLE_MODE_PARAM = "HondaClarityAngleMode"   # BOOL, default "1" (params_keys.h)
 EPS_MODE_ANGLE = 3            # byte 3 bits 3:1
 BYTE3_ANGLE = (EPS_MODE_ANGLE << 1) | 1
 EPS_MODE_ANGLE_CAP3 = 4       # build 0x05: mode 4 = the same angle loop with a 3.0 m/s^2 clamp (byte 3 = 0x09)
-CAP3_BUILDS = {0x05, 0x06}    # builds that have mode 4
-AUTH_BUILDS = {0x06}          # build 0x06: angle-loop authority gain, byte 3 bits 7:4 = CUT (0 = full .. 15 = none)
+CAP3_BUILDS = {0x05, 0x06, 0x08}    # builds that have mode 4
+AUTH_BUILDS = {0x06, 0x08}    # build 0x06 (and 0x08 = 0x06 + 100 ms stale window): angle-loop authority gain, byte 3 bits 7:4 = CUT (0 = full .. 15 = none)
 AMAX_CAP3_SCALE = 3.0 / 4.0   # angle_ref AMAX4_SCALE: mode 4's clamp table = mode 3's x 0.75 (clamp angle is linear in a_lat)
 ANGLE_PAYLOAD = 0x20          # byte 2 bit 5 (DBC SET_ME_X00 holds byte 2 bits 6:0)
 RAW_PER_DEG = -10.0           # 0x14A STEER_ANGLE factor is -0.1

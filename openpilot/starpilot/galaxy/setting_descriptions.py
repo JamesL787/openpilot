@@ -109,7 +109,7 @@ DESCRIPTIONS = {
   'HondaOverrideFadeUpSecs': 'Brings the steering command back over this time after you let go of the wheel.',
   'HondaDriverAssistDuringOverride': 'Keeps steering assist active while you override the wheel.',
   'HondaClarityAngleCap3': ('Clarity angle mode: steers with the EPS 3.0 m/s² lateral-acceleration clamp instead of 4.0. ' +
-                            'Needs EPS build 0x05; no effect on other builds. Switches while lateral is off.'),
+                            'Needs EPS build 0x05, 0x06 or 0x08; no effect on other builds. Switches while lateral is off.'),
   'HondaClarityAngleMode': ('Clarity only: steers by wheel angle through the angle-mode EPS firmware (build 0x04). ' +
                             'On any other EPS firmware steering stays unavailable, so turn it off. Applies at the next start.'),
   'DisableSeatbeltCheck': "Allows engaging and staying engaged with the driver's seatbelt unlatched.",

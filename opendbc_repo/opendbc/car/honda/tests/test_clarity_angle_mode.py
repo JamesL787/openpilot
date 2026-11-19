@@ -403,14 +403,15 @@ def test_cap3_on_build_04_keeps_mode_3(angle_file):
   assert d[3] == 0x07 and ci.CS.eps_cal_status.requested == 3 and ci.CS.eps_cal_status.angle_ready
 
 
-def test_cap3_on_build_05_requests_mode_4_and_uses_the_3g_clamp(angle_file):
+@pytest.mark.parametrize("build", [0x05, 0x06, 0x08])
+def test_cap3_on_build_05_requests_mode_4_and_uses_the_3g_clamp(angle_file, build):
   ci = clarity(); cap3(ci, True); f = Feed(ci)
-  f.run([v3(build=0x05, active=3, requested=3, counter=k % 4) for k in range(4)])
+  f.run([v3(build=build, active=3, requested=3, counter=k % 4) for k in range(4)])
   _, d = e4(ci, False, 0.0, 0.0)                                         # lateral off: the profile switch is allowed
   assert d[3] == 0x09 and ci.CS.eps_cal_status.requested == 4
-  f.run([v3(build=0x05, active=3, requested=4, counter=k % 4) for k in range(4)])
+  f.run([v3(build=build, active=3, requested=4, counter=k % 4) for k in range(4)])
   assert ci.CS.eps_cal_status.fault == "inactive_mode" and not ci.CS.eps_cal_status.angle_ready   # until the EPS switches
-  f.run([v3(build=0x05, active=4, requested=4, counter=k % 4) for k in range(4)])
+  f.run([v3(build=build, active=4, requested=4, counter=k % 4) for k in range(4)])
   assert ci.CS.eps_cal_status.angle_ready and ci.CS.eps_cal_status.cap3_active
   for _ in range(3000):
     _, d = e4(ci, True, 600.0, 0.0, v=12.0)
@@ -516,7 +517,7 @@ def test_effort_fade_respects_the_eps_step_limit(v):
   assert np.abs(np.diff(L[:, 2])).max() <= step + 1e-9
 
 
-# --- build 0x06: authority ramp (HKG style), byte 3 bits 7:4 = CUT ---
+# --- build 0x06: authority ramp (HKG style), byte 3 bits 7:4 = CUT; 0x08 = 0x06 + 100 ms stale window ---
 
 def fade_up(ci, s):
   import dataclasses
@@ -538,9 +539,10 @@ def test_authority_ramp_follows_hkg():
   assert r.update(False, True, 1.0) == 15 and r.g == 0.0                                 # lateral off: zero authority
 
 
-def test_build_06_by_default_drops_the_request_on_press_and_sends_no_cut(angle_file):
+@pytest.mark.parametrize("build", [0x06, 0x08])
+def test_build_06_by_default_drops_the_request_on_press_and_sends_no_cut(angle_file, build):
   ci = clarity(); f = Feed(ci)
-  f.run([v3(build=0x06, counter=k % 4) for k in range(8)])
+  f.run([v3(build=build, counter=k % 4) for k in range(8)])
   assert ci.CS.eps_cal_status.authority_ready and not cam.HOLD_THROUGH_OVERRIDE
   e4(ci, False, 0.0, 0.0)
   assert all(e4(ci, True, 10.0, 0.0)[1][3] == 0x07 for _ in range(50))   # the firmware ramps in by itself (CUT 0)
@@ -580,7 +582,8 @@ def test_build_06_hold_below_min_steer_speed_drops_the_request(angle_file, monke
 
 
 @pytest.mark.parametrize("build", [0x04, 0x05])
-def test_older_builds_send_no_cut_and_drop_the_request_on_press(angle_file, build):
+def test_older_builds_send_no_cut_and_drop_the_request_on_press(angle_file, build, monkeypatch):
+  monkeypatch.setattr(cam, "HOLD_THROUGH_OVERRIDE", True)               # even with the hold on: no CUT, request dropped
   ci = clarity(); f = Feed(ci)
   f.run([v3(build=build, counter=k % 4) for k in range(8)])
   assert not ci.CS.eps_cal_status.authority_ready

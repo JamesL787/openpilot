@@ -25,7 +25,7 @@ BOOL_ROWS = {
                    "on any other EPS firmware steering stays unavailable, so turn this off. Takes effect at the next start."),
   ANGLE_CAP3_KEY: ("Angle Lateral Cap 3.0 m/s\u00b2",
                    "Angle mode only: steer with the EPS's 3.0 m/s\u00b2 lateral-acceleration clamp (mode 4) instead of 4.0. Needs "
-                   "EPS build 0x05; on other builds it has no effect. Switches when lateral is off."),
+                   "EPS build 0x05, 0x06 or 0x08; on other builds it has no effect. Switches when lateral is off."),
   SEATBELT_KEY: ("Disable Seatbelt Check", "Allow engaging and staying engaged with the driver's seatbelt unlatched."),
 }
 # key -> (label, reason, minimum, maximum, step, unit, integer)
@@ -87,7 +87,7 @@ class NightStarFeature:
       fingerprint, _, _ = capability
       if fingerprint == CLARITY:   # read once at car start (starpilot/car/honda/clarity_angle_mode.py)
         keys.append(ANGLE_MODE_KEY)
-        keys.append(ANGLE_CAP3_KEY)   # live, read with the EPS rows; used only on EPS build 0x05
+        keys.append(ANGLE_CAP3_KEY)   # live, read with the EPS rows; used only on EPS builds 0x05, 0x06, 0x08
     keys.append(SEATBELT_KEY)
     return tuple(keys)
 

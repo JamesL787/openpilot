@@ -31,11 +31,12 @@ from opendbc.car.honda.values import CAR
 # records ID <-> bin/rwd sha256.
 KNOWN_BUILDS = {
   0x06: 0b11111,  # authority ramp 20261119 layout v3 (bin 03538b6d, rwd 994b88c1): 0x05 + angle-loop authority gain, ~1 s ramp-in after every (re)activation, byte 3 bits 7:4 = CUT
+  0x08: 0b11111,  # 0x06 + stale window 32 -> 100 ms 20261119 layout v3 (bin 347bede5, rwd 3b6b9510): the comma four sends E4 with gaps over 30 ms (Aragon route 32c0d38d02, 243 stale faults on 0x05)
   0x05: 0b11111,  # angle 3.0 profile 20261118 layout v3 (bin a4c6a41c, rwd efca528b): 0x04's 0-3, 4 = angle loop with a 3.0 m/s^2 clamp
   0x04: 0b1111,  # angle mode 20261118 layout v3 (bin d884e27f, rwd bb4ff1b3): MM 0x02's 0-2, 3 = angle loop (CleanPTM tables, A280 flat)
   0x02: 0b111,   # MM 20261116 layout v2 (bin 2382007c, rwd a173fd71; 11-17 fixes: 252 ms switch debounce, IMASK 10 copy, no reload while engaged): 0 stock, 1 CleanPTM, 2 P2 slot (= CleanPTM for now)
 }
-ANGLE_BUILDS = {0x04, 0x05, 0x06}   # builds with the in-EPS angle loop (0x6A4 layout v3)
+ANGLE_BUILDS = {0x04, 0x05, 0x06, 0x08}   # builds with the in-EPS angle loop (0x6A4 layout v3)
 STATUS_TIMEOUT_FRAMES = 50   # carState updates (100 Hz): 0.5 s, 25 periods of the 50 Hz frame
 MSG = "EPS_CAL_STATUS"
 
