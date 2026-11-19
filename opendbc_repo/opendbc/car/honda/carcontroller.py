@@ -393,7 +393,7 @@ class CarController(CarControllerBase):
     if self.angle_sender is not None:
       new_actuators.torque = 0.
       new_actuators.torqueOutputCan = 0.
-      new_actuators.steeringAngleDeg = self.angle_sender.apply_angle
+      new_actuators.steeringAngleDeg = self.angle_sender.out_angle
 
     self.frame += 1
     if _projection is not None:

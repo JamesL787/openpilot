@@ -477,3 +477,40 @@ def test_ptm2_id_is_the_same_modified_clarity():
 def test_ptm2_id_gets_angle_mode(angle_file):
   ci = clarity(PTM2)
   assert ci.CP.flags & HondaFlags.CLARITY_ANGLE_MODE and ci.CC.eps_mode == 0x07
+
+
+# --- effort fade: sent = wheel + w * (trajectory - wheel), w smoothstep 0 -> 1 over engage_s ---
+
+def _release(engage_s, effort_fade=True, frames=120, v=8.0):
+  s = cam.AngleModeSender()
+  wheel, rate = -37.0, 100.0                       # car e8/e9: released 35-60 deg from the target, wheel still moving
+  s.update(False, 2.0, wheel, v, True, measured_rate_deg_s=rate)
+  log = []
+  for _ in range(frames):
+    wheel += rate * cam.DT_CTRL
+    rate *= 0.97
+    s.update(True, 2.0, wheel, v, True, measured_rate_deg_s=rate, engage_s=engage_s, effort_fade=effort_fade)
+    log.append((wheel, s.apply_angle, s.out_angle))
+  return np.array(log)
+
+
+def test_effort_fade_starts_at_the_wheel_and_hands_over_to_the_trajectory():
+  L = _release(0.5)
+  gap = np.abs(L[:, 2] - L[:, 0])                  # what the EPS loop sees as its error
+  traj_gap = np.abs(L[:, 1] - L[:, 0])
+  assert gap[0] < 0.05 * max(traj_gap[0], 0.1) + 0.01
+  assert np.all(gap[:49] <= traj_gap[:49] + 1e-9)
+  assert L[49, 2] == pytest.approx(L[49, 1], abs=1e-9)        # w = 1 at engage_s (50 frames)
+  assert np.allclose(L[50:, 2], L[50:, 1], atol=1e-9)
+
+
+def test_effort_fade_off_or_zero_time_sends_the_trajectory():
+  for L in (_release(0.5, effort_fade=False), _release(0.0)):
+    assert np.allclose(L[:, 2], L[:, 1], atol=1e-9)
+
+
+@pytest.mark.parametrize("v", [2.0, 10.0, 20.0])
+def test_effort_fade_respects_the_eps_step_limit(v):
+  L = _release(1.0, v=v, frames=200)
+  step = float(np.interp(v, cam._V, cam.ANGLE_STEP_DEG))
+  assert np.abs(np.diff(L[:, 2])).max() <= step + 1e-9

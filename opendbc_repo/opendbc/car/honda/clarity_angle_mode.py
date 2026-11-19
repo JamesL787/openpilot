@@ -92,13 +92,15 @@ class AngleModeSender:
     self.apply_rate = 0.0
     self.active_frames = 0
     self.sent_active = False
+    self.out_angle = 0.0      # the angle actually sent (= apply_angle once the effort fade is done)
 
   def update(self, lat_active: bool, desired_deg: float, measured_deg: float, v_ego: float,
              angle_ready: bool, measured_rate_deg_s: float = 0.0, engage_s: float = ENGAGE_S,
-             amax_scale: float = 1.0, rate_limit_deg_s: float = 0.0) -> tuple[int, bool, int]:
+             amax_scale: float = 1.0, rate_limit_deg_s: float = 0.0, effort_fade: bool = True) -> tuple[int, bool, int]:
     active = bool(lat_active and angle_ready)
     if not active:
       self.apply_angle, self.apply_rate = float(measured_deg), float(measured_rate_deg_s)
+      self.out_angle = float(measured_deg)
       self.active_frames, self.sent_active = 0, False
       return 0, False, 0
     lim = angle_limit(v_ego, amax_scale)    # amax_scale = AMAX_CAP3_SCALE while the EPS runs mode 4
@@ -123,6 +125,17 @@ class AngleModeSender:
     step_rate = float(np.interp(v_ego, _V, ANGLE_STEP_DEG)) / DT_CTRL
     self.apply_rate = float(np.clip(self.apply_rate, -step_rate, step_rate))
     self.apply_angle += self.apply_rate * DT_CTRL
+    # effort fade: the EPS loop pushes in proportion to (target - wheel), so sending wheel + w * (trajectory - wheel)
+    # scales its effort by w. w eases 0 -> 1 (smoothstep) over engage_s after the request rises, so the loop takes the
+    # wheel over gently instead of pulling it onto the trajectory at full stiffness. The sent angle still moves at most
+    # the EPS's per-frame jump limit.
+    out = self.apply_angle
+    if effort_fade and engage_s > 0.0:
+      x = min(1.0, (self.active_frames + 1) * DT_CTRL / engage_s)
+      w = x * x * (3.0 - 2.0 * x)
+      out = float(measured_deg) + w * (self.apply_angle - float(measured_deg))
+    step = float(np.interp(v_ego, _V, ANGLE_STEP_DEG))
+    self.out_angle += float(np.clip(out - self.out_angle, -step, step))
     self.active_frames += 1
     self.sent_active = True
-    return angle_to_raw(self.apply_angle), True, ANGLE_PAYLOAD
+    return angle_to_raw(self.out_angle), True, ANGLE_PAYLOAD
