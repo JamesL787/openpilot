@@ -36,6 +36,7 @@ from openpilot.cereal import custom, log
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, normalize_honda_eps_fw
 from opendbc.car.honda.values import CarControllerParams, HondaFlags
+from opendbc.car.honda.clarity_angle_mode import angle_mode
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_CTRL, DT_MDL
 from openpilot.common.swaglog import cloudlog
@@ -170,7 +171,11 @@ class ModelActionRamp:
 
 
 def lateral_delay_schedule(CP) -> tuple | None:
-  """controlsd, modeld: the delay to tell the model in place of liveDelay, whenever this controller steers the car."""
+  """controlsd, modeld: the delay to tell the model in place of liveDelay, whenever this controller steers the car.
+  None in Clarity angle mode: the schedule was measured for the torque loop, and angle mode's latency differs, so modeld
+  and controlsd both use lagd's learned delay there (before 11-18 modeld used the schedule and controlsd lagd)."""
+  if angle_mode(CP):
+    return None
   calibration = eps_firmware_calibration(CP)
   return calibration.lat_delay_schedule if calibration is not None else None
 
