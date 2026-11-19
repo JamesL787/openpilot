@@ -44,7 +44,8 @@ ANGLE_MODE_PARAM = "HondaClarityAngleMode"   # BOOL, default "1" (params_keys.h)
 EPS_MODE_ANGLE = 3            # byte 3 bits 3:1
 BYTE3_ANGLE = (EPS_MODE_ANGLE << 1) | 1
 EPS_MODE_ANGLE_CAP3 = 4       # build 0x05: mode 4 = the same angle loop with a 3.0 m/s^2 clamp (byte 3 = 0x09)
-CAP3_BUILDS = {0x05}          # builds that have mode 4
+CAP3_BUILDS = {0x05, 0x06}    # builds that have mode 4
+AUTH_BUILDS = {0x06}          # build 0x06: angle-loop authority gain, byte 3 bits 7:4 = CUT (0 = full .. 15 = none)
 AMAX_CAP3_SCALE = 3.0 / 4.0   # angle_ref AMAX4_SCALE: mode 4's clamp table = mode 3's x 0.75 (clamp angle is linear in a_lat)
 ANGLE_PAYLOAD = 0x20          # byte 2 bit 5 (DBC SET_ME_X00 holds byte 2 bits 6:0)
 RAW_PER_DEG = -10.0           # 0x14A STEER_ANGLE factor is -0.1
@@ -63,6 +64,19 @@ TARGET_RATE_DEG_S = [150., 150., 100., 60., 40., 25.]
 TARGET_ACCEL_DEG_S2 = [450., 600., 450., 300., 225., 180.]    # 1.5 x torque-mode hands-off p99 (11-15 route)
 ENGAGE_S, ENGAGE_FLOOR = 1.5, 0.15    # limits ramp 15% -> 100% after the request rises; ENGAGE_S = default engage time
 RAW_MAX = 32767
+# authority ramp (build 0x06, sunnypilot HKG CAN-FD angle torque_reduction_gain): while the driver overrides, the request
+# and the plan target stay up and the loop's authority falls to AUTH_MIN over AUTH_DOWN_FRAMES (adaptive, at least
+# AUTH_DOWN_MIN_STEP per frame); after the release it climbs back over Override Fade Up (AUTH_UP_DEFAULT per frame if 0)
+AUTH_MIN, AUTH_DOWN_FRAMES, AUTH_DOWN_MIN_STEP, AUTH_UP_DEFAULT = 0.1, 17.0, 0.004, 0.008
+# Off by default (emulator 11-19, hands-on model): holding the request through an override keeps the stock EPS's own
+# rate damping on, which drags the driver's wheel even at near-zero loop authority (seg 36: wheel 15-18 deg behind,
+# hands-off tracking 1.75 -> 3.39 deg). With it off, build 0x06 still ramps the loop in over ~1 s after every engage
+# and override in firmware (re-engage wheel acceleration 724 -> 435 median), with no drag. True = the HKG experiment.
+# 11-19 (build 0x07 investigation): holding is blocked by the STOCK EPS, not by damping. FUN_28D5A flags a driver override
+# when |T_comp| >= 1536 (cal 0x1375C) for 50 ticks; FUN_2A994 then latches LKAS off (0xFFF879C9 3 -> 1) if the LKAS command
+# stays > 44 for 100 more ticks, and only clears after <= 44 for 1000 ticks (2 s). The stock override fade (FUN_29CAE) also
+# zeroes LKAS above 1536 anyway. So a held request gives no assist during the press and risks a 2 s lockout. Keep it off.
+HOLD_THROUGH_OVERRIDE = False
 
 
 def apply_angle_mode(CP, requested: bool):
@@ -139,3 +153,21 @@ class AngleModeSender:
     self.active_frames += 1
     self.sent_active = True
     return angle_to_raw(self.out_angle), True, ANGLE_PAYLOAD
+
+
+class AuthorityRamp:
+  """Build 0x06: the angle loop's authority g (0..1) -> CUT = round(15 (1 - g)) for byte 3 bits 7:4. The EPS slews its
+  own gain to 256 - 17*CUT (Q8, up at most 1/256 and down 6/256 per 4 ms) and zeroes it whenever the loop
+  (re)activates (angle_ref v4), so with CUT 0 every engage still ramps in over ~1 s."""
+  def __init__(self):
+    self.g = 0.0
+
+  def update(self, active: bool, yielding: bool, fade_up_s: float) -> int:
+    if not active:
+      self.g = 0.0
+    elif yielding:
+      if self.g > AUTH_MIN:
+        self.g = max(self.g - max((self.g - AUTH_MIN) / AUTH_DOWN_FRAMES, AUTH_DOWN_MIN_STEP), AUTH_MIN)
+    else:
+      self.g = min(1.0, self.g + (DT_CTRL / fade_up_s if fade_up_s > 0.0 else AUTH_UP_DEFAULT))
+    return int(round(15.0 * (1.0 - self.g)))

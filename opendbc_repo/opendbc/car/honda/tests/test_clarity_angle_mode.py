@@ -514,3 +514,77 @@ def test_effort_fade_respects_the_eps_step_limit(v):
   L = _release(1.0, v=v, frames=200)
   step = float(np.interp(v, cam._V, cam.ANGLE_STEP_DEG))
   assert np.abs(np.diff(L[:, 2])).max() <= step + 1e-9
+
+
+# --- build 0x06: authority ramp (HKG style), byte 3 bits 7:4 = CUT ---
+
+def fade_up(ci, s):
+  import dataclasses
+  from opendbc.car.honda.modified_eps import DEFAULT_SETTINGS
+  ci.CC.modified_eps_settings = type("S", (), {"current": lambda self: dataclasses.replace(DEFAULT_SETTINGS, fade_up_s=s)})()
+
+
+def test_authority_ramp_follows_hkg():
+  r = cam.AuthorityRamp()
+  assert r.update(False, False, 1.0) == 15
+  cuts = [r.update(True, False, 1.0) for _ in range(120)]
+  assert cuts[0] == 15 and cuts[-1] == 0 and all(b <= a for a, b in zip(cuts, cuts[1:]))
+  assert next(i for i, c in enumerate(cuts) if c == 0) == pytest.approx(97, abs=2)       # Override Fade Up 1.0 s
+  down = [r.update(True, True, 1.0) for _ in range(60)]
+  assert r.g == pytest.approx(cam.AUTH_MIN) and down[-1] == 14
+  assert next(i for i, c in enumerate(down) if c >= 13) < 45                             # (g - min)/17 per frame: tau 17 frames
+  up = [r.update(True, False, 0.0) for _ in range(120)]                                  # Fade Up 0: HKG's 0.008/frame
+  assert next(i for i, c in enumerate(up) if c == 0) == pytest.approx((1 - 0.5 / 15 - cam.AUTH_MIN) / 0.008, abs=2)   # CUT 0 from g > 29/30
+  assert r.update(False, True, 1.0) == 15 and r.g == 0.0                                 # lateral off: zero authority
+
+
+def test_build_06_by_default_drops_the_request_on_press_and_sends_no_cut(angle_file):
+  ci = clarity(); f = Feed(ci)
+  f.run([v3(build=0x06, counter=k % 4) for k in range(8)])
+  assert ci.CS.eps_cal_status.authority_ready and not cam.HOLD_THROUGH_OVERRIDE
+  e4(ci, False, 0.0, 0.0)
+  assert all(e4(ci, True, 10.0, 0.0)[1][3] == 0x07 for _ in range(50))   # the firmware ramps in by itself (CUT 0)
+  _, d = e4(ci, True, 10.0, -5.0, pressed=True)
+  assert d[0:3] == bytes(3) and d[3] == 0x07
+
+
+def test_build_06_hold_holds_the_request_through_a_press_and_ramps_authority(angle_file, monkeypatch):
+  monkeypatch.setattr(cam, "HOLD_THROUGH_OVERRIDE", True)
+  ci = clarity(); fade_up(ci, 1.0); f = Feed(ci)
+  f.run([v3(build=0x06, counter=k % 4) for k in range(8)])
+  assert ci.CS.eps_cal_status.authority_ready
+  e4(ci, False, 0.0, 0.0)
+  eng = [e4(ci, True, 10.0, 0.0)[1] for _ in range(150)]
+  assert eng[0][3] == 0xF7 and eng[-1][3] == 0x07 and all(d[3] & 0x0F == 0x07 for d in eng)
+  press = [e4(ci, True, 10.0, -5.0, pressed=True)[1] for _ in range(60)]
+  assert all(d[2] == 0xA0 for d in press)                                              # request held
+  a = [struct.unpack(">h", d[0:2])[0] / cam.RAW_PER_DEG for d in press]
+  assert a[-1] == pytest.approx(10.0, abs=0.051)                                       # target stays on the plan
+  cuts = [d[3] >> 4 for d in press]
+  assert cuts[-1] == 14 and all(b >= a for a, b in zip(cuts, cuts[1:]))
+  rel = [e4(ci, True, 10.0, -5.0)[1][3] >> 4 for _ in range(150)]
+  assert rel[-1] == 0 and all(b <= a for a, b in zip(rel, rel[1:]))
+  e4(ci, False, 0.0, 0.0)
+  assert e4(ci, True, 10.0, 0.0)[1][3] == 0xF7                                         # every engage starts at zero authority
+
+
+def test_build_06_hold_below_min_steer_speed_drops_the_request(angle_file, monkeypatch):
+  monkeypatch.setattr(cam, "HOLD_THROUGH_OVERRIDE", True)
+  import dataclasses
+  from opendbc.car.honda.modified_eps import DEFAULT_SETTINGS
+  ci = clarity(); f = Feed(ci)
+  ci.CC.modified_eps_settings = type("S", (), {"current": lambda self: dataclasses.replace(DEFAULT_SETTINGS, min_steer_speed_mph=10.0)})()
+  f.run([v3(build=0x06, counter=k % 4) for k in range(8)])
+  _, d = e4(ci, True, 10.0, 0.0, v=2.0)
+  assert d[0:3] == bytes(3) and d[3] == 0xF7
+
+
+@pytest.mark.parametrize("build", [0x04, 0x05])
+def test_older_builds_send_no_cut_and_drop_the_request_on_press(angle_file, build):
+  ci = clarity(); f = Feed(ci)
+  f.run([v3(build=build, counter=k % 4) for k in range(8)])
+  assert not ci.CS.eps_cal_status.authority_ready
+  e4(ci, False, 0.0, 0.0)
+  assert all(e4(ci, True, 10.0, 0.0)[1][3] == 0x07 for _ in range(50))
+  _, d = e4(ci, True, 10.0, -5.0, pressed=True)
+  assert d[0:3] == bytes(3) and d[3] == 0x07

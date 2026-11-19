@@ -4,7 +4,8 @@ from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import hondacan
-from opendbc.car.honda.clarity_angle_mode import AMAX_CAP3_SCALE, BYTE3_ANGLE, AngleModeSender, angle_mode
+from opendbc.car.honda import clarity_angle_mode as cam
+from opendbc.car.honda.clarity_angle_mode import AMAX_CAP3_SCALE, BYTE3_ANGLE, AngleModeSender, AuthorityRamp, angle_mode
 from opendbc.car.honda.eps_cal_status import requested_eps_mode
 from opendbc.car.honda.accord_mvl_stock import AccordMvlStock, qualified as mvl_stock_qualified
 from opendbc.car.honda.modified_eps import ModifiedEpsSteering, current_settings, get_eps_modified_steering_pressed, modified_eps  # noqa: F401
@@ -142,6 +143,8 @@ class CarController(CarControllerBase):
     if self.angle_sender is not None:
       self.eps_mode = BYTE3_ANGLE
     self.apply_angle_raw = 0
+    self.authority = AuthorityRamp()   # build 0x06: angle-loop authority (byte 3 bits 7:4)
+    self.angle_cut = 0
     self.modified_eps_settings = None
     # Clarity with an interceptor: the PCM stays in ACC while openpilot is engaged (honda/pcm_acc.py)
     self.keep_pcm_acc = pcm_acc.qualified(CP)
@@ -196,7 +199,19 @@ class CarController(CarControllerBase):
     torque_cmd = actuators.torque
     if self.modified_eps_steering is not None:
       limited_torque, lkas_active, meps_pressed = self.modified_eps_steering.update(CC, CS, current_settings(self.modified_eps_settings))
-      if self.angle_sender is not None and meps_pressed:
+      angle_hold = self.angle_sender is not None and CS.eps_cal_status.authority_ready and cam.HOLD_THROUGH_OVERRIDE
+      if angle_hold:
+        # Build 0x06 (HKG style, sunnypilot hkg-angle-steering): the request and the plan target stay up through an
+        # override and the EPS loop's authority ramps instead: down to AUTH_MIN while the driver yields (the press
+        # detector OR the torque-mode yield, which also catches steering without the press flag), back up over Override
+        # Fade Up after. Emulator 11-19: re-engage wheel acceleration about halved vs dropping the request.
+        mset = current_settings(self.modified_eps_settings)
+        yielding = bool(meps_pressed or CS.out.steeringPressed)
+        lkas_active = bool(CC.latActive and CS.out.vEgo >= mset.min_steer_speed_mph * CV.MPH_TO_MS)
+        self.angle_cut = self.authority.update(lkas_active and CS.eps_cal_status.angle_ready, yielding, mset.fade_up_s)
+      else:
+        self.authority.update(False, False, 0.0); self.angle_cut = 0
+      if self.angle_sender is not None and meps_pressed and not angle_hold:
         # Angle mode: no request during a press, whatever Override Fade Down or Assist During Override say. Both keep the
         # request up through a press, which in torque mode eases torque out; in angle mode it would hold the stiff angle
         # loop against the driver (the emulator's no-yield runs: ~3000 counts against the hands, then EPS lockout).
@@ -250,6 +265,7 @@ class CarController(CarControllerBase):
         # would drop steering until then. Mode 4 only on a build that has it (else mode 3).
         CS.eps_cal_status.set_angle_profile(settings.angle_cap3)
       self.eps_mode = (CS.eps_cal_status.requested << 1) | 1                 # 0x07 mode 3, 0x09 mode 4
+      self.eps_mode |= self.angle_cut << 4                                  # build 0x06 authority CUT (0 on other builds)
       self.apply_angle_raw, lkas_active, angle_payload = self.angle_sender.update(
         lkas_active, actuators.steeringAngleDeg, CS.out.steeringAngleDeg, CS.out.vEgo, CS.eps_cal_status.angle_ready,
         CS.out.steeringRateDeg, settings.fade_up_s,                       # Override Fade Up = engage fade
