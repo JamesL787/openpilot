@@ -23,6 +23,8 @@ Limits (all inside the EPS's own, so its jump-reject fault and its clamps never 
     braking ahead of the target (sqrt(2*A*error)) so it never overshoots. The angle loop follows its target closely and
     is silent, so without this every model wobble and every re-engage reached the wheel at up to 160 deg/s in 10 ms
     (v1: 0.5 s at 10 deg/s, then the full step limit -> the "snap" after an override, route 000000e7).
+  - the Steering Angle Rate Limit setting (HondaEpsAngleRateLimit, deg/s, 0 = off; CarController passes it) lowers the
+    rate cap further; the angle lateral controller itself only converts curvature to angle (rack map / VGR)
   - engage (request rises, e.g. after a driver override): the trajectory starts at the measured angle AND the measured
     wheel rate, and its rate/acceleration limits ramp from ENGAGE_FLOOR to full over the engage time, so control fades
     in. The engage time is the Override Fade Up setting (HondaOverrideFadeUpSecs, Night Star; CarController passes it),
@@ -41,6 +43,9 @@ from opendbc.car.honda.values import CAR, HondaFlags
 ANGLE_MODE_PARAM = "HondaClarityAngleMode"   # BOOL, default "1" (params_keys.h); read once at startup
 EPS_MODE_ANGLE = 3            # byte 3 bits 3:1
 BYTE3_ANGLE = (EPS_MODE_ANGLE << 1) | 1
+EPS_MODE_ANGLE_CAP3 = 4       # build 0x05: mode 4 = the same angle loop with a 3.0 m/s^2 clamp (byte 3 = 0x09)
+CAP3_BUILDS = {0x05}          # builds that have mode 4
+AMAX_CAP3_SCALE = 3.0 / 4.0   # angle_ref AMAX4_SCALE: mode 4's clamp table = mode 3's x 0.75 (clamp angle is linear in a_lat)
 ANGLE_PAYLOAD = 0x20          # byte 2 bit 5 (DBC SET_ME_X00 holds byte 2 bits 6:0)
 RAW_PER_DEG = -10.0           # 0x14A STEER_ANGLE factor is -0.1
 
@@ -72,8 +77,8 @@ def angle_mode(CP) -> bool:
   return bool(CP.flags & HondaFlags.CLARITY_ANGLE_MODE)
 
 
-def angle_limit(v_ego: float) -> float:
-  return ANGLE_MAX_FRAC * float(np.interp(v_ego, AMAX_V, EPS_AMAX_DEG))
+def angle_limit(v_ego: float, amax_scale: float = 1.0) -> float:
+  return ANGLE_MAX_FRAC * amax_scale * float(np.interp(v_ego, AMAX_V, EPS_AMAX_DEG))
 
 
 def angle_to_raw(angle_deg: float) -> int:
@@ -89,18 +94,22 @@ class AngleModeSender:
     self.sent_active = False
 
   def update(self, lat_active: bool, desired_deg: float, measured_deg: float, v_ego: float,
-             angle_ready: bool, measured_rate_deg_s: float = 0.0, engage_s: float = ENGAGE_S) -> tuple[int, bool, int]:
+             angle_ready: bool, measured_rate_deg_s: float = 0.0, engage_s: float = ENGAGE_S,
+             amax_scale: float = 1.0, rate_limit_deg_s: float = 0.0) -> tuple[int, bool, int]:
     active = bool(lat_active and angle_ready)
     if not active:
       self.apply_angle, self.apply_rate = float(measured_deg), float(measured_rate_deg_s)
       self.active_frames, self.sent_active = 0, False
       return 0, False, 0
-    lim = angle_limit(v_ego)
+    lim = angle_limit(v_ego, amax_scale)    # amax_scale = AMAX_CAP3_SCALE while the EPS runs mode 4
     # clamp the target, not the output, so the output still moves along the limited trajectory (from a measured angle
     # above the clamp it walks down to it instead of jumping, which the EPS would reject)
     target = float(np.clip(float(desired_deg), -lim, lim))
     fade = 1.0 if engage_s <= 0.0 else min(1.0, ENGAGE_FLOOR + (1.0 - ENGAGE_FLOOR) * self.active_frames * DT_CTRL / engage_s)
-    rate_max = fade * min(float(np.interp(v_ego, _VT, TARGET_RATE_DEG_S)), float(np.interp(v_ego, _V, ANGLE_STEP_DEG)) / DT_CTRL)
+    rate_cap = min(float(np.interp(v_ego, _VT, TARGET_RATE_DEG_S)), float(np.interp(v_ego, _V, ANGLE_STEP_DEG)) / DT_CTRL)
+    if rate_limit_deg_s > 0.0:                # Steering Angle Rate Limit (Night Star / Galaxy), 0 = off
+      rate_cap = min(rate_cap, rate_limit_deg_s)
+    rate_max = fade * rate_cap
     accel_max = fade * float(np.interp(v_ego, _VT, TARGET_ACCEL_DEG_S2))
     err = target - self.apply_angle
     # exact discrete braking curve: the fastest rate from which the trajectory can still stop at the target with

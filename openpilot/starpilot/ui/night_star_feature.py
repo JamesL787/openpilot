@@ -13,6 +13,7 @@ from openpilot.starpilot.ui.feature_settings_state import FeatureRow
 
 SEATBELT_KEY = "DisableSeatbeltCheck"
 ANGLE_MODE_KEY = "HondaClarityAngleMode"
+ANGLE_CAP3_KEY = "HondaClarityAngleCap3"
 CLARITY = "HONDA_CLARITY"
 
 # key -> (label, reason)
@@ -22,6 +23,9 @@ BOOL_ROWS = {
   ANGLE_MODE_KEY: ("Angle Mode",
                    "Steer by wheel angle through the EPS's own angle loop. Needs the angle-mode EPS firmware (build 0x04); "
                    "on any other EPS firmware steering stays unavailable, so turn this off. Takes effect at the next start."),
+  ANGLE_CAP3_KEY: ("Angle Lateral Cap 3.0 m/s\u00b2",
+                   "Angle mode only: steer with the EPS's 3.0 m/s\u00b2 lateral-acceleration clamp (mode 4) instead of 4.0. Needs "
+                   "EPS build 0x05; on other builds it has no effect. Switches when lateral is off."),
   SEATBELT_KEY: ("Disable Seatbelt Check", "Allow engaging and staying engaged with the driver's seatbelt unlatched."),
 }
 # key -> (label, reason, minimum, maximum, step, unit, integer)
@@ -77,12 +81,13 @@ class NightStarFeature:
     keys = []
     if capability is not None:
       _, _, calibrated = capability
-      if calibrated:  # read by LatControlHondaEps (torque) and LatControlHondaAngle (Clarity angle mode)
+      if calibrated:  # read by LatControlHondaEps (torque) and the honda CarController (Clarity angle mode)
         keys.append("HondaEpsAngleRateLimit")
       keys.extend(EPS_KEYS)
       fingerprint, _, _ = capability
       if fingerprint == CLARITY:   # read once at car start (starpilot/car/honda/clarity_angle_mode.py)
         keys.append(ANGLE_MODE_KEY)
+        keys.append(ANGLE_CAP3_KEY)   # live, read with the EPS rows; used only on EPS build 0x05
     keys.append(SEATBELT_KEY)
     return tuple(keys)
 

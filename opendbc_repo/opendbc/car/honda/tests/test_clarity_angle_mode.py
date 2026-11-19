@@ -386,3 +386,74 @@ def test_engage_fade_follows_override_fade_up(angle_file, fade_up):
     assert t_full < 0.5                                                  # only the acceleration limit
   else:
     assert t_full >= 0.6 * fade_up                                       # the limits fade over the setting
+
+
+# --- build 0x05: angle profile 2 (mode 4, 3.0 m/s^2 clamp), chosen by HondaClarityAngleCap3 ---
+
+def cap3(ci, on):
+  import dataclasses
+  from opendbc.car.honda.modified_eps import DEFAULT_SETTINGS
+  ci.CC.modified_eps_settings = type("S", (), {"current": lambda self: dataclasses.replace(DEFAULT_SETTINGS, angle_cap3=on)})()
+
+
+def test_cap3_on_build_04_keeps_mode_3(angle_file):
+  ci = clarity(); cap3(ci, True); f = Feed(ci)
+  f.run([v3(counter=k % 4) for k in range(8)])                          # build 0x04, mode 3
+  _, d = e4(ci, False, 0.0, 0.0)
+  assert d[3] == 0x07 and ci.CS.eps_cal_status.requested == 3 and ci.CS.eps_cal_status.angle_ready
+
+
+def test_cap3_on_build_05_requests_mode_4_and_uses_the_3g_clamp(angle_file):
+  ci = clarity(); cap3(ci, True); f = Feed(ci)
+  f.run([v3(build=0x05, active=3, requested=3, counter=k % 4) for k in range(4)])
+  _, d = e4(ci, False, 0.0, 0.0)                                         # lateral off: the profile switch is allowed
+  assert d[3] == 0x09 and ci.CS.eps_cal_status.requested == 4
+  f.run([v3(build=0x05, active=3, requested=4, counter=k % 4) for k in range(4)])
+  assert ci.CS.eps_cal_status.fault == "inactive_mode" and not ci.CS.eps_cal_status.angle_ready   # until the EPS switches
+  f.run([v3(build=0x05, active=4, requested=4, counter=k % 4) for k in range(4)])
+  assert ci.CS.eps_cal_status.angle_ready and ci.CS.eps_cal_status.cap3_active
+  for _ in range(3000):
+    _, d = e4(ci, True, 600.0, 0.0, v=12.0)
+  a = struct.unpack(">h", d[0:2])[0] / cam.RAW_PER_DEG
+  assert d[3] == 0x09 and a == pytest.approx(cam.angle_limit(12.0, cam.AMAX_CAP3_SCALE), abs=0.06)
+  assert a < 0.75 * float(np.interp(12.0, cam.AMAX_V, cam.EPS_AMAX_DEG))    # inside the EPS's 3.0 clamp
+
+
+def test_cap3_off_on_build_05_stays_mode_3(angle_file):
+  ci = clarity(); cap3(ci, False); f = Feed(ci)
+  f.run([v3(build=0x05, counter=k % 4) for k in range(8)])
+  _, d = e4(ci, False, 0.0, 0.0)
+  assert d[3] == 0x07 and ci.CS.eps_cal_status.angle_ready and not ci.CS.eps_cal_status.cap3_active
+
+
+def test_cap3_toggle_while_engaged_waits_for_disengage(angle_file):
+  ci = clarity(); cap3(ci, False); f = Feed(ci)
+  f.run([v3(build=0x05, counter=k % 4) for k in range(8)])
+  e4(ci, False, 0.0, 0.0)
+  for _ in range(20):
+    _, d = e4(ci, True, 5.0, 0.0)
+  cap3(ci, True)
+  for _ in range(20):
+    _, d = e4(ci, True, 5.0, 0.0)
+    assert d[3] == 0x07 and d[2] == 0xA0                                 # still mode 3, still steering
+  _, d = e4(ci, False, 0.0, 0.0)
+  assert d[3] == 0x09                                                    # switches once lateral is off
+
+
+@pytest.mark.parametrize("limit", [0.0, 40.0])
+def test_steering_angle_rate_limit_caps_the_target_in_carcontroller(angle_file, limit):
+  # Night Star "Steering Angle Rate Limit" (HondaEpsAngleRateLimit): applied to the angle target in CarController
+  import dataclasses
+  from opendbc.car.honda.modified_eps import DEFAULT_SETTINGS
+  ci = clarity(); ready(ci)
+  ci.CC.modified_eps_settings = type("S", (), {"current": lambda self: dataclasses.replace(DEFAULT_SETTINGS, angle_rate_limit_deg_s=limit,
+                                                                                          fade_up_s=0.0)})()
+  e4(ci, False, 0.0, 0.0, v=5.0)
+  ex = ci.CC.angle_sender; w = []; prev = 0.0
+  for _ in range(400):
+    e4(ci, True, 300.0, 0.0, v=5.0); w.append(abs(ex.apply_angle - prev) / 0.01); prev = ex.apply_angle
+  cap = min(float(np.interp(5.0, cam._VT, cam.TARGET_RATE_DEG_S)), float(np.interp(5.0, cam._V, cam.ANGLE_STEP_DEG)) / 0.01)
+  if limit:
+    assert max(w) <= limit + 1e-6 and max(w) > 0.99 * limit
+  else:
+    assert max(w) > 0.99 * cap                                           # 0 = off: only the sender's own cap

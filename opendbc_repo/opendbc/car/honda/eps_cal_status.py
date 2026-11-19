@@ -23,17 +23,18 @@ target sent to an EPS that is not running the angle loop is read as a torque:
 angle_ready is True only when none of these (or the checks above) fault; CarController sends angle payloads only then.
 """
 from opendbc.car.carlog import carlog
-from opendbc.car.honda.clarity_angle_mode import EPS_MODE_ANGLE, angle_mode
+from opendbc.car.honda.clarity_angle_mode import CAP3_BUILDS, EPS_MODE_ANGLE, EPS_MODE_ANGLE_CAP3, angle_mode
 from opendbc.car.honda.modified_eps import modified_eps
 from opendbc.car.honda.values import CAR
 
 # build ID (0x6A4 byte 1) -> modes built in (bit k = mode k). The ID also fixes the frame layout. Each build's README
 # records ID <-> bin/rwd sha256.
 KNOWN_BUILDS = {
+  0x05: 0b11111,  # angle 3.0 profile 20261118 layout v3 (bin a4c6a41c, rwd efca528b): 0x04's 0-3, 4 = angle loop with a 3.0 m/s^2 clamp
   0x04: 0b1111,  # angle mode 20261118 layout v3 (bin d884e27f, rwd bb4ff1b3): MM 0x02's 0-2, 3 = angle loop (CleanPTM tables, A280 flat)
   0x02: 0b111,   # MM 20261116 layout v2 (bin 2382007c, rwd a173fd71; 11-17 fixes: 252 ms switch debounce, IMASK 10 copy, no reload while engaged): 0 stock, 1 CleanPTM, 2 P2 slot (= CleanPTM for now)
 }
-ANGLE_BUILDS = {0x04}         # builds with the in-EPS angle loop (0x6A4 layout v3)
+ANGLE_BUILDS = {0x04, 0x05}   # builds with the in-EPS angle loop (0x6A4 layout v3)
 STATUS_TIMEOUT_FRAMES = 50   # carState updates (100 Hz): 0.5 s, 25 periods of the 50 Hz frame
 MSG = "EPS_CAL_STATUS"
 
@@ -50,7 +51,7 @@ class EpsCalStatus:
   def __init__(self, CP):
     self.requested = requested_eps_mode(CP)
     self.enabled = self.requested != 0
-    self.angle = self.requested == EPS_MODE_ANGLE
+    self.angle = self.requested == EPS_MODE_ANGLE   # angle mode chosen at startup; the mode (3 or 4) can follow set_angle_profile
     self.announced = False      # a valid 0x6A4 seen since start: this EPS is switch-capable
     self.frames_since = 0
     self.last_ts = 0
@@ -100,6 +101,16 @@ class EpsCalStatus:
       if vl["ANGLE_FAULT"]:
         return "angle_fault"
     return ""
+
+  def set_angle_profile(self, cap3: bool) -> None:
+    """Angle mode: request mode 4 (3.0 m/s^2) only once the EPS has reported a build that has it, else mode 3. The EPS
+    switches at the next LKAS idle; until it reports the new mode, _check faults inactive_mode and no angle is sent."""
+    if self.angle:
+      self.requested = EPS_MODE_ANGLE_CAP3 if (cap3 and self.build_id in CAP3_BUILDS) else EPS_MODE_ANGLE
+
+  @property
+  def cap3_active(self) -> bool:
+    return self.angle and self.requested == EPS_MODE_ANGLE_CAP3
 
   @property
   def angle_ready(self) -> bool:

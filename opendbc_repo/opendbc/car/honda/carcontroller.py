@@ -4,7 +4,7 @@ from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, rate_limit, make_tester_present_msg, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import hondacan
-from opendbc.car.honda.clarity_angle_mode import BYTE3_ANGLE, AngleModeSender, angle_mode
+from opendbc.car.honda.clarity_angle_mode import AMAX_CAP3_SCALE, BYTE3_ANGLE, AngleModeSender, angle_mode
 from opendbc.car.honda.eps_cal_status import requested_eps_mode
 from opendbc.car.honda.accord_mvl_stock import AccordMvlStock, qualified as mvl_stock_qualified
 from opendbc.car.honda.modified_eps import ModifiedEpsSteering, current_settings, get_eps_modified_steering_pressed, modified_eps  # noqa: F401
@@ -244,9 +244,17 @@ class CarController(CarControllerBase):
       # overrides (and below the min steer speed), so the stiff angle loop never fights the driver; the next request
       # restarts from the measured angle and rate with the engage fade. Keeping the request up through a press made the loop
       # push ~3000 counts against the driver until the stock EPS locked out (emulator be_16/36/37, 11-18).
+      settings = current_settings(self.modified_eps_settings)
+      if not CC.latActive:
+        # profile changes only while lateral is off: the EPS switches modes at LKAS idle, so a change while engaged
+        # would drop steering until then. Mode 4 only on a build that has it (else mode 3).
+        CS.eps_cal_status.set_angle_profile(settings.angle_cap3)
+      self.eps_mode = (CS.eps_cal_status.requested << 1) | 1                 # 0x07 mode 3, 0x09 mode 4
       self.apply_angle_raw, lkas_active, angle_payload = self.angle_sender.update(
         lkas_active, actuators.steeringAngleDeg, CS.out.steeringAngleDeg, CS.out.vEgo, CS.eps_cal_status.angle_ready,
-        CS.out.steeringRateDeg, current_settings(self.modified_eps_settings).fade_up_s)   # Override Fade Up = engage fade
+        CS.out.steeringRateDeg, settings.fade_up_s,                       # Override Fade Up = engage fade
+        AMAX_CAP3_SCALE if CS.eps_cal_status.cap3_active else 1.0,
+        settings.angle_rate_limit_deg_s)                                 # Steering Angle Rate Limit
       apply_torque = self.apply_angle_raw
     can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, lkas_active, self.tja_control,
                                                       eps_mode=self.eps_mode, angle_payload=angle_payload))
