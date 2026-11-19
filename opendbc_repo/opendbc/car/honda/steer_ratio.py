@@ -59,8 +59,8 @@ HONDA_VGR_PROFILE_FLAGS = {
 def normalize_honda_eps_fw(version) -> str:
   if isinstance(version, bytes):
     version = version.split(b"\0", 1)[0].decode("ascii", errors="ignore")
-  # ",": PTM images; "?": PTM 2.0 / angle PTM images (Clarity build 0x05 on). Same application, same tables and calibration.
-  return str(version).split("\0", 1)[0].replace(",", "-").replace("?", "-")
+  # ",": PTM images; "+": PTM 2.0 / angle PTM images (Clarity build 0x05 on, 39990+TRW+A020). Same application, tables, calibration.
+  return str(version).split("\0", 1)[0].replace(",", "-").replace("+", "-")
 
 
 def get_honda_vgr_profile(car_fw):

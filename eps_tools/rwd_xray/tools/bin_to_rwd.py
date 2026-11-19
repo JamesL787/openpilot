@@ -83,7 +83,7 @@ car_models = {
 
    '39990-TRW-A020': { #clarity thanks to wirelessnet2
      'can-address': '0x18DA30F1',
-     'supported-versions': ['39990-TRW-A010', '39990-TRW-A020', '39990-TRW,A010', '39990-TRW,A020', '39990-TRW?A020'],
+     'supported-versions': ['39990-TRW-A010', '39990-TRW-A020', '39990-TRW,A010', '39990-TRW,A020', '39990+TRW+A020'],
      'security-key': ['0x011101121120', '0x011101121120', '0x011101121120', '0x011101121120'],
      'encryption-key': '0x010203',
      'start-address': 0x4000,

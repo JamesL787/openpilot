@@ -459,8 +459,8 @@ def test_steering_angle_rate_limit_caps_the_target_in_carcontroller(angle_file, 
     assert max(w) > 0.99 * cap                                           # 0 = off: only the sender's own cap
 
 
-# --- '?' software ID (PTM 2.0 / angle PTM marker, EPS build 0x05 on): same application as ',' ---
-PTM2 = b'39990-TRW?A020\x00\x00'
+# --- '+' software ID (39990+TRW+A020, PTM 2.0 / angle PTM marker, EPS build 0x05 on): same application as ',' ---
+PTM2 = b'39990+TRW+A020\x00\x00'
 
 
 def test_ptm2_id_is_the_same_modified_clarity():

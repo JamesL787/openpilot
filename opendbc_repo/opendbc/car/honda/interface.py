@@ -119,8 +119,8 @@ class CarInterface(CarInterfaceBase):
     # logging-only queries (e.g. the EPS serial number) are not firmware images; counting them made every
     # allow-listed modified EPS look unknown and forced dashcam (seen on 39990-TBA,C020, 2026-10-21)
     eps_observations = [fw for fw in car_fw if fw.ecu == "eps" and not fw.logging]
-    # "," marks a modified (PTM) image, "?" a PTM 2.0 / angle PTM image (Clarity build 0x05 on); unknown ones go dashcam
-    modified_eps = any(b"," in fw.fwVersion or b"?" in fw.fwVersion for fw in eps_observations)
+    # "," marks a modified (PTM) image, "+" a PTM 2.0 / angle PTM image (Clarity build 0x05 on); unknown ones go dashcam
+    modified_eps = any(b"," in fw.fwVersion or b"+" in fw.fwVersion for fw in eps_observations)
     eps_modified = bool(modified_eps) and all(
       fw.address == 0x18DA30F1 and fw.subAddress == 0 and
       fw.fwVersion in MODIFIED_EPS_FW.get(candidate, ()) for fw in eps_observations)

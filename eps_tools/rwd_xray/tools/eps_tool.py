@@ -856,7 +856,7 @@ def main():
                 ]
         elif input_bin_hash == '3f0c3b65ed8f105673b2bc6d9933fa10': #clarity thanks to wirelessnet2
             print('Detected bin: 39990-TRW-A020 Honda Clarity')
-            supported_versions = ['39990-TRW-A010\x00\x00', '39990-TRW-A020\x00\x00', '39990-TRW,A020\x00\x00', '39990-TRW?A020\x00\x00']
+            supported_versions = ['39990-TRW-A010\x00\x00', '39990-TRW-A020\x00\x00', '39990-TRW,A020\x00\x00', '39990+TRW+A020\x00\x00']
             security_key = ['\x01\x11\x01\x12\x11\x20', '\x01\x11\x01\x12\x11\x20', '\x01\x11\x01\x12\x11\x20']
             version_offsets = [0x4ba1d, 0x4ba76, 0x4bacf, 0x4bb28, 0x4bb81, 0x4bbda]
             version_old = b'39990-TRW-A020'
